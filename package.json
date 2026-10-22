@@ -1,9 +1,15 @@
 {
+  "name": "pi-guy",
   "private": true,
   "type": "module",
-  "description": "Runtime and type deps for the standalone extensions",
+  "description": "Opinionated Pi extensions",
+  "keywords": ["pi-package"],
+  "pi": {
+    "extensions": ["./*.ts", "./*/index.ts"]
+  },
   "scripts": {
-    "test": "node --test \"tests/*.test.ts\""
+    "test": "node --test --test-force-exit \"tests/*.test.ts\" \"statusline/tests/*.test.ts\" \"subagents/tests/*.test.ts\" \"working-indicator/tests/*.test.ts\"",
+    "typecheck": "tsc --noEmit -p statusline && tsc --noEmit -p subagents && tsc --noEmit -p working-indicator"
   },
   "peerDependencies": {
     "@earendil-works/pi-agent-core": "*",
@@ -13,10 +19,10 @@
     "typebox": "*"
   },
   "devDependencies": {
-    "@earendil-works/pi-agent-core": "1.3.0",
-    "@earendil-works/pi-ai": "1.3.0",
-    "@earendil-works/pi-coding-agent": "1.3.0",
-    "@earendil-works/pi-tui": "1.3.0",
+    "@earendil-works/pi-agent-core": "1.4.0",
+    "@earendil-works/pi-ai": "1.4.0",
+    "@earendil-works/pi-coding-agent": "1.4.0",
+    "@earendil-works/pi-tui": "1.4.0",
     "@types/node": "^24",
     "typebox": "1.3.27",
     "typescript": "^5"
