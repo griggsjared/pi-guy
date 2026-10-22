@@ -1,10 +1,24 @@
 /**
  * Installer-style Pi startup header.
  */
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { loadProjectContextFiles, VERSION, type BeforeAgentStartEvent, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { loadProjectContextFiles, VERSION, type BeforeAgentStartEvent, type ExtensionAPI, type ThemeColor } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+
+const PACKAGE_VERSION = (JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")) as { version: string }).version;
+
+// Rows of each letter in "pi-guy"; LOGO_COLORS[i] colors LOGO_GLYPHS[i].
+const LOGO_COLORS: ThemeColor[] = ["error", "accent", "warning", "customMessageLabel", "success", "mdHeading"];
+const LOGO_GLYPHS = [
+	["     ", "█▀▀▀▄", "█▄▄▄▀", "█    "],
+	["▀", "█", "█", " "],
+	["   ", "▄▄▄", "   ", "   "],
+	["     ", "▄▀▀▀█", "▀▄▄▄█", "▄▄▄▄▀"],
+	["     ", "█   █", "▀▄▄▄█", "     "],
+	["     ", "█   █", "▀▄▄▄█", "▄▄▄▄▀"],
+];
 
 export default function (pi: ExtensionAPI) {
 	let contextPaths: string[] = [];
@@ -31,13 +45,8 @@ export default function (pi: ExtensionAPI) {
 			return {
 				invalidate() {},
 				render(width: number): string[] {
-					const logo = [
-						`  ${theme.fg("accent", "██████████")}`,
-						`  ${theme.fg("error", "██")}      ${theme.fg("success", "██")}`,
-						`  ${theme.fg("error", "██")}      ${theme.fg("success", "██")}`,
-						`  ${theme.fg("error", "██")}      ${theme.fg("success", "██")}`,
-					];
-					const title = `${theme.bold("  π")}${theme.fg("dim", ` v${VERSION}`)}`;
+					const logo = LOGO_GLYPHS[0]!.map((_, row) => `  ${LOGO_GLYPHS.map((glyph, letter) => theme.fg(LOGO_COLORS[letter]!, glyph[row]!)).join(" ")}`);
+					const title = `${theme.bold("  π")}${theme.fg("dim", ` v${VERSION} · `)}${theme.bold("pi-guy")}${theme.fg("dim", ` v${PACKAGE_VERSION}`)}`;
 					const paths = [...new Set([...contextPaths, ...Array.from(reportedContextPaths.values()).flat()])];
 					const agents = theme.fg(
 						"dim",
