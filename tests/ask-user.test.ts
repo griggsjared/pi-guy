@@ -3,7 +3,7 @@ import { test } from "node:test";
 import type { ExtensionAPI, ExtensionContext, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import askUser from "../ask-user.ts";
 
-const CHAT_LABEL = "Let's chat about this";
+const DISCUSS_LABEL = "Discuss this after the questions";
 const question = {
 	question: "Which approach?",
 	options: [{ label: "First" }, { label: "Second" }],
@@ -15,7 +15,7 @@ function tool() {
 	return registered;
 }
 
-function tui(screens: string[][]): ExtensionContext {
+function tui(screens: string[][], rendered: string[][] = []): ExtensionContext {
 	return {
 		hasUI: true,
 		mode: "tui",
@@ -36,7 +36,8 @@ function tui(screens: string[][]): ExtensionContext {
 					undefined,
 					(value: unknown) => { settled = true; result = value; },
 				);
-				assert.ok(component.render(80).some((line: string) => line.includes(CHAT_LABEL)));
+				const lines = component.render(80);
+				rendered.push(lines);
 				for (const key of keys) {
 					assert.equal(settled, false, "picker closed before the last key");
 					component.handleInput(key);
@@ -48,7 +49,7 @@ function tui(screens: string[][]): ExtensionContext {
 	} as unknown as ExtensionContext;
 }
 
-function execute(ctx: ExtensionContext, questions: (typeof question & { multiple?: boolean })[] = [question]) {
+function execute(ctx: ExtensionContext, questions: (typeof question & { multiple?: boolean; title?: string })[] = [question]) {
 	const toolCtx: ExtensionToolContext = {
 		...ctx,
 		tools: [],
@@ -57,12 +58,16 @@ function execute(ctx: ExtensionContext, questions: (typeof question & { multiple
 	return tool().execute("test", { questions }, undefined, undefined, toolCtx);
 }
 
-function assertChat(result: Awaited<ReturnType<typeof execute>>) {
+function assertDeferred(result: Awaited<ReturnType<typeof execute>>) {
 	assert.equal(result.terminate, undefined);
-	assert.deepEqual(result.details, { answers: [], cancelled: false, chat: true });
+	assert.deepEqual(result.details, {
+		answers: [{ question: question.question, selected: { discuss: true } }],
+		cancelled: false,
+	});
 	const text = result.content[0].type === "text" ? result.content[0].text : "";
-	assert.match(text, /Briefly restate the question and invite discussion in prose, then wait for their reply/);
-	assert.match(text, /Do not pick a default, continue the task, or reopen the picker/);
+	assert.match(text, /Which approach\?\n   → Discuss after questions/);
+	assert.match(text, /invite discussion in prose, then wait for the user's reply/);
+	assert.match(text, /Do not choose answers for those questions or reopen the picker/);
 }
 
 test("ask_user is registered as model-only", () => {
@@ -71,79 +76,131 @@ test("ask_user is registered as model-only", () => {
 
 for (const multiple of [false, true]) {
 	for (const keys of [["4"], ["up", "enter"], ["up", "tab", "enter"]]) {
-		test(`chat exits ${multiple ? "multi" : "single"}-select via ${keys.join(", ")}`, async () => {
-			assertChat(await execute(tui([keys]), [{ ...question, multiple }]));
+		test(`defers ${multiple ? "multi" : "single"}-select via ${keys.join(", ")}`, async () => {
+			assertDeferred(await execute(tui([keys, ["1"]]), [{ ...question, multiple }]));
 		});
 	}
 }
 
-test("chat exits multi-select with space and discards checked options", async () => {
-	assertChat(await execute(tui([["1", "down", "down", "down", "space"]]), [{ ...question, multiple: true }]));
+test("deferring multi-select with space replaces the current checked options", async () => {
+	assertDeferred(await execute(tui([["1", "down", "down", "down", "space"], ["1"]]), [{ ...question, multiple: true }]));
 });
 
-test("chat discards earlier answers and skips remaining questions and confirmation", async () => {
+test("deferring a question preserves other answers and includes every question in confirmation", async () => {
+	const rendered: string[][] = [];
 	const current = { ...question, question: "Which database?" };
-	const result = await execute(tui([["1"], ["4"]]), [question, current, question]);
-	assertChat(result);
-	assert.match(result.content[0].type === "text" ? result.content[0].text : "", /Discuss: Which database\?$/);
+	const last = { ...question, question: "When should we deploy?" };
+	const result = await execute(tui([["1"], ["4"], ["2"], ["1"]], rendered), [question, current, last]);
+	assert.deepEqual(result.details, {
+		answers: [
+			{ question: question.question, selected: { label: "First", description: undefined, index: 0, context: undefined } },
+			{ question: current.question, selected: { discuss: true } },
+			{ question: last.question, selected: { label: "Second", description: undefined, index: 1, context: undefined } },
+		],
+		cancelled: false,
+	});
+	assert.ok(rendered[1].some((line) => line.includes(DISCUSS_LABEL)));
+	const confirmation = rendered[3].join("\n");
+	assert.ok(confirmation.includes("Which approach? → First"));
+	assert.ok(confirmation.includes("Which database? → Discuss after questions"));
+	assert.ok(confirmation.includes("When should we deploy? → Second"));
 });
 
-test("chat is available at confirmation", async () => {
+for (const multiple of [false, true]) {
+	test(`can defer a previously answered ${multiple ? "multi" : "single"}-select question`, async () => {
+		const keys = multiple ? ["1", "5"] : ["1"];
+		assertDeferred(await execute(tui([keys, ["2"], ["4"], ["1"]]), [{ ...question, multiple }]));
+	});
+
+	test(`can answer a deferred ${multiple ? "multi" : "single"}-select question`, async () => {
+		const keys = multiple ? ["1", "5"] : ["1"];
+		const result = await execute(tui([["4"], ["2"], keys, ["1"]]), [{ ...question, multiple }]);
+		assert.deepEqual(result.details, {
+			answers: [{ question: question.question, selected: multiple
+				? { items: [{ label: "First", description: undefined, index: 0, context: undefined }] }
+				: { label: "First", description: undefined, index: 0, context: undefined } }],
+			cancelled: false,
+		});
+		assert.doesNotMatch(result.content[0].type === "text" ? result.content[0].text : "", /marked for discussion/);
+	});
+}
+
+for (const stage of ["next question", "confirmation"]) {
+	test(`escape at ${stage} cancels deferred questions without requesting discussion`, async () => {
+		const result = await execute(tui([["4"], ["escape"]]), stage === "next question" ? [question, question] : [question]);
+		assert.deepEqual(result.details, {
+			answers: [{ question: question.question, selected: { discuss: true } }],
+			cancelled: true,
+		});
+		const text = result.content[0].type === "text" ? result.content[0].text : "";
+		assert.match(text, /answers not confirmed/);
+		assert.doesNotMatch(text, /invite discussion/);
+	});
+}
+
+test("question progress advances across pickers and keeps its position when re-answering", async () => {
+	const rendered: string[][] = [];
+	await execute(tui([["1"], ["1", "5"], ["2"], ["3"], ["5"], ["1"]], rendered), [
+		{ ...question, title: "Approach" },
+		{ ...question, question: "Which features?", multiple: true },
+		{ ...question, question: "Which database?" },
+	]);
+	assert.deepEqual(rendered.map((lines) => lines.find((line) => line.includes("Question "))?.trim()), [
+		"Question 1/3 · Approach",
+		"Question 2/3",
+		"Question 3/3",
+		undefined,
+		"Question 2/3",
+		undefined,
+	]);
+});
+
+test("simple picker filters discussion options and summarizes answers and deferrals", async () => {
 	const second = { ...question, question: "Which database?" };
-	const result = await execute(tui([["1"], ["1"], ["4"]]), [question, second]);
-	assertChat(result);
-	assert.match(result.content[0].type === "text" ? result.content[0].text : "", /Discuss: Which approach\?\nWhich database\?$/);
-});
-
-test("chat is available while re-answering", async () => {
-	assertChat(await execute(tui([["1"], ["2"], ["4"]])));
-});
-
-test("simple picker filters model-supplied chat options and returns chat", async () => {
 	const ctx = {
 		hasUI: true,
 		mode: "rpc",
 		ui: {
-			select: async (_title: string, options: string[]) => {
-				assert.deepEqual(options, ["First", "Second", "Other (specify)", CHAT_LABEL]);
-				return CHAT_LABEL;
+			select: async (title: string, options: string[]) => {
+				if (title.startsWith("Confirm answers")) {
+					assert.equal(title, "Confirm answers\n\n1. Which approach? → Discuss after questions\n2. Which database? → Second");
+					assert.deepEqual(options, ["Confirm answers", "Re-answer question 1", "Re-answer question 2"]);
+					return "Confirm answers";
+				}
+				if (title === "Question 2/2 — Which database?") return "Second";
+				assert.equal(title, "Question 1/2 — Which approach?");
+				assert.deepEqual(options, ["First", "Second", "Other (specify)", DISCUSS_LABEL]);
+				return DISCUSS_LABEL;
 			},
 		},
 	} as unknown as ExtensionContext;
-	assertChat(await execute(ctx, [{
+	const result = await execute(ctx, [{
 		...question,
-		options: [...question.options, { label: CHAT_LABEL }, { label: " Let’s chat about this " }],
-	}]));
+		options: [...question.options, { label: DISCUSS_LABEL }, { label: " Let’s chat about this " }],
+	}, second]);
+	assert.deepEqual(result.details, {
+		answers: [
+			{ question: question.question, selected: { discuss: true } },
+			{ question: second.question, selected: { label: "Second", description: undefined, index: 1, context: undefined } },
+		],
+		cancelled: false,
+	});
 });
 
-test("simple multi-select gives chat priority over other choices", async () => {
+test("simple multi-select defers the question instead of committing other choices", async () => {
 	const ctx = {
 		hasUI: true,
 		mode: "rpc",
 		ui: {
-			input: async (_title: string, placeholder: string) => {
-				assert.ok(placeholder.includes(`4. ${CHAT_LABEL}`));
+			input: async (title: string, placeholder: string) => {
+				assert.equal(title, "Question 1/1 — Which approach? (multi-select)");
+				assert.ok(placeholder.includes(`4. ${DISCUSS_LABEL}`));
 				return "1,3,4";
 			},
+			select: async () => "Confirm answers",
 		},
 	} as unknown as ExtensionContext;
-	assertChat(await execute(ctx, [{ ...question, multiple: true }]));
-});
-
-test("simple confirmation offers chat", async () => {
-	const replies = ["First", CHAT_LABEL];
-	const ctx = {
-		hasUI: true,
-		mode: "rpc",
-		ui: {
-			select: async (_title: string, options: string[]) => {
-				assert.ok(options.includes(CHAT_LABEL));
-				return replies.shift();
-			},
-		},
-	} as unknown as ExtensionContext;
-	assertChat(await execute(ctx));
-	assert.deepEqual(replies, []);
+	assertDeferred(await execute(ctx, [{ ...question, multiple: true }]));
 });
 
 test("normal answers still require confirmation and do not terminate", async () => {
@@ -164,7 +221,7 @@ test("Other still accepts a written answer", async () => {
 	});
 });
 
-test("escape remains cancellation rather than chat", async () => {
+test("escape cancels without answering", async () => {
 	const result = await execute(tui([["escape"]]));
 	assert.equal(result.terminate, undefined);
 	assert.deepEqual(result.details, { answers: [], cancelled: true });
