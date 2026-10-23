@@ -48,19 +48,16 @@ export default function (pi: ExtensionAPI) {
 					const logo = LOGO_GLYPHS[0]!.map((_, row) => `  ${LOGO_GLYPHS.map((glyph, letter) => theme.fg(LOGO_COLORS[letter]!, glyph[row]!)).join(" ")}`);
 					const title = `${theme.bold("  π")}${theme.fg("dim", ` v${VERSION} · `)}${theme.bold("pi-guy")}${theme.fg("dim", ` v${PACKAGE_VERSION}`)}`;
 					const paths = [...new Set([...contextPaths, ...Array.from(reportedContextPaths.values()).flat()])];
-					const agents = theme.fg(
-						"dim",
-						`  Context: ${paths
-							.map((path) => path.startsWith(`${homedir()}/`) ? `~/${path.slice(homedir().length + 1)}` : path)
-							.join(" · ") || "none"}`,
-					);
+					const agents = paths.length
+						? ["  Context:", ...paths.map((path) => `    ${path.startsWith(`${homedir()}/`) ? `~/${path.slice(homedir().length + 1)}` : path}`)]
+						: ["  Context: none"];
 
 					return [
 						"",
 						...logo.map((line) => truncateToWidth(line, width, "")),
 						"",
 						truncateToWidth(title, width),
-						...wrapTextWithAnsi(agents, Math.max(1, width)).map((line) => truncateToWidth(line, width, "")),
+						...agents.flatMap((line) => wrapTextWithAnsi(theme.fg("dim", line), Math.max(1, width)).map((line) => truncateToWidth(line, width, ""))),
 						"",
 					];
 				},

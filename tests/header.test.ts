@@ -70,7 +70,8 @@ test("header shows final context files regardless of extension order and resets 
 	for (const handler of handlers.get("agent_start")!) await handler({}, ctx);
 	assert.equal(renderRequests, beforeAgentRenderRequests + 1);
 	lines = rendered.render(500).join("\n").replace(/\x1b\[[0-9;]*m/g, "");
-	assert.ok(lines.includes(`${sharedFile} · ${localFile} · ~/extra-上下.md`));
+	assert.ok(lines.includes("  Context:\n"));
+	assert.ok(lines.includes(`    ${sharedFile}\n    ${localFile}\n    ~/extra-上下.md`));
 	for (const width of [0, 1, 2, 4, 20, 80, 100, 500]) {
 		const output = rendered.render(width);
 		for (const line of output) assert.ok(visibleWidth(line) <= width);
@@ -90,7 +91,7 @@ test("header shows final context files regardless of extension order and resets 
 	for (const handler of handlers.get("agent_start")!) await handler({}, ctx);
 	assert.equal(renderRequests, beforeAgentRenderRequests + 1);
 	lines = rendered.render(500).join("\n").replace(/\x1b\[[0-9;]*m/g, "");
-	assert.ok(lines.includes(`${sharedFile} · ${localFile} · ${extraPath}`));
+	assert.ok(lines.includes(`    ${sharedFile}\n    ${localFile}\n    ${extraPath}`));
 	assert.ok(!lines.includes("extra-上下.md"));
 
 	extraPath = undefined;
