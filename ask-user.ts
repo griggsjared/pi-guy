@@ -883,12 +883,12 @@ export default function (pi: ExtensionAPI) {
 						...params.questions.map((_question, index) => ({
 							value: `re-${index}`,
 							label: `Re-answer question ${index + 1}`,
-							description: choiceText(answers[index].selected),
+							description: choiceText(answers[index]!.selected),
 						})),
 					];
 					const summary = params.questions.map(
 						(question, index) =>
-							`${index + 1}. ${question.question} → ${choiceText(answers[index].selected)}`,
+							`${index + 1}. ${question.question} → ${choiceText(answers[index]!.selected)}`,
 					);
 					const confirmIndex = await confirmAnswers(ctx, summary, items, signal);
 					if (confirmIndex === null) {
@@ -896,7 +896,7 @@ export default function (pi: ExtensionAPI) {
 						break;
 					}
 					if (confirmIndex === 0) break;
-					const reanswered = await askOne(params.questions[confirmIndex - 1], confirmIndex - 1, answers[confirmIndex - 1]);
+					const reanswered = await askOne(params.questions[confirmIndex - 1]!, confirmIndex - 1, answers[confirmIndex - 1]);
 					if (reanswered === null) {
 						cancelled = true;
 						break;

@@ -39,8 +39,8 @@ function valid(name: string, response: Awaited<ReturnType<typeof execute>>) {
 	assert.deepEqual(JSON.parse(JSON.stringify(response.structuredContent)), response.structuredContent);
 	assert.equal(response.isError, undefined);
 	assert.equal(response.content.length, 1);
-	assert.equal(response.content[0].type, "text");
-	return response.content[0].type === "text" ? response.content[0].text : "";
+	assert.equal(response.content[0]?.type, "text");
+	return response.content[0]?.type === "text" ? response.content[0].text : "";
 }
 
 function page(response: Awaited<ReturnType<typeof execute>>) {

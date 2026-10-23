@@ -78,8 +78,8 @@ function harness(t: TestContext) {
 }
 
 function payload(result: Awaited<ReturnType<ReturnType<typeof harness>["execute"]>>) {
-	assert.equal(result.content[0].type, "text");
-	return JSON.parse(result.content[0].type === "text" ? result.content[0].text : "") as Record<string, any>;
+	assert.equal(result.content[0]?.type, "text");
+	return JSON.parse(result.content[0]?.type === "text" ? result.content[0].text : "") as Record<string, any>;
 }
 
 function exposure(tool: Tool) {
@@ -192,7 +192,7 @@ test("all actions use explicit local repository and host, with current branch is
 			assert.equal(args[1], "view");
 			assert.ok(args.includes(repoArg));
 		} else if (args[0] === "pr") {
-			assert.ok(["view", "checks"].includes(args[1]), "PR operations are read-only");
+			assert.ok(["view", "checks"].includes(args[1]!), "PR operations are read-only");
 			assert.equal(flag(args, "--repo"), repoArg);
 			assert.ok(args.includes(args[1] === "view" ? "feature/local" : "42"));
 		} else {
@@ -347,6 +347,6 @@ test("truncated output spills full content to a private file", async (t) => {
 	const full = await readFile(path, "utf8");
 	assert.equal(JSON.parse(full).body, body);
 	assert.equal(JSON.parse(full).number, 42);
-	assert.ok(full.length > (result.content[0].type === "text" ? result.content[0].text.length : 0));
-	assert.ok(result.content[0].type === "text" && result.content[0].text.includes(path));
+	assert.ok(full.length > (result.content[0]?.type === "text" ? result.content[0].text.length : 0));
+	assert.ok(result.content[0]?.type === "text" && result.content[0].text.includes(path));
 });

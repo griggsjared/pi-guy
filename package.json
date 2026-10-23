@@ -10,7 +10,7 @@
   },
   "scripts": {
     "test": "node --test --test-force-exit \"tests/*.test.ts\" \"statusline/tests/*.test.ts\" \"subagents/tests/*.test.ts\" \"working-indicator/tests/*.test.ts\"",
-    "typecheck": "tsc --noEmit -p statusline && tsc --noEmit -p subagents && tsc --noEmit -p working-indicator"
+    "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
     "@earendil-works/pi-agent-core": "*",

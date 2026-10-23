@@ -266,8 +266,8 @@ function parseRemote(remote: string): Extract<Capability, { available: true }> |
 		} else {
 			const match = remote.match(/^(?:[^@\s/]+@)?([^:\s/]+):(.+)$/);
 			if (!match) return undefined;
-			hostname = match[1];
-			path = match[2];
+			hostname = match[1]!;
+			path = match[2]!;
 		}
 	} catch {
 		return undefined;
@@ -276,7 +276,7 @@ function parseRemote(remote: string): Extract<Capability, { available: true }> |
 	if (!/^[a-z0-9.-]+$/i.test(hostname) || !/^[a-z0-9_.-]+\/[a-z0-9_.-]+$/i.test(repo)) {
 		return undefined;
 	}
-	const [owner, repository] = repo.split("/");
+	const [owner, repository] = repo.split("/") as [string, string];
 	return { available: true, hostname: hostname.toLowerCase(), repo, owner, repository };
 }
 
@@ -314,7 +314,7 @@ async function detectCapability(
 		.sort((a, b) => Number(b[1] === "origin") - Number(a[1] === "origin"));
 	for (const candidate of candidates) {
 		if (signal?.aborted) break;
-		const capability = parseRemote(candidate[2]);
+		const capability = parseRemote(candidate[2]!);
 		if (capability?.hostname === "github.com") return capability;
 	}
 	return { available: false, reason: "The current directory has no github.com remote." };

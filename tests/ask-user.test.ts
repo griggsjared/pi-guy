@@ -64,7 +64,7 @@ function assertDeferred(result: Awaited<ReturnType<typeof execute>>) {
 		answers: [{ question: question.question, selected: { discuss: true } }],
 		cancelled: false,
 	});
-	const text = result.content[0].type === "text" ? result.content[0].text : "";
+	const text = result.content[0]?.type === "text" ? result.content[0].text : "";
 	assert.match(text, /Which approach\?\n   → Discuss after questions/);
 	assert.match(text, /invite discussion in prose, then wait for the user's reply/);
 	assert.match(text, /Do not choose answers for those questions or reopen the picker/);
@@ -99,8 +99,8 @@ test("deferring a question preserves other answers and includes every question i
 		],
 		cancelled: false,
 	});
-	assert.ok(rendered[1].some((line) => line.includes(DISCUSS_LABEL)));
-	const confirmation = rendered[3].join("\n");
+	assert.ok(rendered[1]!.some((line) => line.includes(DISCUSS_LABEL)));
+	const confirmation = rendered[3]!.join("\n");
 	assert.ok(confirmation.includes("Which approach? → First"));
 	assert.ok(confirmation.includes("Which database? → Discuss after questions"));
 	assert.ok(confirmation.includes("When should we deploy? → Second"));
@@ -121,7 +121,7 @@ for (const multiple of [false, true]) {
 				: { label: "First", description: undefined, index: 0, context: undefined } }],
 			cancelled: false,
 		});
-		assert.doesNotMatch(result.content[0].type === "text" ? result.content[0].text : "", /marked for discussion/);
+		assert.doesNotMatch(result.content[0]?.type === "text" ? result.content[0].text : "", /marked for discussion/);
 	});
 }
 
@@ -132,7 +132,7 @@ for (const stage of ["next question", "confirmation"]) {
 			answers: [{ question: question.question, selected: { discuss: true } }],
 			cancelled: true,
 		});
-		const text = result.content[0].type === "text" ? result.content[0].text : "";
+		const text = result.content[0]?.type === "text" ? result.content[0].text : "";
 		assert.match(text, /answers not confirmed/);
 		assert.doesNotMatch(text, /invite discussion/);
 	});

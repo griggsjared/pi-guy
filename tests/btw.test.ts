@@ -155,7 +155,7 @@ test("registry requests isolate all system state while retaining context and suc
 	const h = harness(history);
 	const running = h.start("side question");
 	assert.equal(h.requests.length, 1);
-	const first = h.requests[0];
+	const first = h.requests[0]!;
 	assert.equal(first.model, h.model);
 	assert.equal(first.context.systemPrompt, "You are answering a side question about the current conversation. Answer the question directly and concisely. Do not continue the main task, call tools, or propose changes unless the question explicitly asks for them.");
 	assert.equal("tools" in first.context, false);
@@ -173,7 +173,7 @@ test("registry requests isolate all system state while retaining context and suc
 	h.input("follow-up");
 	h.input("\r");
 	assert.equal(h.requests.length, 2);
-	const second = h.requests[1];
+	const second = h.requests[1]!;
 	assert.equal(second.model, h.model);
 	assert.equal(second.context.systemPrompt, first.context.systemPrompt);
 	assert.deepEqual(second.context.messages.slice(0, -2), first.context.messages);
@@ -202,7 +202,7 @@ for (const cancellation of ["escape", "shutdown"]) {
 		test(`${cancellation} aborts and cleans up without accepting a stale ${stale}`, async () => {
 			const h = harness();
 			const running = h.start("cancel me");
-			const first = h.requests[0];
+			const first = h.requests[0]!;
 			await h.start("blocked");
 			assert.equal(h.requests.length, 1);
 			assert.deepEqual(h.notifications.pop(), { text: "A /btw question is already in progress", level: "error" });
@@ -220,14 +220,14 @@ for (const cancellation of ["escape", "shutdown"]) {
 			assert.equal(h.completions, 1);
 			assert.deepEqual(h.notifications, []);
 			assert.deepEqual(h.sent.slice(), []);
-			assert.deepEqual(h.requests[1].context.messages.map((message) => message.content), [[{ type: "text", text: "new question" }]]);
-			h.requests[1].resolve(answer("fresh answer"));
+			assert.deepEqual(h.requests[1]!.context.messages.map((message) => message.content), [[{ type: "text", text: "new question" }]]);
+			h.requests[1]!.resolve(answer("fresh answer"));
 			await flush();
 			h.input("\x13");
 			await next;
 			assert.equal(h.sent.length, 1);
-			assert.doesNotMatch(h.sent[0].text, /stale|cancel me/);
-			assert.equal(h.requests[1].options.signal.aborted, true);
+			assert.doesNotMatch(h.sent[0]!.text, /stale|cancel me/);
+			assert.equal(h.requests[1]!.options.signal.aborted, true);
 			assert.deepEqual(h.entries, h.originalEntries);
 		});
 	}
@@ -237,10 +237,10 @@ for (const failure of ["aborted", "error", "rejection"]) {
 	test(`registry ${failure} closes the modal and releases the active operation`, async () => {
 		const h = harness();
 		const running = h.start("question");
-		if (failure === "rejection") h.requests[0].reject(new Error("registry failure"));
-		else h.requests[0].resolve({ ...answer("discard"), stopReason: failure as "aborted" | "error", errorMessage: "registry failure" });
+		if (failure === "rejection") h.requests[0]!.reject(new Error("registry failure"));
+		else h.requests[0]!.resolve({ ...answer("discard"), stopReason: failure as "aborted" | "error", errorMessage: "registry failure" });
 		await running;
-		assert.equal(h.requests[0].options.signal.aborted, true);
+		assert.equal(h.requests[0]!.options.signal.aborted, true);
 		assert.equal(h.completions, 1);
 		assert.deepEqual(h.notifications, failure === "aborted" ? [] : [{ text: "btw request failed", level: "error" }]);
 		assert.deepEqual(h.sent.slice(), []);
@@ -249,7 +249,7 @@ for (const failure of ["aborted", "error", "rejection"]) {
 		h.input("retry");
 		h.input("\r");
 		assert.equal(h.requests.length, 2);
-		h.requests[1].resolve(answer("retry answer"));
+		h.requests[1]!.resolve(answer("retry answer"));
 		await flush();
 		h.input("\x1b");
 		await next;
