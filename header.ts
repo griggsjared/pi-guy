@@ -4,8 +4,8 @@
 import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
-import { loadProjectContextFiles, VERSION, type BeforeAgentStartEvent, type ExtensionAPI, type ThemeColor } from "@earendil-works/pi-coding-agent";
+import { basename, dirname, join, parse } from "node:path";
+import { DefaultPackageManager, loadProjectContextFiles, SettingsManager, VERSION, type BeforeAgentStartEvent, type ExtensionAPI, type ThemeColor } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 
 const PACKAGE_VERSION = (JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")) as { version: string }).version;
@@ -27,6 +27,8 @@ export default function (pi: ExtensionAPI) {
 	let requestRender: (() => void) | undefined;
 	let piBoltVersion: string | undefined;
 	let piBoltChecked = false;
+	let extensionNames: string[] | undefined;
+	let extensionsChecked = false;
 	const reportedContextPaths = new Map<string, string[]>();
 
 	pi.events.on("context:files", (data) => {
@@ -52,6 +54,20 @@ export default function (pi: ExtensionAPI) {
 
 		const agentDir = process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");
 		contextPaths = loadProjectContextFiles({ cwd: ctx.cwd, agentDir }).map(({ path }) => path);
+		// Pi doesn't expose its loaded-extension list, so resolve the configured extensions the same way it does, without loading them.
+		if (!extensionsChecked) {
+			extensionsChecked = true;
+			new DefaultPackageManager({ cwd: ctx.cwd, agentDir, settingsManager: SettingsManager.create(ctx.cwd, agentDir) })
+				.resolve(async () => "skip")
+				.then(({ extensions }) => {
+					const trusted = ctx.isProjectTrusted();
+					const names = extensions
+						.filter(({ enabled, metadata }) => enabled && (trusted || metadata.scope !== "project"))
+						.map(({ path, metadata }) => metadata.packageRoot ? basename(metadata.packageRoot) : parse(path).name === "index" ? basename(dirname(path)) : parse(path).name);
+					extensionNames = [...new Set(names)].filter((name) => name !== "pi-guy");
+					requestRender?.();
+				}, () => {});
+		}
 		ctx.ui.setHeader((tui, theme) => {
 			requestRender = () => tui.requestRender();
 			return {
@@ -63,13 +79,16 @@ export default function (pi: ExtensionAPI) {
 					const agents = paths.length
 						? ["  Context:", ...paths.map((path) => `    ${path.startsWith(`${homedir()}/`) ? `~/${path.slice(homedir().length + 1)}` : path}`)]
 						: ["  Context: none"];
+					const extensions = !extensionNames ? [] : extensionNames.length
+						? ["  Extensions:", ...extensionNames.map((name) => `    ${name}`)]
+						: ["  Extensions: none"];
 
 					return [
 						"",
 						...logo.map((line) => truncateToWidth(line, width, "")),
 						"",
 						truncateToWidth(title, width),
-						...agents.flatMap((line) => wrapTextWithAnsi(theme.fg("dim", line), Math.max(1, width)).map((line) => truncateToWidth(line, width, ""))),
+						...[...agents, ...extensions].flatMap((line) => wrapTextWithAnsi(theme.fg("dim", line), Math.max(1, width)).map((line) => truncateToWidth(line, width, ""))),
 						"",
 					];
 				},

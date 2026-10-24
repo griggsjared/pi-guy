@@ -36,7 +36,7 @@ test("header shows final context files regardless of extension order and resets 
 	let rendered: { render(width: number): string[] } | undefined;
 	let renderRequests = 0;
 	const ctx = {
-		mode: "tui", cwd: root,
+		mode: "tui", cwd: root, isProjectTrusted: () => true,
 		ui: {
 			setHeader(factory: any) {
 				rendered = factory(
@@ -124,7 +124,7 @@ test("header shows startup reports from multiple sources and clears updated repo
 	let rendered: { render(width: number): string[] } | undefined;
 	let renderRequests = 0;
 	const ctx = {
-		mode: "tui", cwd: root,
+		mode: "tui", cwd: root, isProjectTrusted: () => true,
 		ui: {
 			setHeader(factory: any) {
 				rendered = factory(
@@ -172,7 +172,7 @@ test("header shows the pi-bolt version between Pi and pi-guy only when running o
 		header({ events: createEventBus(), on(event: string, handler: (event: any, ctx: any) => unknown) { handlers.set(event, handler); } } as unknown as ExtensionAPI);
 		let rendered: { render(width: number): string[] } | undefined;
 		await handlers.get("session_start")!({}, {
-			mode: "tui", cwd: tmpdir(),
+			mode: "tui", cwd: tmpdir(), isProjectTrusted: () => true,
 			ui: {
 				setHeader(factory: any) {
 					rendered = factory(
@@ -192,9 +192,60 @@ test("header shows the pi-bolt version between Pi and pi-guy only when running o
 	Object.defineProperty(process.versions, "bun", { configurable: true, value: "1.3.0" });
 	const onPiBolt = await start();
 	assert.deepEqual(runs, [[process.execPath, "--version"]]);
+	const beforeReply = renderRequests;
 	reply!(null, `${VERSION} (Pi-Bolt 1.0.1, darwin-arm64, JIT off)\n`);
-	assert.equal(renderRequests, 1);
+	assert.equal(renderRequests, beforeReply + 1);
 	assert.ok(onPiBolt().includes(`π v${VERSION} · pi-bolt v1.0.1 · pi-guy v`));
+});
+
+test("header lists configured extensions by short name, without pi-guy or untrusted project extensions", async (t) => {
+	const root = await mkdtemp(join(tmpdir(), "pi-header-extensions-"));
+	t.after(() => rm(root, { recursive: true, force: true }));
+	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+	const agentDir = join(root, "agent");
+	const project = join(root, "project");
+	process.env.PI_CODING_AGENT_DIR = agentDir;
+	t.after(() => {
+		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+	});
+	const files: Record<string, string> = {
+		"agent/extensions/rtk.ts": "export default () => {};",
+		"agent/extensions/notes/index.ts": "export default () => {};",
+		"agent/settings.json": JSON.stringify({ packages: ["npm:@acme/pi-tools", "npm:pi-guy"] }),
+		"agent/npm/node_modules/@acme/pi-tools/package.json": JSON.stringify({ name: "@acme/pi-tools", version: "1.0.0", pi: { extensions: ["./a.ts", "./b.ts"] } }),
+		"agent/npm/node_modules/@acme/pi-tools/a.ts": "export default () => {};",
+		"agent/npm/node_modules/@acme/pi-tools/b.ts": "export default () => {};",
+		"agent/npm/node_modules/pi-guy/package.json": JSON.stringify({ name: "pi-guy", version: "1.0.0", pi: { extensions: ["./index.ts"] } }),
+		"agent/npm/node_modules/pi-guy/index.ts": "export default () => {};",
+		"project/.pi/extensions/local.ts": "export default () => {};",
+	};
+	for (const [path, content] of Object.entries(files)) {
+		await mkdir(join(root, path, ".."), { recursive: true });
+		await writeFile(join(root, path), content);
+	}
+	const start = async (trusted: boolean) => {
+		const handlers = new Map<string, (event: any, ctx: any) => unknown>();
+		header({ events: createEventBus(), on(event: string, handler: (event: any, ctx: any) => unknown) { handlers.set(event, handler); } } as unknown as ExtensionAPI);
+		let rendered: { render(width: number): string[] } | undefined;
+		let resolved = false;
+		await handlers.get("session_start")!({}, {
+			mode: "tui", cwd: project, isProjectTrusted: () => trusted,
+			ui: {
+				setHeader(factory: any) {
+					rendered = factory(
+						{ requestRender() { resolved = true; } },
+						{ fg: (_color: string, value: string) => value, bold: (value: string) => value },
+					);
+				},
+			},
+		});
+		for (let waited = 0; !resolved && waited < 1000; waited += 5) await new Promise((resolve) => setTimeout(resolve, 5));
+		return rendered!.render(500).join("\n");
+	};
+
+	assert.ok((await start(false)).includes("  Extensions:\n    notes\n    rtk\n    pi-tools\n"));
+	assert.ok((await start(true)).includes("  Extensions:\n    local\n    notes\n    rtk\n    pi-tools\n"));
 });
 
 test("header does not install or request terminal rendering in noninteractive modes", async () => {
