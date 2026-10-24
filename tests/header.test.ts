@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import childProcess from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { createEventBus, loadProjectContextFiles, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { createEventBus, loadProjectContextFiles, VERSION, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import agentsLocal from "../agents-local.ts";
 import header from "../header.ts";
@@ -149,6 +151,50 @@ test("header shows startup reports from multiple sources and clears updated repo
 	assert.ok(!rendered.render(500).join("\n").includes(privatePath));
 	assert.ok(rendered.render(500).join("\n").includes(teamPath));
 	assert.ok(renderRequests > 0);
+});
+
+test("header shows the pi-bolt version between Pi and pi-guy only when running on pi-bolt", async (t) => {
+	const runs: string[][] = [];
+	let reply: ((error: Error | null, stdout: string) => void) | undefined;
+	t.mock.method(childProcess, "execFile", ((file: string, args: string[], _options: unknown, callback: typeof reply) => {
+		runs.push([file, ...args]);
+		reply = callback;
+	}) as unknown as typeof childProcess.execFile);
+	syncBuiltinESMExports();
+	t.after(() => {
+		t.mock.restoreAll();
+		syncBuiltinESMExports();
+		Reflect.deleteProperty(process.versions, "bun");
+	});
+	let renderRequests = 0;
+	const start = async () => {
+		const handlers = new Map<string, (event: any, ctx: any) => unknown>();
+		header({ events: createEventBus(), on(event: string, handler: (event: any, ctx: any) => unknown) { handlers.set(event, handler); } } as unknown as ExtensionAPI);
+		let rendered: { render(width: number): string[] } | undefined;
+		await handlers.get("session_start")!({}, {
+			mode: "tui", cwd: tmpdir(),
+			ui: {
+				setHeader(factory: any) {
+					rendered = factory(
+						{ requestRender() { renderRequests++; } },
+						{ fg: (_color: string, value: string) => value, bold: (value: string) => value },
+					);
+				},
+			},
+		});
+		return () => rendered!.render(500).join("\n");
+	};
+
+	const onNode = await start();
+	assert.deepEqual(runs, []);
+	assert.ok(onNode().includes(`π v${VERSION} · pi-guy v`));
+
+	Object.defineProperty(process.versions, "bun", { configurable: true, value: "1.3.0" });
+	const onPiBolt = await start();
+	assert.deepEqual(runs, [[process.execPath, "--version"]]);
+	reply!(null, `${VERSION} (Pi-Bolt 1.0.1, darwin-arm64, JIT off)\n`);
+	assert.equal(renderRequests, 1);
+	assert.ok(onPiBolt().includes(`π v${VERSION} · pi-bolt v1.0.1 · pi-guy v`));
 });
 
 test("header does not install or request terminal rendering in noninteractive modes", async () => {

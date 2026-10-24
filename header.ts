@@ -1,6 +1,7 @@
 /**
  * Installer-style Pi startup header.
  */
+import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -24,6 +25,8 @@ export default function (pi: ExtensionAPI) {
 	let contextPaths: string[] = [];
 	let promptOptions: BeforeAgentStartEvent["systemPromptOptions"] | undefined;
 	let requestRender: (() => void) | undefined;
+	let piBoltVersion: string | undefined;
+	let piBoltChecked = false;
 	const reportedContextPaths = new Map<string, string[]>();
 
 	pi.events.on("context:files", (data) => {
@@ -38,6 +41,15 @@ export default function (pi: ExtensionAPI) {
 		requestRender = undefined;
 		if (ctx.mode !== "tui") return;
 
+		// Pi-Bolt is a Bun-compiled build that exposes its own version only through --version; extensions see Pi's VERSION.
+		if (!piBoltChecked && process.versions.bun) {
+			piBoltChecked = true;
+			execFile(process.execPath, ["--version"], { timeout: 5000 }, (_error, stdout) => {
+				piBoltVersion = /\(Pi-Bolt ([^,)]+)/.exec(stdout)?.[1];
+				requestRender?.();
+			});
+		}
+
 		const agentDir = process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");
 		contextPaths = loadProjectContextFiles({ cwd: ctx.cwd, agentDir }).map(({ path }) => path);
 		ctx.ui.setHeader((tui, theme) => {
@@ -46,7 +58,7 @@ export default function (pi: ExtensionAPI) {
 				invalidate() {},
 				render(width: number): string[] {
 					const logo = LOGO_GLYPHS[0]!.map((_, row) => `  ${LOGO_GLYPHS.map((glyph, letter) => theme.fg(LOGO_COLORS[letter]!, glyph[row]!)).join(" ")}`);
-					const title = `${theme.bold("  π")}${theme.fg("dim", ` v${VERSION} · `)}${theme.bold("pi-guy")}${theme.fg("dim", ` v${PACKAGE_VERSION}`)}`;
+					const title = `${theme.bold("  π")}${theme.fg("dim", ` v${VERSION} · `)}${piBoltVersion ? `${theme.bold("pi-bolt")}${theme.fg("dim", ` v${piBoltVersion} · `)}` : ""}${theme.bold("pi-guy")}${theme.fg("dim", ` v${PACKAGE_VERSION}`)}`;
 					const paths = [...new Set([...contextPaths, ...Array.from(reportedContextPaths.values()).flat()])];
 					const agents = paths.length
 						? ["  Context:", ...paths.map((path) => `    ${path.startsWith(`${homedir()}/`) ? `~/${path.slice(homedir().length + 1)}` : path}`)]
