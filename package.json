@@ -9,7 +9,7 @@
     "extensions": ["./src/index.ts"]
   },
   "scripts": {
-    "test": "node --test --test-force-exit \"tests/*.test.ts\" \"statusline/tests/*.test.ts\" \"subagents/tests/*.test.ts\" \"working-indicator/tests/*.test.ts\"",
+    "test": "node --test --test-force-exit \"tests/**/*.test.ts\" \"statusline/tests/*.test.ts\" \"subagents/tests/*.test.ts\" \"working-indicator/tests/*.test.ts\"",
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {

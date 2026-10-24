@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ExtensionAPI, ExtensionContext, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
-import askUser from "../ask-user.ts";
+import askUser from "../../src/ask-user/index.ts";
 
 const DISCUSS_LABEL = "Discuss this after the questions";
 const question = {

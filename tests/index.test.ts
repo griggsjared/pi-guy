@@ -6,14 +6,14 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { createEventBus, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import agentsLocal from "../agents-local.ts";
-import askUser from "../ask-user.ts";
-import btw from "../btw.ts";
-import githubPr from "../github-pr.ts";
-import header from "../header.ts";
+import askUser from "../src/ask-user/index.ts";
+import btw from "../src/btw/index.ts";
+import githubPr from "../src/github-pr/index.ts";
+import header from "../src/header/index.ts";
 import entry from "../src/index.ts";
 import statusline from "../statusline/index.ts";
 import subagents from "../subagents/index.ts";
-import webSearch from "../web-search.ts";
+import webSearch from "../src/web-search/index.ts";
 import workingIndicator from "../working-indicator/index.ts";
 
 test("the package entry registers everything each feature registers", async (t) => {

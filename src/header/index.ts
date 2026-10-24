@@ -8,7 +8,7 @@ import { basename, dirname, join, parse } from "node:path";
 import { DefaultPackageManager, loadProjectContextFiles, SettingsManager, VERSION, type BeforeAgentStartEvent, type ExtensionAPI, type ThemeColor } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 
-const PACKAGE_VERSION = (JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")) as { version: string }).version;
+const PACKAGE_VERSION = (JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as { version: string }).version;
 
 // Rows of each letter in "pi-guy"; LOGO_COLORS[i] colors LOGO_GLYPHS[i].
 const LOGO_COLORS: ThemeColor[] = ["error", "accent", "warning", "customMessageLabel", "success", "mdHeading"];

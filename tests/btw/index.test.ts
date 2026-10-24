@@ -3,7 +3,7 @@ import { test } from "node:test";
 import type { AssistantMessage, Context } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionCommandContext, SessionEntry, SessionMessageEntry } from "@earendil-works/pi-coding-agent";
 import { KeybindingsManager, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
-import btw, { fitModalBody, transcript } from "../btw.ts";
+import btw, { fitModalBody, transcript } from "../../src/btw/index.ts";
 
 function answer(text: string): AssistantMessage {
 	return { role: "assistant", content: [{ type: "text", text }], stopReason: "stop", timestamp: 1 } as AssistantMessage;
