@@ -1,4 +1,4 @@
-import { Container, SelectList, Text, truncateToWidth, visibleWidth, type Component } from "@earendil-works/pi-tui";
+import { Container, fuzzyFilter, getKeybindings, Input, SelectList, Text, truncateToWidth, visibleWidth, type Component } from "@earendil-works/pi-tui";
 import type { ExtensionAPI, ExtensionContext, Theme, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { OFF_PROFILE_NAME, resolveAgentSettings, SESSION_PROFILE_NAME, type AgentConfig, type SubagentSettings } from "./agents.ts";
@@ -756,25 +756,22 @@ async function chooseProfile(
   profiles: ProfileCommandDeps,
   ctx: ExtensionContext,
 ): Promise<string | undefined> {
-  const names = [...Object.keys(profiles.settings.profiles).sort((left, right) =>
-    Number(right === SESSION_PROFILE_NAME) - Number(left === SESSION_PROFILE_NAME)), OFF_PROFILE_NAME];
+  const names = [OFF_PROFILE_NAME, ...Object.keys(profiles.settings.profiles).sort((left, right) =>
+    Number(right === SESSION_PROFILE_NAME) - Number(left === SESSION_PROFILE_NAME))];
   const current = profiles.getActiveProfile();
   const agents = await profiles.discover();
   const parentModel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
   const name = await ctx.ui.custom<string | undefined>((tui, theme, _kb, done) => {
     const container = new Container();
     container.addChild(new Text(theme.fg("accent", theme.bold(`Subagent profile (active: ${current ?? "none"})`)), 0, 0));
-    const list = new SelectList(names.map((name) => {
+    const input = new Input();
+    container.addChild(input);
+    const items = names.map((name) => {
       const label = name === SESSION_PROFILE_NAME ? `${name} (built-in)` : name === OFF_PROFILE_NAME ? `${name} (no subagents)` : name;
       return { value: name, label: name === current ? `${label} (active)` : label };
-    }), Math.min(names.length, 5), {
-      selectedPrefix: (text) => theme.fg("accent", text),
-      selectedText: (text) => theme.fg("accent", text),
-      description: (text) => theme.fg("muted", text),
-      scrollInfo: (text) => theme.fg("dim", text),
-      noMatch: (text) => theme.fg("warning", text),
     });
     let previewName: string | undefined;
+    let highlightedName: string | undefined;
     // null marks a pending request; each provider is requested once per picker open.
     const usage = new Map<string, string | undefined | null>();
     const providersFor = (profile: string) => profile === OFF_PROFILE_NAME ? [] : [...new Set(agents.flatMap((agent) => {
@@ -842,31 +839,61 @@ async function chooseProfile(
       },
       invalidate() {},
     };
-    list.onSelectionChange = (item) => {
-      previewName = item.value;
-      if (!profiles.requestUsage) return;
-      for (const provider of providersFor(item.value)) {
-        if (usage.has(provider)) continue;
-        usage.set(provider, null);
-        void profiles.requestUsage(provider, theme).catch(() => undefined).then((text) => {
-          usage.set(provider, text);
-          tui.requestRender();
-        });
-      }
+    let list: SelectList;
+    const refilter = () => {
+      const query = input.getValue();
+      const filtered = fuzzyFilter(items, query, (item) => item.value);
+      list = new SelectList(filtered, Math.min(names.length, 5), {
+        selectedPrefix: (text) => theme.fg("accent", text),
+        selectedText: (text) => theme.fg("accent", text),
+        description: (text) => theme.fg("muted", text),
+        scrollInfo: (text) => theme.fg("dim", text),
+        noMatch: (text) => theme.fg("warning", text),
+      });
+      list.onSelectionChange = (item) => {
+        previewName = highlightedName = item.value;
+        if (!profiles.requestUsage) return;
+        for (const provider of providersFor(item.value)) {
+          if (usage.has(provider)) continue;
+          usage.set(provider, null);
+          void profiles.requestUsage(provider, theme).catch(() => undefined).then((text) => {
+            usage.set(provider, text);
+            tui.requestRender();
+          });
+        }
+      };
+      list.onSelect = (item) => done(item.value);
+      list.onCancel = () => done(undefined);
+      const index = filtered.findIndex((item) => item.value === (highlightedName ?? current ?? SESSION_PROFILE_NAME));
+      list.setSelectedIndex(query ? 0 : index >= 0 ? index : names.indexOf(SESSION_PROFILE_NAME));
+      const selected = list.getSelectedItem();
+      if (selected) list.onSelectionChange(selected);
+      else previewName = undefined;
     };
-    list.onSelect = (item) => done(item.value);
-    list.onCancel = () => done(undefined);
-    list.setSelectedIndex(Math.max(0, names.indexOf(current ?? "")));
-    const selected = list.getSelectedItem();
-    if (selected) list.onSelectionChange(selected);
-    container.addChild(list);
+    refilter();
+    container.addChild({
+      render: (width: number) => list.getSelectedItem()
+        ? list.render(width)
+        : [truncateToWidth(theme.fg("warning", "  No matching profiles"), width, "…")],
+      invalidate: () => list.invalidate(),
+    });
     container.addChild(details);
-    container.addChild(new Text(theme.fg("dim", "↑↓ navigate • enter select • esc cancel"), 0, 0));
+    container.addChild(new Text(theme.fg("dim", "type to search • ↑↓ navigate • enter select • esc cancel"), 0, 0));
     return {
+      get focused() { return input.focused; },
+      set focused(value: boolean) { input.focused = value; },
       render: (width: number) => container.render(width),
       invalidate: () => container.invalidate(),
       handleInput(data: string) {
-        list.handleInput(data);
+        const kb = getKeybindings();
+        if (kb.matches(data, "tui.select.up") || kb.matches(data, "tui.select.down") ||
+          kb.matches(data, "tui.select.confirm") || kb.matches(data, "tui.select.cancel")) {
+          list.handleInput(data);
+        } else {
+          const query = input.getValue();
+          input.handleInput(data);
+          if (query !== input.getValue()) refilter();
+        }
         tui.requestRender();
       },
     };

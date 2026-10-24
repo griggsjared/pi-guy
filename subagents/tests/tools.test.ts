@@ -1228,6 +1228,23 @@ test("/subagent-profile and its ctrl+shift+l shortcut preview, validate, and per
         assert.match(session, /worker +parent\/model +off/);
         assert.match(session, /調査-agent-with-a-very-long-name +parent\/model +minimal/);
         assert.match(session, /helper +parent\/model +minimal/);
+        component.handleInput!("\u001b[A");
+        assert.match(renderText(component), /→ off \(no subagents\)/);
+        component.handleInput!("\u001b[B");
+        component.handleInput!("of");
+        const matches = renderText(component);
+        assert.match(matches, /→ off \(no subagents\)/);
+        assert.doesNotMatch(matches, /^ {2}(session|primary|backup)/m);
+        assert.match(matches, /Subagents are off/);
+        component.handleInput!("z");
+        assert.match(renderText(component), /  No matching profiles/);
+        assert.doesNotMatch(renderText(component), /Subagents are off|Resolved settings:/);
+        component.handleInput!("\r");
+        component.handleInput!("\u0015");
+        const restored = renderText(component);
+        assert.match(restored, /→ off \(no subagents\)/);
+        assert.match(restored, /  session \(built-in\)/);
+        component.handleInput!("\u001b[B");
         component.handleInput!("\u001b[B");
         assert.equal(activeProfile, "backup");
         assert.equal(entries.length, 1);
@@ -1344,6 +1361,11 @@ test("subagent-profile picker shows one usage line per distinct provider, reques
         assert.deepEqual(usageLines(component), ["openai-codex  b:$4.20"]);
         component.handleInput!("\u001b[A");
         assert.match(renderText(component), /Resolved settings: mixed/);
+        component.handleInput!("ot");
+        assert.match(renderText(component), /Resolved settings: other/);
+        assert.deepEqual(usageLines(component), ["openai-codex  b:$4.20"]);
+        component.handleInput!("\u0015");
+        assert.match(renderText(component), /→ other/);
         assert.deepEqual(requests, ["anthropic", "openai-codex", "untracked"]);
         component.handleInput!("\u001b");
       }, () => { renders += 1; }),
