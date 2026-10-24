@@ -1,0 +1,54 @@
+import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
+import os from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+import { createEventBus, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import agentsLocal from "../agents-local.ts";
+import askUser from "../ask-user.ts";
+import btw from "../btw.ts";
+import githubPr from "../github-pr.ts";
+import header from "../header.ts";
+import entry from "../src/index.ts";
+import statusline from "../statusline/index.ts";
+import subagents from "../subagents/index.ts";
+import webSearch from "../web-search.ts";
+import workingIndicator from "../working-indicator/index.ts";
+
+test("the package entry registers everything each feature registers", async (t) => {
+	const home = await mkdtemp(join(os.tmpdir(), "pi-guy-entry-"));
+	const dirname = Object.getOwnPropertyDescriptor(globalThis, "__dirname");
+	t.after(async () => {
+		t.mock.restoreAll();
+		syncBuiltinESMExports();
+		if (dirname) Object.defineProperty(globalThis, "__dirname", dirname);
+		else Reflect.deleteProperty(globalThis, "__dirname");
+		await rm(home, { recursive: true, force: true });
+	});
+	Object.defineProperty(globalThis, "__dirname", { configurable: true, value: join(import.meta.dirname, "..", "subagents") });
+	t.mock.method(os, "homedir", () => home);
+	syncBuiltinESMExports();
+
+	const fromEntry = recorder();
+	await entry(fromEntry.pi);
+	const fromFeatures = recorder();
+	for (const feature of [agentsLocal, askUser, btw, githubPr, header, statusline, subagents, webSearch, workingIndicator]) {
+		await feature(fromFeatures.pi);
+	}
+
+	assert.ok(fromFeatures.calls.length > 0);
+	assert.deepEqual(fromEntry.calls.sort(), fromFeatures.calls.sort());
+});
+
+function recorder() {
+	const calls: string[] = [];
+	const target: Record<PropertyKey, unknown> = { events: createEventBus() };
+	const pi = new Proxy(target, {
+		get: (target, method) => target[method] ?? ((first: unknown) => {
+			const name = typeof first === "string" ? first : (first as { name?: string }).name;
+			calls.push(`${String(method)} ${name}`);
+		}),
+	}) as unknown as ExtensionAPI;
+	return { pi, calls };
+}
