@@ -244,8 +244,8 @@ test("header lists configured extensions by short name, without pi-guy or untrus
 		return rendered!.render(500).join("\n");
 	};
 
-	assert.ok((await start(false)).includes("  Extensions:\n    notes\n    rtk\n    pi-tools\n"));
-	assert.ok((await start(true)).includes("  Extensions:\n    local\n    notes\n    rtk\n    pi-tools\n"));
+	assert.ok((await start(false)).includes("  Extensions: notes · rtk · pi-tools\n  Context: none\n"));
+	assert.ok((await start(true)).includes("  Extensions: local · notes · rtk · pi-tools\n"));
 });
 
 test("header does not install or request terminal rendering in noninteractive modes", async () => {

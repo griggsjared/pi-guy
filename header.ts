@@ -80,7 +80,7 @@ export default function (pi: ExtensionAPI) {
 						? ["  Context:", ...paths.map((path) => `    ${path.startsWith(`${homedir()}/`) ? `~/${path.slice(homedir().length + 1)}` : path}`)]
 						: ["  Context: none"];
 					const extensions = !extensionNames ? [] : extensionNames.length
-						? ["  Extensions:", ...extensionNames.map((name) => `    ${name}`)]
+						? [`  Extensions: ${extensionNames.join(" · ")}`]
 						: ["  Extensions: none"];
 
 					return [
@@ -88,7 +88,7 @@ export default function (pi: ExtensionAPI) {
 						...logo.map((line) => truncateToWidth(line, width, "")),
 						"",
 						truncateToWidth(title, width),
-						...[...agents, ...extensions].flatMap((line) => wrapTextWithAnsi(theme.fg("dim", line), Math.max(1, width)).map((line) => truncateToWidth(line, width, ""))),
+						...[...extensions, ...agents].flatMap((line) => wrapTextWithAnsi(theme.fg("dim", line), Math.max(1, width)).map((line) => truncateToWidth(line, width, ""))),
 						"",
 					];
 				},
