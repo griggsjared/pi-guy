@@ -1502,7 +1502,7 @@ test("extension selects profiles explicitly and uses the headless fallback", asy
         assert.deepEqual(titles, entry.picker ? [`Subagent profile (active: ${initialProfile ?? "none"})`] : []);
         assert.deepEqual(profileNotes, []);
         assert.deepEqual(statuses.calls.at(-1), entry.mode === "tui" ? [PROFILE_ENTRY_TYPE, entry.profile] : undefined);
-        await sleep(10);
+        for (let waited = 0; calls.length === 0 && waited < 1000; waited += 5) await sleep(5);
         assert.equal(calls.length, 1);
         const args = calls[0]!.args;
         assert.equal(args[args.indexOf("--model") + 1], entry.model);
