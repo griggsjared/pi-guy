@@ -2752,17 +2752,17 @@ test("execute: parent abort does not cancel running or queued jobs", async () =>
   }, controller.signal, undefined, ctx);
   assert.equal(result.details.status, "launched");
 
-  await sleep(10);
+  for (let waited = 0; calls.length === 0 && waited < 1000; waited += 5) await sleep(5);
   controller.abort();
   assert.equal(calls.length, 1);
   assert.equal(registry.get(1)?.cancellationReason, undefined);
   assert.equal(registry.get(2)?.cancellationReason, undefined);
 
   children[0]!.finish(0);
-  await sleep(20);
+  for (let waited = 0; calls.length < 2 && waited < 1000; waited += 5) await sleep(5);
   assert.equal(calls.length, 2);
   children[1]!.finish(0);
-  await sleep(20);
+  for (let waited = 0; registry.get(2)?.status !== "completed" && waited < 1000; waited += 5) await sleep(5);
   assert.equal(registry.get(1)?.status, "completed");
   assert.equal(registry.get(2)?.status, "completed");
 });
