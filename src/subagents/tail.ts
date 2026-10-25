@@ -1,5 +1,6 @@
 import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
-import { Key, matchesKey, truncateToWidth, visibleWidth, type Component, type TUI } from "@earendil-works/pi-tui";
+import { Key, matchesKey, type Component, type TUI } from "@earendil-works/pi-tui";
+import { boxed } from "../lib/box.ts";
 import { formatDuration } from "../lib/format.ts";
 import type { Job, JobRegistry } from "./registry.ts";
 import type { JobEvent, JobStep } from "./types.ts";
@@ -308,21 +309,7 @@ export class SubagentTail implements Component {
     }
 
     lines.push(this.theme.fg("dim", "↑↓/PgUp/PgDn scroll · Home/End jump · Esc/q close"));
-    return this.box(lines, maxWidth);
-  }
-
-  private box(lines: string[], width: number): string[] {
-    if (width < 3) return lines.map((line) => truncateToWidth(line, width, "", true));
-    const innerWidth = width - 2;
-    const border = (text: string) => this.theme.fg("border", text);
-    const output = [border(`╭${"─".repeat(innerWidth)}╮`)];
-    for (const line of lines) {
-      const clipped = truncateToWidth(line, innerWidth, "", true);
-      const padding = " ".repeat(Math.max(0, innerWidth - visibleWidth(clipped)));
-      output.push(`${border("│")}${clipped}${padding}${border("│")}`);
-    }
-    output.push(border(`╰${"─".repeat(innerWidth)}╯`));
-    return output;
+    return boxed(lines, maxWidth, this.theme);
   }
 
   invalidate(): void {}

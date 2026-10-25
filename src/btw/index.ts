@@ -8,7 +8,8 @@ import {
 	type ExtensionAPI,
 	UserMessageComponent,
 } from "@earendil-works/pi-coding-agent";
-import { Key, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { Key, matchesKey } from "@earendil-works/pi-tui";
+import { boxed } from "../lib/box.ts";
 
 const SYSTEM_PROMPT =
 	"You are answering a side question about the current conversation. Answer the question directly and concisely. Do not continue the main task, call tools, or propose changes unless the question explicitly asks for them.";
@@ -80,22 +81,6 @@ export function fitModalBody(
 		viewportRows,
 		maxScroll,
 	};
-}
-
-function boxed(lines: string[], width: number, theme: { fg(color: string, text: string): string }, title: string): string[] {
-	if (width < 3) return lines.map((line) => truncateToWidth(line, Math.max(1, width), "", true));
-	const innerWidth = width - 2;
-	const border = (text: string) => theme.fg("border", text);
-	const titleText = truncateToWidth(` ${title} `, innerWidth, "", true);
-	const left = "─".repeat(Math.max(0, Math.floor((innerWidth - visibleWidth(titleText)) / 2)));
-	const right = "─".repeat(Math.max(0, innerWidth - visibleWidth(titleText) - left.length));
-	const output = [border(`╭${left}`) + theme.fg("accent", titleText) + border(`${right}╮`)];
-	for (const line of lines) {
-		const clipped = truncateToWidth(line, innerWidth, "", true);
-		output.push(`${border("│")}${clipped}${" ".repeat(Math.max(0, innerWidth - visibleWidth(clipped)))}${border("│")}`);
-	}
-	output.push(border(`╰${"─".repeat(innerWidth)}╯`));
-	return output;
 }
 
 export default function (pi: ExtensionAPI) {
