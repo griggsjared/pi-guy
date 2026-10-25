@@ -9,7 +9,7 @@ import {
 	isUsageStatus,
 	isUsageWindow,
 	normalizeUsagePercent,
-} from "../usage-status.ts";
+} from "../../src/statusline/usage-status.ts";
 
 const readyStatus = {
 	provider: "openai-codex" as const,

@@ -1,9 +1,8 @@
 import assert from "node:assert/strict";
 import childProcess from "node:child_process";
 import { test, type TestContext } from "node:test";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { CLAUDE_CACHE_TTL_MS, fetchClaudeUsage, normalizeClaudeUsage } from "../providers/claude.ts";
-import providerUsage from "../index.ts";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { fetchClaudeUsage, normalizeClaudeUsage } from "../../../src/statusline/providers/claude.ts";
 
 const capturedAt = Date.parse("2026-10-07T16:00:00Z");
 const output = [
@@ -130,98 +129,6 @@ test("cancels an in-flight Claude CLI request through its abort signal", async (
 	assert.equal(calls[0]?.stdinClosed, true);
 });
 
-test("Claude wiring caches quotas for five minutes and retries failed refreshes until fresh quotas replace them", async (t) => {
-	let reads = 0;
-	mockCli(t, (call) => {
-		reads++;
-		if (reads === 1) call.complete(null, output);
-		else if (reads <= 3) call.complete(new Error("secret CLI failure"), "");
-		else call.complete(null, output.replace("10% used", "20% used"));
-	});
-	const originalNow = Date.now;
-	let now = capturedAt;
-	const { handlers, context, statuses } = entryContext();
-	try {
-		Date.now = () => now;
-		handlers.get("session_start")?.({}, context);
-		assert.equal(JSON.parse(statuses.at(-1)!).state, "unknown");
-		await settle();
-		const ready = JSON.parse(statuses.at(-1)!);
-		assert.equal(ready.provider, "claude-bridge");
-		assert.equal(ready.state, "ready");
-		now += CLAUDE_CACHE_TTL_MS - 1;
-		handlers.get("turn_end")?.({}, context);
-		await settle();
-		assert.equal(reads, 1);
-		now++;
-		handlers.get("turn_end")?.({}, context);
-		await settle();
-		assert.equal(reads, 2);
-		assert.deepEqual(JSON.parse(statuses.at(-1)!), ready);
-		handlers.get("turn_end")?.({}, context);
-		await settle();
-		assert.equal(reads, 3);
-		assert.deepEqual(JSON.parse(statuses.at(-1)!), ready);
-		handlers.get("turn_end")?.({}, context);
-		await settle();
-		assert.equal(reads, 4);
-		assert.equal(JSON.parse(statuses.at(-1)!).windows[0].usedPercent, 20);
-		assert.equal(statuses.some((value) => value?.includes("secret")), false);
-	} finally {
-		handlers.get("session_shutdown")?.({}, context);
-		Date.now = originalNow;
-	}
-});
-
-test("index timeout cancels a hung Claude CLI request and permits a later refresh", async (t) => {
-	t.mock.timers.enable({ apis: ["setTimeout"] });
-	let reads = 0;
-	const calls = mockCli(t, (call) => { if (++reads > 1) call.complete(null, output); });
-	const { handlers, context, statuses } = entryContext();
-	try {
-		handlers.get("session_start")?.({}, context);
-		await settle();
-		assert.equal(reads, 1);
-		t.mock.timers.tick(10_000);
-		await settle();
-		assert.equal(calls[0]?.options.signal.aborted, true);
-		assert.equal(JSON.parse(statuses.at(-1)!).state, "unknown");
-		handlers.get("turn_end")?.({}, context);
-		await settle();
-		assert.equal(reads, 2);
-		assert.equal(JSON.parse(statuses.at(-1)!).state, "ready");
-	} finally {
-		handlers.get("session_shutdown")?.({}, context);
-		t.mock.timers.reset();
-	}
-});
-
-test("does not publish stale Claude results after selection, reload, or shutdown", async (t) => {
-	for (const event of ["model_select", "session_start", "session_shutdown"]) {
-		await t.test(event, async (t) => {
-			const calls = mockCli(t, () => {});
-			const { handlers, context, statuses } = entryContext();
-			try {
-				handlers.get("session_start")?.({}, context);
-				await settle();
-				handlers.get(event)?.({ model: context.model }, context);
-				await settle();
-				assert.equal(calls[0]?.options.signal.aborted, true);
-				calls[0]?.complete(null, output);
-				await settle();
-				assert.equal(statuses.some((value) => value && JSON.parse(value).state === "ready"), false);
-				if (event !== "session_shutdown") {
-					calls[1]?.complete(null, output);
-					await settle();
-					assert.equal(JSON.parse(statuses.at(-1)!).state, "ready");
-				} else assert.equal(statuses.at(-1), undefined);
-			} finally {
-				handlers.get("session_shutdown")?.({}, context);
-			}
-		});
-	}
-});
-
 type CliCall = {
 	file: string;
 	args: string[];
@@ -240,19 +147,4 @@ function mockCli(t: TestContext, load: (call: CliCall) => void): CliCall[] {
 		return { stdin: { end() { call.stdinClosed = true; } } } as any;
 	});
 	return calls;
-}
-
-function settle(): Promise<void> {
-	return new Promise((resolve) => setImmediate(resolve));
-}
-
-function entryContext() {
-	const handlers = new Map<string, (event: any, context: any) => void>();
-	providerUsage({ events: { on() { return () => {}; }, emit() {} }, on(event: string, handler: (event: any, context: any) => void) { handlers.set(event, handler); } } as unknown as ExtensionAPI);
-	const statuses: Array<string | undefined> = [];
-	const context = {
-		hasUI: true, model: { provider: "claude-bridge" },
-		ui: { setStatus(_key: string, value: string | undefined) { statuses.push(value); } },
-	};
-	return { handlers, context, statuses };
 }

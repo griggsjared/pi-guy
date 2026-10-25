@@ -1,14 +1,16 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import childProcess from "node:child_process";
+import { test, type TestContext } from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { normalizeAnthropicHeaders } from "../providers/anthropic.ts";
-import { normalizeCodexUsage } from "../providers/codex.ts";
-import { normalizeDeepseekUsage } from "../providers/deepseek.ts";
-import { readResponseTextLimited } from "../http.ts";
-import providerUsage from "../index.ts";
-import { normalizeOpencodeGoUsage } from "../providers/opencode.ts";
+import providerUsage from "../../src/statusline/index.ts";
+import { CLAUDE_CACHE_TTL_MS } from "../../src/statusline/providers/claude.ts";
 
-const capturedAt = 1_700_000_000_000;
+const capturedAt = Date.parse("2026-10-07T16:00:00Z");
+const output = [
+	"You are currently using your subscription to power your Claude Code usage",
+	"Current session: 10% used · resets Oct 7 at 12:59pm (America/Boise)",
+	"Current week (all models): 12% used · resets Oct 13 at 4:59am (America/Boise)",
+].join("\n");
 
 test("entry wiring registers the footer and publishes provider status", async () => {
 	const handlers = new Map<string, Array<(event: any, context: any) => void>>();
@@ -34,42 +36,6 @@ test("entry wiring registers the footer and publishes provider status", async ()
 	} finally {
 		for (const handler of handlers.get("session_shutdown") ?? []) handler({}, context);
 	}
-});
-
-test("normalizes Codex field variants and classifies windows", () => {
-	const usage = normalizeCodexUsage({ rate_limit: {
-		primary_window: { used_percent: 25, limit_window_seconds: 18_000, reset_at: 1_700_000_123 },
-		secondary_window: { usedPercent: 50, window_minutes: 10_080, resetAt: 1_700_001_234_000 },
-	} }, capturedAt);
-	assert.deepEqual(usage, {
-		provider: "openai-codex", state: "ready", capturedAtMs: capturedAt,
-		windows: [
-			{ kind: "rolling", label: "5h", usedPercent: 25, resetAtMs: 1_700_000_123_000 },
-			{ kind: "weekly", label: "7d", usedPercent: 50, resetAtMs: 1_700_001_234_000 },
-		],
-	});
-});
-
-test("normalizes DeepSeek balance responses", () => {
-	assert.deepEqual(normalizeDeepseekUsage({
-		is_available: true,
-		balance_infos: [{ currency: "CNY", total_balance: "110.00", granted_balance: "10.00", topped_up_balance: "100.00" }],
-	}, capturedAt), {
-		provider: "deepseek", state: "ready", capturedAtMs: capturedAt, windows: [], balance: { amount: 110, currency: "CNY" },
-	});
-	assert.deepEqual(normalizeDeepseekUsage({ balance_infos: [{ currency: "usd", total_balance: "7" }] }, capturedAt)?.balance, { amount: 7, currency: "USD" });
-	assert.deepEqual(normalizeDeepseekUsage({
-		balance_infos: [{ currency: "CNY", total_balance: "0" }, { currency: "USD", total_balance: "9.50" }],
-	}, capturedAt)?.balance, { amount: 9.5, currency: "USD" });
-	assert.deepEqual(normalizeDeepseekUsage({
-		balance_infos: [{ currency: "USD", total_balance: "-1" }, { currency: "CNY", total_balance: "3" }],
-	}, capturedAt)?.balance, { amount: 3, currency: "CNY" });
-	for (const total_balance of ["", "  ", "0x10", "1,234.56", "oops"]) {
-		assert.equal(normalizeDeepseekUsage({ balance_infos: [{ currency: "USD", total_balance }] }, capturedAt), undefined, total_balance);
-	}
-	assert.equal(normalizeDeepseekUsage({ balance_infos: [{ currency: "usd", total_balance: "oops" }] }, capturedAt), undefined);
-	assert.equal(normalizeDeepseekUsage({ balance_infos: [] }, capturedAt), undefined);
-	assert.equal(normalizeDeepseekUsage({}, capturedAt), undefined);
 });
 
 test("fetches DeepSeek balance from the fixed endpoint with an auth header", async () => {
@@ -265,22 +231,6 @@ test("preserves a cached DeepSeek balance when a refresh fails", async () => {
 	}
 });
 
-test("normalizes Anthropic unified rate-limit headers", () => {
-	assert.deepEqual(normalizeAnthropicHeaders({
-		"anthropic-ratelimit-unified-5h-utilization": "0.12",
-		"anthropic-ratelimit-unified-5h-reset": "1700000000",
-		"anthropic-ratelimit-unified-7d-utilization": "0.4",
-	}, capturedAt), {
-		provider: "anthropic", state: "ready", capturedAtMs: capturedAt,
-		windows: [
-			{ kind: "rolling", label: "5h", usedPercent: 12, resetAtMs: 1_700_000_000_000 },
-			{ kind: "weekly", label: "7d", usedPercent: 40 },
-		],
-	});
-	assert.equal(normalizeAnthropicHeaders({ "anthropic-ratelimit-unified-5h-utilization": "" }, capturedAt), undefined);
-	assert.equal(normalizeAnthropicHeaders({ "content-type": "text/event-stream" }, capturedAt), undefined);
-});
-
 test("fetches Anthropic plan usage from the OAuth usage endpoint", async () => {
 	const handlers = new Map<string, (event: any, context: any) => void>();
 	providerUsage({ events: { on() { return () => {}; }, emit() {} }, on(event: string, handler: (event: any, context: any) => void) { handlers.set(event, handler); } } as unknown as ExtensionAPI);
@@ -369,95 +319,6 @@ test("publishes Anthropic usage from response headers", async () => {
 	} finally {
 		handlers.get("session_shutdown")?.({}, context);
 	}
-});
-
-test("does not invent a Codex reset time", () => {
-	const usage = normalizeCodexUsage({ rate_limit: { primary_window: { used_percent: 10 } } }, capturedAt);
-	assert.equal(usage?.windows[0]?.resetAtMs, undefined);
-});
-
-test("parses nested OpenCode Go hydration data", () => {
-	const html = `<script>self.__next_f.push([1,"{\\"props\\":{\\"rollingUsage\\":{\\"usagePercent\\":12.5,\\"resetInSec\\":30},\\"nested\\":{\\"weeklyUsage\\":{\\"usagePercent\\":40,\\"resetInSec\\":3600}},\\"monthlyUsage\\":{\\"usagePercent\\":101,\\"resetInSec\\":7200}}}"]);</script>`;
-	const usage = normalizeOpencodeGoUsage(html, capturedAt);
-	assert.deepEqual(usage?.windows, [
-		{ kind: "rolling", label: "5h", usedPercent: 12.5, resetAtMs: capturedAt + 30_000 },
-		{ kind: "weekly", label: "7d", usedPercent: 40, resetAtMs: capturedAt + 3_600_000 },
-		{ kind: "monthly", label: "30d", usedPercent: 100, resetAtMs: capturedAt + 7_200_000 },
-	]);
-});
-
-test("parses data-slot usage item HTML fallback", () => {
-	const html = `<section data-slot="usage-item"><h2>Rolling Usage</h2><span>12.5%</span><p>resets in 30 minutes</p></section><div data-slot="usage-item"><b>Weekly Usage</b> 40% resets in 2 hours</div>`;
-	assert.deepEqual(normalizeOpencodeGoUsage(html, capturedAt)?.windows, [
-		{ kind: "rolling", label: "5h", usedPercent: 12.5, resetAtMs: capturedAt + 1_800_000 },
-		{ kind: "weekly", label: "7d", usedPercent: 40, resetAtMs: capturedAt + 7_200_000 },
-	]);
-});
-
-test("parses nested data-slot usage item HTML", () => {
-	const html = `<div data-slot="usage-item"><div><strong>Monthly Usage</strong></div><div><span>55%</span><p>resets in 2 days 3 hours</p></div></div>`;
-	assert.deepEqual(normalizeOpencodeGoUsage(html, capturedAt)?.windows, [
-		{ kind: "monthly", label: "30d", usedPercent: 55, resetAtMs: capturedAt + 183_600_000 },
-	]);
-});
-
-test("merges fallback windows only when hydration is partial", () => {
-	const html = `<script>rollingUsage:{usagePercent:10,resetInSec:30}</script><section data-slot="usage-item"><b>Rolling Usage</b> 99% resets in 1 hour</section><div data-slot="usage-item"><b>Weekly Usage</b> 40% resets in 2 hours</div>`;
-	assert.deepEqual(normalizeOpencodeGoUsage(html, capturedAt)?.windows, [
-		{ kind: "rolling", label: "5h", usedPercent: 10, resetAtMs: capturedAt + 30_000 },
-		{ kind: "weekly", label: "7d", usedPercent: 40, resetAtMs: capturedAt + 7_200_000 },
-	]);
-});
-
-test("parses Solid Seroval hydration with references and unquoted keys", () => {
-	const html = `<script>_$HY.r["lite.subscription.get"]=$R[1]={rollingUsage:$R[2]={status:"ok",resetInSec:30,usagePercent:12.5},weeklyUsage:$R[3]={status:"ok",resetInSec:3600,usagePercent:40},monthlyUsage:$R[4]={status:"rate-limited",resetInSec:7200,usagePercent:50}};</script>`;
-	const usage = normalizeOpencodeGoUsage(html, capturedAt);
-	assert.deepEqual(usage?.windows, [
-		{ kind: "rolling", label: "5h", usedPercent: 12.5, resetAtMs: capturedAt + 30_000 },
-		{ kind: "weekly", label: "7d", usedPercent: 40, resetAtMs: capturedAt + 3_600_000 },
-		{ kind: "monthly", label: "30d", usedPercent: 50, resetAtMs: capturedAt + 7_200_000 },
-	]);
-});
-
-test("validates OpenCode reset values", () => {
-	assert.equal(normalizeOpencodeGoUsage(`rollingUsage:{usagePercent:10,resetInSec:-1}`, capturedAt), undefined);
-	assert.equal(normalizeOpencodeGoUsage(`rollingUsage:{usagePercent:10,resetInSec:1e308}`, capturedAt), undefined);
-	assert.equal(normalizeOpencodeGoUsage(`rollingUsage:{usagePercent:10,resetInSec:0}`, capturedAt)?.windows[0]?.resetAtMs, capturedAt);
-	assert.equal(normalizeOpencodeGoUsage(`rollingUsage:{usagePercent:10,resetInSec:.5}`, capturedAt)?.windows[0]?.resetAtMs, capturedAt + 500);
-});
-
-test("bounds malformed hydration scanning", () => {
-	const fragments = Array.from({ length: 300 }, () =>
-		`rollingUsage:{${"x".repeat(16_000)}`,
-	).join(";");
-	const started = performance.now();
-	assert.equal(normalizeOpencodeGoUsage(fragments, capturedAt), undefined);
-	assert.ok(performance.now() - started < 500, "malformed hydration should be bounded");
-});
-
-test("rejects invalid OpenCode fields and omits unrelated secrets", () => {
-	assert.equal(normalizeOpencodeGoUsage(`<div>rollingUsage: {"usagePercent":"secret","resetInSec":1}</div>`), undefined);
-	const usage = normalizeOpencodeGoUsage(`<div>rollingUsage: {"usagePercent":10,"resetInSec":1,"authCookie":"secret"}</div>`);
-	assert.equal(JSON.stringify(usage).includes("secret"), false);
-});
-
-test("limits response bodies while streaming", async () => {
-	let headerCancelled = false;
-	const oversizedHeader = new Response(new ReadableStream({
-		start(controller) { controller.enqueue(new Uint8Array([1])); },
-		cancel() { headerCancelled = true; },
-	}), { headers: { "content-length": "100" } });
-	await assert.rejects(readResponseTextLimited(oversizedHeader, 10, "Test"), /too large/);
-	assert.equal(headerCancelled, true);
-
-	const stream = new ReadableStream<Uint8Array>({
-		start(controller) {
-			controller.enqueue(new TextEncoder().encode("123"));
-			controller.enqueue(new TextEncoder().encode("456"));
-			controller.close();
-		},
-	});
-	await assert.rejects(readResponseTextLimited(new Response(stream), 5, "Test"), /too large/);
 });
 
 test("does not expose OpenCode credentials through status or errors", async () => {
@@ -607,3 +468,130 @@ test("ignores a stale OpenCode response after switching providers", async () => 
 		else process.env.OPENCODE_GO_AUTH_COOKIE = originalCookie;
 	}
 });
+
+test("Claude wiring caches quotas for five minutes and retries failed refreshes until fresh quotas replace them", async (t) => {
+	let reads = 0;
+	mockCli(t, (call) => {
+		reads++;
+		if (reads === 1) call.complete(null, output);
+		else if (reads <= 3) call.complete(new Error("secret CLI failure"), "");
+		else call.complete(null, output.replace("10% used", "20% used"));
+	});
+	const originalNow = Date.now;
+	let now = capturedAt;
+	const { handlers, context, statuses } = entryContext();
+	try {
+		Date.now = () => now;
+		handlers.get("session_start")?.({}, context);
+		assert.equal(JSON.parse(statuses.at(-1)!).state, "unknown");
+		await settle();
+		const ready = JSON.parse(statuses.at(-1)!);
+		assert.equal(ready.provider, "claude-bridge");
+		assert.equal(ready.state, "ready");
+		now += CLAUDE_CACHE_TTL_MS - 1;
+		handlers.get("turn_end")?.({}, context);
+		await settle();
+		assert.equal(reads, 1);
+		now++;
+		handlers.get("turn_end")?.({}, context);
+		await settle();
+		assert.equal(reads, 2);
+		assert.deepEqual(JSON.parse(statuses.at(-1)!), ready);
+		handlers.get("turn_end")?.({}, context);
+		await settle();
+		assert.equal(reads, 3);
+		assert.deepEqual(JSON.parse(statuses.at(-1)!), ready);
+		handlers.get("turn_end")?.({}, context);
+		await settle();
+		assert.equal(reads, 4);
+		assert.equal(JSON.parse(statuses.at(-1)!).windows[0].usedPercent, 20);
+		assert.equal(statuses.some((value) => value?.includes("secret")), false);
+	} finally {
+		handlers.get("session_shutdown")?.({}, context);
+		Date.now = originalNow;
+	}
+});
+
+test("index timeout cancels a hung Claude CLI request and permits a later refresh", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	let reads = 0;
+	const calls = mockCli(t, (call) => { if (++reads > 1) call.complete(null, output); });
+	const { handlers, context, statuses } = entryContext();
+	try {
+		handlers.get("session_start")?.({}, context);
+		await settle();
+		assert.equal(reads, 1);
+		t.mock.timers.tick(10_000);
+		await settle();
+		assert.equal(calls[0]?.options.signal.aborted, true);
+		assert.equal(JSON.parse(statuses.at(-1)!).state, "unknown");
+		handlers.get("turn_end")?.({}, context);
+		await settle();
+		assert.equal(reads, 2);
+		assert.equal(JSON.parse(statuses.at(-1)!).state, "ready");
+	} finally {
+		handlers.get("session_shutdown")?.({}, context);
+		t.mock.timers.reset();
+	}
+});
+
+test("does not publish stale Claude results after selection, reload, or shutdown", async (t) => {
+	for (const event of ["model_select", "session_start", "session_shutdown"]) {
+		await t.test(event, async (t) => {
+			const calls = mockCli(t, () => {});
+			const { handlers, context, statuses } = entryContext();
+			try {
+				handlers.get("session_start")?.({}, context);
+				await settle();
+				handlers.get(event)?.({ model: context.model }, context);
+				await settle();
+				assert.equal(calls[0]?.options.signal.aborted, true);
+				calls[0]?.complete(null, output);
+				await settle();
+				assert.equal(statuses.some((value) => value && JSON.parse(value).state === "ready"), false);
+				if (event !== "session_shutdown") {
+					calls[1]?.complete(null, output);
+					await settle();
+					assert.equal(JSON.parse(statuses.at(-1)!).state, "ready");
+				} else assert.equal(statuses.at(-1), undefined);
+			} finally {
+				handlers.get("session_shutdown")?.({}, context);
+			}
+		});
+	}
+});
+
+type CliCall = {
+	file: string;
+	args: string[];
+	options: { signal: AbortSignal };
+	stdinClosed: boolean;
+	complete(error: Error | null, stdout: string): void;
+};
+
+function mockCli(t: TestContext, load: (call: CliCall) => void): CliCall[] {
+	const calls: CliCall[] = [];
+	t.mock.method(childProcess, "execFile", (file: string, args: string[], options: any, callback: any) => {
+		const call: CliCall = { file, args, options, stdinClosed: false, complete: (error, stdout) => callback(error, stdout, "secret stderr") };
+		calls.push(call);
+		options.signal.addEventListener("abort", () => call.complete(options.signal.reason, ""), { once: true });
+		queueMicrotask(() => load(call));
+		return { stdin: { end() { call.stdinClosed = true; } } } as any;
+	});
+	return calls;
+}
+
+function settle(): Promise<void> {
+	return new Promise((resolve) => setImmediate(resolve));
+}
+
+function entryContext() {
+	const handlers = new Map<string, (event: any, context: any) => void>();
+	providerUsage({ events: { on() { return () => {}; }, emit() {} }, on(event: string, handler: (event: any, context: any) => void) { handlers.set(event, handler); } } as unknown as ExtensionAPI);
+	const statuses: Array<string | undefined> = [];
+	const context = {
+		hasUI: true, model: { provider: "claude-bridge" },
+		ui: { setStatus(_key: string, value: string | undefined) { statuses.push(value); } },
+	};
+	return { handlers, context, statuses };
+}

@@ -11,10 +11,10 @@ import btw from "../src/btw/index.ts";
 import githubPr from "../src/github-pr/index.ts";
 import header from "../src/header/index.ts";
 import entry from "../src/index.ts";
-import statusline from "../statusline/index.ts";
+import statusline from "../src/statusline/index.ts";
 import subagents from "../subagents/index.ts";
 import webSearch from "../src/web-search/index.ts";
-import workingIndicator from "../working-indicator/index.ts";
+import workingIndicator from "../src/working-indicator/index.ts";
 
 test("the package entry registers everything each feature registers", async (t) => {
 	const home = await mkdtemp(join(os.tmpdir(), "pi-guy-entry-"));

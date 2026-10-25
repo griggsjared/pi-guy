@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { CustomEditor, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import workingIndicator from "../index.ts";
+import workingIndicator from "../../src/working-indicator/index.ts";
 
 type TestContext = ReturnType<typeof createContext>["ctx"];
 type Handler = (event: Record<string, unknown>, context: TestContext) => void;
