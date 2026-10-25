@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createJobRegistry, type SubagentControl } from "../registry.ts";
-import { EMPTY_USAGE, type SubagentResult } from "../types.ts";
+import { createJobRegistry, type SubagentControl } from "../../src/subagents/registry.ts";
+import { EMPTY_USAGE, type SubagentResult } from "../../src/subagents/types.ts";
 
 function result(overrides: Partial<SubagentResult> = {}): SubagentResult {
   return {

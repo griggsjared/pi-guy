@@ -44,12 +44,13 @@ export default async function (pi: ExtensionAPI) {
     description: "Subagent profile to use",
     type: "string",
   });
+  const agentsDir = join(__dirname, "..", "..", "resources", "subagents");
   const [agents, settings] = await Promise.all([
-    discoverAgents(__dirname),
+    discoverAgents(agentsDir),
     loadSubagentSettings(),
   ]);
   // Children run with --no-extensions, so AGENTS.local.md loading must be re-added by path.
-  const extensionPaths = [join(__dirname, "..", "agents-local.ts"), ...await resolveExtensionPaths(settings.extensions)];
+  const extensionPaths = [join(__dirname, "..", "agents-local", "index.ts"), ...await resolveExtensionPaths(settings.extensions)];
   const registry = createJobRegistry();
   const activeTickers = new Set<ReturnType<typeof setInterval>>();
   let activeProfile = restoreActiveProfile([], settings);
@@ -57,7 +58,7 @@ export default async function (pi: ExtensionAPI) {
 
   const profileDeps = {
     settings,
-    discover: () => discoverAgents(__dirname),
+    discover: () => discoverAgents(agentsDir),
     getActiveProfile: () => activeProfile,
     setActiveProfile: (name: string) => {
       activeProfile = name;
@@ -81,7 +82,7 @@ export default async function (pi: ExtensionAPI) {
       }
       return confirmSubagentProfile(pi, profileDeps, ctx, onPause);
     },
-    discover: () => discoverAgents(__dirname),
+    discover: () => discoverAgents(agentsDir),
     registry,
     activeTickers,
     bridgeExtensionPath: join(__dirname, "child-bridge.ts"),

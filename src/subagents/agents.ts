@@ -222,9 +222,8 @@ export async function loadAgentFile(path: string): Promise<AgentConfig | undefin
   }
 }
 
-export async function discoverAgents(extensionDir: string): Promise<AgentConfig[]> {
+export async function discoverAgents(agentsDir: string): Promise<AgentConfig[]> {
   const agents: AgentConfig[] = [];
-  const agentsDir = join(extensionDir, "agents");
 
   try {
     const files = await readdir(agentsDir);

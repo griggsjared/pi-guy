@@ -1,11 +1,11 @@
 import type { ExtensionAPI, ExtensionFactory } from "@earendil-works/pi-coding-agent";
-import agentsLocal from "../agents-local.ts";
+import agentsLocal from "./agents-local/index.ts";
 import askUser from "./ask-user/index.ts";
 import btw from "./btw/index.ts";
 import githubPr from "./github-pr/index.ts";
 import header from "./header/index.ts";
 import statusline from "./statusline/index.ts";
-import subagents from "../subagents/index.ts";
+import subagents from "./subagents/index.ts";
 import webSearch from "./web-search/index.ts";
 import workingIndicator from "./working-indicator/index.ts";
 

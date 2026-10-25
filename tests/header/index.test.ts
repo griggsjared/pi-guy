@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { createEventBus, loadProjectContextFiles, VERSION, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import agentsLocal from "../../agents-local.ts";
+import agentsLocal from "../../src/agents-local/index.ts";
 import header from "../../src/header/index.ts";
 
 test("header shows final context files regardless of extension order and resets each session", async (t) => {

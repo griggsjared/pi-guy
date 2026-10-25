@@ -9,12 +9,12 @@ import { join } from "node:path";
 import { Box, visibleWidth, type Component } from "@earendil-works/pi-tui";
 import { Check } from "typebox/value";
 import type { ExtensionAPI, ExtensionContext, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
-import { OFF_PROFILE_NAME, parseSubagentSettings, SESSION_PROFILE_NAME, type AgentConfig, type SubagentSettings } from "../agents.ts";
-import subagentsExtension, { restoreActiveProfile } from "../index.ts";
-import { createJobRegistry } from "../registry.ts";
-import { refreshUi, registerRenderers, renderFullWidget } from "../render.ts";
-import { Batch, CompletionMailbox, createSubagentTool, resolveMode } from "../tools.ts";
-import { formatLocalTime } from "../tail.ts";
+import { OFF_PROFILE_NAME, parseSubagentSettings, SESSION_PROFILE_NAME, type AgentConfig, type SubagentSettings } from "../../src/subagents/agents.ts";
+import subagentsExtension, { restoreActiveProfile } from "../../src/subagents/index.ts";
+import { createJobRegistry } from "../../src/subagents/registry.ts";
+import { refreshUi, registerRenderers, renderFullWidget } from "../../src/subagents/render.ts";
+import { Batch, CompletionMailbox, createSubagentTool, resolveMode } from "../../src/subagents/tools.ts";
+import { formatLocalTime } from "../../src/subagents/tail.ts";
 import {
   confirmSubagentProfile,
   createCancelTool,
@@ -23,8 +23,8 @@ import {
   createSendTool,
   createStatusTool,
   registerStatusCommands,
-} from "../status-tools.ts";
-import { EMPTY_USAGE, ENTRY_TYPE, PROFILE_ENTRY_TYPE, QUESTION_ENTRY_TYPE, STATUS_KEY } from "../types.ts";
+} from "../../src/subagents/status-tools.ts";
+import { EMPTY_USAGE, ENTRY_TYPE, PROFILE_ENTRY_TYPE, QUESTION_ENTRY_TYPE, STATUS_KEY } from "../../src/subagents/types.ts";
 import {
   FakeChild,
   fakeSpawn,
@@ -1399,7 +1399,8 @@ test("restoreActiveProfile restores only the latest session selection", () => {
 
 test("extension selects profiles explicitly and uses the headless fallback", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "subagents-test-"));
-  const extensionDir = join(dir, "extensions", "subagents");
+  const extensionDir = join(dir, "src", "subagents");
+  const agentsDir = join(dir, "resources", "subagents");
   const settingsDir = join(dir, ".pi", "agent");
   const dirname = Object.getOwnPropertyDescriptor(globalThis, "__dirname");
   t.after(async () => {
@@ -1409,9 +1410,9 @@ test("extension selects profiles explicitly and uses the headless fallback", asy
     else Reflect.deleteProperty(globalThis, "__dirname");
     await rm(dir, { recursive: true, force: true });
   });
-  await mkdir(join(extensionDir, "agents"), { recursive: true });
+  await mkdir(agentsDir, { recursive: true });
   await mkdir(settingsDir, { recursive: true });
-  await writeFile(join(extensionDir, "agents", "scout.md"), "---\nname: scout\nthinkingLevel: high\n---\nYou are a scout.");
+  await writeFile(join(agentsDir, "scout.md"), "---\nname: scout\nthinkingLevel: high\n---\nYou are a scout.");
   Object.defineProperty(globalThis, "__dirname", { configurable: true, value: extensionDir });
   t.mock.method(os, "homedir", () => dir);
   syncBuiltinESMExports();

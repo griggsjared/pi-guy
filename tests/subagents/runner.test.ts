@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { getPiCommand, runSubagent, runWithConcurrencyLimit } from "../runner.ts";
-import type { AgentConfig } from "../agents.ts";
-import type { JobEventInput, JobStepInput, SubagentInactivity } from "../types.ts";
+import { getPiCommand, runSubagent, runWithConcurrencyLimit } from "../../src/subagents/runner.ts";
+import type { AgentConfig } from "../../src/subagents/agents.ts";
+import type { JobEventInput, JobStepInput, SubagentInactivity } from "../../src/subagents/types.ts";
 import {
   FakeChild,
   fakeSpawn,

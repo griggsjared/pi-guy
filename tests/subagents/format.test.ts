@@ -10,8 +10,8 @@ import {
   normalizeTitle,
   shortLabel,
   toolCallLabel,
-} from "../format.ts";
-import { EMPTY_USAGE, type SubagentUsage } from "../types.ts";
+} from "../../src/subagents/format.ts";
+import { EMPTY_USAGE, type SubagentUsage } from "../../src/subagents/types.ts";
 
 test("formatTokens", () => {
   assert.equal(formatTokens(0), "0");

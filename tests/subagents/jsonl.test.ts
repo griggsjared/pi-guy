@@ -11,7 +11,7 @@ import {
   parseParentQuestion,
   sanitizeToolCallArgs,
   truncateStrings,
-} from "../jsonl.ts";
+} from "../../src/subagents/jsonl.ts";
 
 const end = (content: unknown, extra: Record<string, unknown> = {}) =>
   JSON.stringify({ type: "message_end", message: { role: "assistant", content, ...extra } });

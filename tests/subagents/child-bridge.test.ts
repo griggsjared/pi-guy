@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import childBridge from "../child-bridge.ts";
-import { ASK_PARENT_TITLE_PREFIX } from "../types.ts";
+import childBridge from "../../src/subagents/child-bridge.ts";
+import { ASK_PARENT_TITLE_PREFIX } from "../../src/subagents/types.ts";
 
 function registeredTool() {
   let tool: ToolDefinition | undefined;

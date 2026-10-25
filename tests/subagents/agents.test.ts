@@ -13,7 +13,7 @@ import {
   resolveAgentSettings,
   resolveExtensionPaths,
   SESSION_PROFILE_NAME,
-} from "../agents.ts";
+} from "../../src/subagents/agents.ts";
 
 test("parseFrontmatter extracts meta and body", () => {
   const { meta, body } = parseFrontmatter("---\nname: scout\ndescription: Fast\n---\n\nBody text");
@@ -93,7 +93,7 @@ test("discoverAgents loads only .md files", async () => {
     await writeFile(join(agentsDir, "a.md"), "---\nname: alpha\n---\nprompt");
     await writeFile(join(agentsDir, "b.md"), "---\ndescription: no name\n---\nprompt");
     await writeFile(join(agentsDir, "ignore.txt"), "not an agent");
-    const agents = await discoverAgents(dir);
+    const agents = await discoverAgents(agentsDir);
     assert.deepEqual(agents.map((a) => a.name), ["alpha", "b"]);
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -103,7 +103,7 @@ test("discoverAgents loads only .md files", async () => {
 test("discoverAgents tolerates a missing agents dir", async () => {
   const dir = await mkdtemp(join(tmpdir(), "subagents-test-"));
   try {
-    assert.deepEqual(await discoverAgents(dir), []);
+    assert.deepEqual(await discoverAgents(join(dir, "agents")), []);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

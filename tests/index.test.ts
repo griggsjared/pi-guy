@@ -5,14 +5,14 @@ import os from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { createEventBus, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import agentsLocal from "../agents-local.ts";
+import agentsLocal from "../src/agents-local/index.ts";
 import askUser from "../src/ask-user/index.ts";
 import btw from "../src/btw/index.ts";
 import githubPr from "../src/github-pr/index.ts";
 import header from "../src/header/index.ts";
 import entry from "../src/index.ts";
 import statusline from "../src/statusline/index.ts";
-import subagents from "../subagents/index.ts";
+import subagents from "../src/subagents/index.ts";
 import webSearch from "../src/web-search/index.ts";
 import workingIndicator from "../src/working-indicator/index.ts";
 
@@ -26,7 +26,7 @@ test("the package entry registers everything each feature registers", async (t) 
 		else Reflect.deleteProperty(globalThis, "__dirname");
 		await rm(home, { recursive: true, force: true });
 	});
-	Object.defineProperty(globalThis, "__dirname", { configurable: true, value: join(import.meta.dirname, "..", "subagents") });
+	Object.defineProperty(globalThis, "__dirname", { configurable: true, value: join(import.meta.dirname, "..", "src", "subagents") });
 	t.mock.method(os, "homedir", () => home);
 	syncBuiltinESMExports();
 

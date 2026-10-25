@@ -6,7 +6,7 @@ import { test } from "node:test";
 import { createAssistantMessageEventStream, getCurrentSystemPrompt, getCurrentTools, Type, type AssistantMessage } from "@earendil-works/pi-ai";
 import type { Model } from "@earendil-works/pi-ai/compat";
 import { createAgentSession, createEventBus, DefaultResourceLoader, SessionManager, SettingsManager, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import agentsLocal from "../agents-local.ts";
+import agentsLocal from "../../src/agents-local/index.ts";
 
 test("reports complete parent-first local paths at startup, clearing removals and propagating read errors", async (t) => {
 	const events: ExtensionAPI["events"] = createEventBus();
