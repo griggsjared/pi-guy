@@ -7,6 +7,7 @@ import { homedir } from "node:os";
 import { basename, dirname, join, parse } from "node:path";
 import { DefaultPackageManager, loadProjectContextFiles, SettingsManager, VERSION, type BeforeAgentStartEvent, type ExtensionAPI, type ThemeColor } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { CONTEXT_FILES_EVENT, type ContextFilesEvent } from "../lib/events.ts";
 
 const PACKAGE_VERSION = (JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as { version: string }).version;
 
@@ -31,8 +32,8 @@ export default function (pi: ExtensionAPI) {
 	let extensionsChecked = false;
 	const reportedContextPaths = new Map<string, string[]>();
 
-	pi.events.on("context:files", (data) => {
-		const { source, paths } = data as { source: string; paths: string[] };
+	pi.events.on(CONTEXT_FILES_EVENT, (data) => {
+		const { source, paths } = data as ContextFilesEvent;
 		reportedContextPaths.set(source, paths);
 		requestRender?.();
 	});

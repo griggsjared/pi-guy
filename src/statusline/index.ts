@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+import { PROVIDER_USAGE_REQUEST_EVENT, type ProviderUsageRequest } from "../lib/events.ts";
 import { ANTHROPIC_CACHE_TTL_MS, ANTHROPIC_PROVIDER, fetchAnthropicUsage, normalizeAnthropicHeaders } from "./providers/anthropic.ts";
 import { CLAUDE_CACHE_TTL_MS, CLAUDE_PROVIDER, fetchClaudeUsage } from "./providers/claude.ts";
 import { CODEX_CACHE_TTL_MS, CODEX_PROVIDER, fetchCodexUsage } from "./providers/codex.ts";
@@ -27,12 +28,6 @@ const USAGE_ADAPTERS: Record<UsageProvider, UsageAdapter> = {
 	[CODEX_PROVIDER]: { cacheTtlMs: CODEX_CACHE_TTL_MS, load: fetchCodexUsage },
 	[OPENCODE_PROVIDER]: { cacheTtlMs: OPENCODE_CACHE_TTL_MS, load: (_ctx, signal) => fetchOpencodeUsage(signal) },
 	[DEEPSEEK_PROVIDER]: { cacheTtlMs: DEEPSEEK_CACHE_TTL_MS, load: fetchDeepseekUsage },
-};
-
-type ProviderUsageRequest = {
-	provider: string;
-	theme: Pick<Theme, "fg">;
-	reply: (text: string | undefined) => void;
 };
 
 const isProviderUsageRequest = (value: unknown): value is ProviderUsageRequest => {
@@ -185,7 +180,7 @@ export default function providerUsage(pi: ExtensionAPI): void {
 		return promise;
 	};
 
-	pi.events.on("provider-usage:request", (data) => {
+	pi.events.on(PROVIDER_USAGE_REQUEST_EVENT, (data) => {
 		if (!isProviderUsageRequest(data)) return;
 		const { provider, theme, reply } = data;
 		const ctx = activeContext;

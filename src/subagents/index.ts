@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
+import { PROVIDER_USAGE_REQUEST_EVENT, type ProviderUsageRequest } from "../lib/events.ts";
 import { discoverAgents, loadSubagentSettings, OFF_PROFILE_NAME, resolveExtensionPaths, type SubagentSettings } from "./agents.ts";
 import { refreshUi, registerRenderers, type UiContext } from "./render.ts";
 import { createJobRegistry } from "./registry.ts";
@@ -66,7 +67,7 @@ export default async function (pi: ExtensionAPI) {
     },
     needsConfirmation: () => activeProfile === undefined,
     requestUsage: (provider: string, theme: Theme) => new Promise<string | undefined>((resolve) =>
-      pi.events.emit("provider-usage:request", { provider, theme, reply: resolve })),
+      pi.events.emit(PROVIDER_USAGE_REQUEST_EVENT, { provider, theme, reply: resolve } satisfies ProviderUsageRequest)),
   };
 
   registerRenderers(pi);
