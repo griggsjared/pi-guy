@@ -16,7 +16,7 @@ import subagents from "../src/subagents/index.ts";
 import webSearch from "../src/web-search/index.ts";
 import workingIndicator from "../src/working-indicator/index.ts";
 
-test("the package entry registers everything each feature registers", async (t) => {
+test("the package entry registers everything each factory registers", async (t) => {
 	const home = await mkdtemp(join(os.tmpdir(), "pi-guy-entry-"));
 	const dirname = Object.getOwnPropertyDescriptor(globalThis, "__dirname");
 	t.after(async () => {
@@ -32,13 +32,13 @@ test("the package entry registers everything each feature registers", async (t) 
 
 	const fromEntry = recorder();
 	await entry(fromEntry.pi);
-	const fromFeatures = recorder();
-	for (const feature of [agentsLocal, askUser, btw, githubPr, header, statusline, subagents, webSearch, workingIndicator]) {
-		await feature(fromFeatures.pi);
+	const fromFactories = recorder();
+	for (const factory of [agentsLocal, askUser, btw, githubPr, header, statusline, subagents, webSearch, workingIndicator]) {
+		await factory(fromFactories.pi);
 	}
 
-	assert.ok(fromFeatures.calls.length > 0);
-	assert.deepEqual(fromEntry.calls.sort(), fromFeatures.calls.sort());
+	assert.ok(fromFactories.calls.length > 0);
+	assert.deepEqual(fromEntry.calls.sort(), fromFactories.calls.sort());
 });
 
 function recorder() {
