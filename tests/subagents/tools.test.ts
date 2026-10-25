@@ -15,7 +15,7 @@ import {
   type SpawnCall,
 } from "./fake-child.ts";
 import { fakeTheme } from "../helpers/theme.ts";
-import { flush, sleep } from "../helpers/wait.ts";
+import { flush, sleep, waitFor } from "../helpers/wait.ts";
 import { spy, complete, makeTool, renderable, renderText } from "./helpers.ts";
 
 test("resolveMode: single, batch, and validation", () => {
@@ -352,7 +352,7 @@ test("execute: local settings set child model and thinking level", async () => {
   );
   await tool.execute("call1", { agent: "scout", task: "t" }, undefined, undefined, ctx);
 
-  await sleep(10);
+  await waitFor(() => child.stdin.writes.length > 0);
   child.stdout.emit("data", Buffer.from(endEvent("done")));
   child.finish(0);
   await sleep(20);
@@ -378,7 +378,7 @@ test("execute: sole profile defaults set child model and thinking level", async 
   );
   await tool.execute("call1", { agent: "scout", task: "t" }, undefined, undefined, ctx);
 
-  await sleep(10);
+  await waitFor(() => child.stdin.writes.length > 0);
   child.stdout.emit("data", Buffer.from(endEvent("done")));
   child.finish(0);
   await sleep(20);
@@ -408,7 +408,7 @@ test("execute: selected profile controls new jobs and completion metadata", asyn
   assert.equal(launch.details.profile, "backup");
   assert.doesNotMatch((launch.content[0] as { text: string }).text, /profile/i);
   assert.equal(registry.get(1)?.profile, "backup");
-  await sleep(10);
+  await waitFor(() => child.stdin.writes.length > 0);
   const args = calls[0]?.args ?? [];
   assert.equal(args[args.indexOf("--model") + 1], "backup/model");
   assert.equal(args[args.indexOf("--thinking") + 1], "high");
@@ -432,7 +432,7 @@ test("execute: setup failures preserve inherited model and effort", async () => 
 
   const result = await tool.execute("call1", { agent: "scout", task: "t" }, undefined, undefined, ctx);
   assert.equal(result.details.status, "launched");
-  await sleep(20);
+  await waitFor(() => sendMessage.calls.length > 0);
   assert.equal(registry.get(1)?.status, "failed");
   const [message] = sendMessage.calls[0] as [{ details: { model?: string; thinkingLevel?: string } }];
   assert.equal(message.details.model, "p/m");
@@ -475,7 +475,7 @@ test("execute: legacy sync input cannot make a single job block", async () => {
     profile: undefined,
   });
 
-  await sleep(10); // let runSubagent attach stream listeners
+  await waitFor(() => child.stdin.writes.length > 0);
   child.stdout.emit("data", Buffer.from(endEvent("scouted")));
   child.finish(0);
   await sleep(20);
@@ -494,7 +494,7 @@ test("execute: single returns launched, then displays and delivers its result", 
   assert.deepEqual(result.details.jobIds, [1]);
   assert.equal((result.content[0] as { text: string }).text, 'Launched **scout** subagent #1: "t"');
 
-  await sleep(10);
+  await waitFor(() => child.stdin.writes.length > 0);
   child.stdout.emit("data", Buffer.from(endEvent("scouted")));
   child.finish(0);
   await sleep(20); // let the .then chain run
@@ -511,7 +511,7 @@ test("execute: active parent holds results until agent_settled", async () => {
   (ctx as unknown as { isIdle: () => boolean }).isIdle = () => false;
   await tool.execute("call1", { agent: "scout", task: "t" }, undefined, undefined, ctx);
 
-  await sleep(10);
+  await waitFor(() => child.stdin.writes.length > 0);
   child.stdout.emit("data", Buffer.from(endEvent("scouted")));
   child.finish(0);
   await sleep(20);
@@ -572,7 +572,7 @@ test("execute: inactivity steers a busy parent once per idle stretch without sto
 test("execute: child semantic events are available through peek", async () => {
   const { tool, registry, child, ctx } = makeTool();
   await tool.execute("call1", { agent: "scout", task: "t" }, undefined, undefined, ctx);
-  await sleep(10);
+  await waitFor(() => child.stdin.writes.length > 0);
   const emit = (event: Record<string, unknown>) => {
     child.stdout.emit("data", Buffer.from(`${JSON.stringify(event)}\n`));
   };
@@ -601,7 +601,7 @@ test("execute: child semantic events are available through peek", async () => {
 test("child questions trigger a parent turn and subagent_reply resolves them", async () => {
   const { tool, registry, sendMessage, child, ctx } = makeTool();
   await tool.execute("call1", { agent: "scout", task: "t" }, undefined, undefined, ctx);
-  await sleep(10);
+  await waitFor(() => child.stdin.writes.length > 0);
   const initial = child.stdin.commands()[0];
   assert.ok(initial);
   child.stdout.emit("data", Buffer.from(responseEvent(initial)));
@@ -647,7 +647,7 @@ test("child questions trigger a parent turn and subagent_reply resolves them", a
 test("stale UI context does not duplicate cancellation completion", async () => {
   const { tool, registry, sendMessage, child, ctx } = makeTool();
   await tool.execute("call1", { agent: "scout", task: "t" }, undefined, undefined, ctx);
-  await sleep(10);
+  await waitFor(() => child.stdin.writes.length > 0);
   Object.defineProperty(ctx, "hasUI", {
     configurable: true,
     get: () => { throw new Error("stale context"); },
@@ -718,7 +718,7 @@ test("execute: partial-unknown batch launches known jobs and reports skipped cou
   assert.deepEqual(result.details.jobIds, [1, 2]);
   assert.equal(result.details.jobScope, registry.scope);
 
-  await sleep(10);
+  await waitFor(() => child.stdin.writes.length > 0);
   child.stdout.emit("data", Buffer.from(endEvent("scouted")));
   child.finish(0);
   await sleep(20);
@@ -743,7 +743,7 @@ test("execute: queued cancellation does not spawn and reports its reason", async
   }, undefined, undefined, ctx);
   assert.equal(registry.cancel(2, "timeout"), true);
   // Let the first launch finish setup and attach its close listener.
-  await sleep(10);
+  await waitFor(() => children[0]!.stdin.writes.length > 0);
   children[0]!.finish(0);
   await sleep(30);
   assert.equal(calls.length, 1, "the queued cancelled job must not spawn");
@@ -765,17 +765,17 @@ test("execute: parent abort does not cancel running or queued jobs", async () =>
   }, controller.signal, undefined, ctx);
   assert.equal(result.details.status, "launched");
 
-  for (let waited = 0; calls.length === 0 && waited < 1000; waited += 5) await sleep(5);
+  await waitFor(() => calls.length > 0);
   controller.abort();
   assert.equal(calls.length, 1);
   assert.equal(registry.get(1)?.cancellationReason, undefined);
   assert.equal(registry.get(2)?.cancellationReason, undefined);
 
   children[0]!.finish(0);
-  for (let waited = 0; calls.length < 2 && waited < 1000; waited += 5) await sleep(5);
+  await waitFor(() => calls.length === 2);
   assert.equal(calls.length, 2);
   children[1]!.finish(0);
-  for (let waited = 0; registry.get(2)?.status !== "completed" && waited < 1000; waited += 5) await sleep(5);
+  await waitFor(() => registry.get(2)?.status === "completed");
   assert.equal(registry.get(1)?.status, "completed");
   assert.equal(registry.get(2)?.status, "completed");
 });
@@ -784,7 +784,7 @@ test("execute: registry cancellation reason wins over child completion", async (
   const { tool, registry, sendMessage, child, ctx } = makeTool();
   const result = await tool.execute("call1", { agent: "scout", task: "t" }, undefined, undefined, ctx);
   assert.equal(result.details.status, "launched");
-  await sleep(10);
+  await waitFor(() => child.stdin.writes.length > 0);
   assert.equal(registry.cancel(1, "manual"), true);
   child.finish(143);
   await sleep(20);
@@ -806,7 +806,7 @@ test("execute: setup cancellation reports cancellation instead of failure", asyn
   registry = made.registry;
   const result = await made.tool.execute("call1", { agent: "scout", task: "t" }, undefined, undefined, made.ctx);
   assert.equal(result.details.status, "launched");
-  await sleep(20);
+  await waitFor(() => made.sendMessage.calls.length > 0);
   const details = (made.sendMessage.calls[0]?.[0] as { details: { status: string; cancellationReason?: string } }).details;
   assert.equal(details.status, "cancelled");
   assert.equal(details.cancellationReason, "session-shutdown");
@@ -819,7 +819,7 @@ test("execute: jobs outlive the tool-call abort signal", async () => {
   assert.equal(result.details.status, "launched");
 
   controller.abort();
-  await sleep(10);
+  await waitFor(() => child.stdin.writes.length > 0);
   assert.equal(child.killed, null, "the caller's abort signal must not cancel the job");
 
   child.stdout.emit("data", Buffer.from(endEvent("scouted")));
@@ -845,7 +845,7 @@ test("execute: parallel batch displays and delivers each result", async () => {
     'Launched 2 subagents in parallel:\n- #1 scout: "t1"\n- #2 scout: "t2"',
   );
 
-  await sleep(10);
+  await waitFor(() => children.every((child) => child.stdin.writes.length > 0));
   assert.equal(calls.length, 2, "one child spawned per task");
   children[0]!.stdout.emit("data", Buffer.from(endEvent("one")));
   children[0]!.finish(0);

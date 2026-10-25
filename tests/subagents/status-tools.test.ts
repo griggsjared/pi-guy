@@ -18,7 +18,7 @@ import {
 import { EMPTY_USAGE, PROFILE_ENTRY_TYPE } from "../../src/subagents/types.ts";
 import { responseEvent } from "./fake-child.ts";
 import { fakeTheme, taggedTheme as createTaggedTheme } from "../helpers/theme.ts";
-import { sleep } from "../helpers/wait.ts";
+import { sleep, waitFor } from "../helpers/wait.ts";
 import { AGENT, makeTool, customProfilePicker, renderAtWidth, renderText } from "./helpers.ts";
 
 test("subagent status includes compact model and effort", async () => {
@@ -1488,7 +1488,7 @@ test("/subagent-send reports rejected messages", async () => {
 test("subagent_send delivers a correlated steering command to a running child", async () => {
   const { tool, registry, child, ctx } = makeTool();
   await tool.execute("call1", { agent: "scout", task: "t" }, undefined, undefined, ctx);
-  await sleep(10);
+  await waitFor(() => child.stdin.writes.length > 0);
   const initial = child.stdin.commands()[0];
   assert.ok(initial);
   child.stdout.emit("data", Buffer.from(responseEvent(initial)));
