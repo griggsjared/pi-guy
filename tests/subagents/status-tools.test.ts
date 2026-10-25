@@ -932,9 +932,11 @@ test("/subagent-profile and its ctrl+shift+l shortcut preview, validate, and per
   assert.deepEqual(entries, [[PROFILE_ENTRY_TYPE, { name: "backup" }]]);
   assert.match(notices.at(-1)?.text ?? "", /New jobs will use it/);
 
-  await command.handler("missing", ctx);
-  assert.equal(activeProfile, "backup");
-  assert.equal(notices.at(-1)?.level, "error");
+  for (const name of ["missing", "constructor"]) {
+    await command.handler(name, ctx);
+    assert.equal(activeProfile, "backup");
+    assert.equal(notices.at(-1)?.level, "error");
+  }
 
   await command.handler("", ctx);
   assert.equal(pickerOpens, 1);

@@ -900,7 +900,7 @@ async function chooseProfile(
     };
   });
   if (!name) return undefined;
-  if (name !== OFF_PROFILE_NAME && !profiles.settings.profiles[name]) {
+  if (name !== OFF_PROFILE_NAME && !Object.hasOwn(profiles.settings.profiles, name)) {
     if (ctx.hasUI) ctx.ui.notify(`Unknown subagent profile "${name}". Available: ${names.join(", ")}`, "error");
     return undefined;
   }
@@ -970,7 +970,7 @@ export function registerStatusCommands(
       name = await chooseProfile(pi, profiles, ctx);
       if (!name) return;
     } else {
-      if (name !== OFF_PROFILE_NAME && !profiles.settings.profiles[name]) {
+      if (name !== OFF_PROFILE_NAME && !Object.hasOwn(profiles.settings.profiles, name)) {
         if (ctx.hasUI) ctx.ui.notify(`Unknown subagent profile "${name}". Available: ${names.join(", ")}`, "error");
         return;
       }

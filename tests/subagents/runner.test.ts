@@ -440,6 +440,36 @@ test("runSubagent: appends signal diagnostics without blank lines after stderr",
   assert.equal(r.error, "child error\n[subagents] Killed by SIGKILL");
 });
 
+test("runSubagent: reassembles characters split across output chunks", async () => {
+  const child = new FakeChild();
+  const { result } = await runSubagent(agent, "t", "/tmp", "m", {
+    spawnFn: fakeSpawn(child),
+  });
+  for (const [stream, bytes] of [[child.stdout, Buffer.from(endEvent("π"))], [child.stderr, Buffer.from("π error\n")]] as const) {
+    const split = bytes.indexOf(Buffer.from("π")) + 1;
+    stream.emit("data", bytes.subarray(0, split));
+    stream.emit("data", bytes.subarray(split));
+  }
+  child.signalCode = "SIGKILL";
+  child.emit("close", null, "SIGKILL");
+
+  const r = await result;
+  assert.equal(r.text, "π");
+  assert.equal(r.error, "π error\n[subagents] Killed by SIGKILL");
+});
+
+test("runSubagent: a closed-pipe error on stdin does not crash pi", async () => {
+  const child = new FakeChild();
+  const { result } = await runSubagent(agent, "t", "/tmp", "m", {
+    spawnFn: fakeSpawn(child),
+  });
+  child.stdin.emit("error", Object.assign(new Error("write EPIPE"), { code: "EPIPE" }));
+  child.stdout.emit("data", Buffer.from(endEvent("done")));
+  child.finish(0);
+
+  assert.equal((await result).text, "done");
+});
+
 test("runSubagent: formats no-text diagnostics from nonempty JSONL records", async () => {
   const child = new FakeChild();
   const { result } = await runSubagent(agent, "t", "/tmp", "m", {

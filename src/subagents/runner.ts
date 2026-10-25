@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtemp, rmdir, unlink, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { tmpdir } from "node:os";
+import { StringDecoder } from "node:string_decoder";
 import type { AgentConfig } from "./agents.ts";
 import { normalizeTitle, toolCallLabel } from "./format.ts";
 import {
@@ -217,6 +218,8 @@ export async function runSubagent(
   }
 
   const stdin = proc.stdin!;
+  // Write callbacks report each failure; without a listener, a write to a closed pipe (EPIPE) would crash pi.
+  stdin.on("error", () => {});
   let cancelJob: (reason: CancellationReason) => void = () => {};
   let sendMessage: (message: string, deliverAs: SubagentDelivery) => Promise<void> = async () => {
     throw new Error("Subagent transport is not ready");
@@ -235,6 +238,8 @@ export async function runSubagent(
     let stdout = "";
     let stderr = "";
     let pending = "";
+    const stdoutDecoder = new StringDecoder("utf8");
+    const stderrDecoder = new StringDecoder("utf8");
     let lastStreamAt = 0;
     const state = createStreamState(model ?? "");
     const commands = new Map<string, PendingCommand>();
@@ -590,7 +595,8 @@ export async function runSubagent(
       // The capped stdout buffer is only a parse fallback for close; live
       // state (final text, tool calls, usage) is parsed incrementally from
       // complete JSONL lines, so the cap never affects it.
-      stdout += data.toString();
+      const text = stdoutDecoder.write(data);
+      stdout += text;
       if (stdout.length > MAX_CHILD_OUTPUT) {
         // Slice to the last line boundary before the cap so the tail never
         // starts mid-line (a cut JSONL event would fail to parse).
@@ -598,7 +604,7 @@ export async function runSubagent(
         const nl = stdout.indexOf("\n", excess);
         stdout = stdout.slice(nl === -1 ? excess : nl + 1);
       }
-      pending += data.toString();
+      pending += text;
       // An unterminated line (e.g. an agent echoing a huge file) can outgrow
       // the stdout cap; keep the tail so memory stays bounded.
       if (pending.length > MAX_CHILD_OUTPUT) {
@@ -612,7 +618,7 @@ export async function runSubagent(
     });
     proc.stderr?.on("data", (data) => {
       if (data.length > 0) recordActivity();
-      stderr += data.toString();
+      stderr += stderrDecoder.write(data);
       if (stderr.length > MAX_CHILD_ERROR) stderr = stderr.slice(-MAX_CHILD_ERROR);
     });
 
