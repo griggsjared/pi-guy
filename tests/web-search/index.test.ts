@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { test, type TestContext } from "node:test";
+import { test } from "node:test";
+import type { TestContext } from "node:test";
 import type { ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import { Check } from "typebox/value";
 import webSearch from "../../src/web-search/index.ts";
@@ -85,6 +86,21 @@ for (const backend of ["duckduckgo-lite", "tavily"]) {
 	});
 }
 
+test("separate registrations keep cached results isolated for the same query", async (t) => {
+	const fetch = boundaries(t);
+	const first = captureTools(webSearch).get("web_search")!;
+	const second = captureTools(webSearch).get("web_search")!;
+	const query = "isolated cache query";
+	fetch.mock.mockImplementation(async () => new Response(ddg));
+	const firstResponse = await first.execute("test", { query }, undefined, undefined, ctx);
+	assert.deepEqual(firstResponse.structuredContent, { backend: "duckduckgo-lite", query, results: [result] });
+
+	fetch.mock.mockImplementation(async () => new Response(ddg.replace("Example &amp; title", "Fresh title")));
+	const secondResponse = await second.execute("test", { query }, undefined, undefined, ctx);
+	assert.deepEqual(secondResponse.structuredContent, { backend: "duckduckgo-lite", query, results: [{ ...result, title: "Fresh title" }] });
+	assert.deepEqual(await first.execute("test", { query }, undefined, undefined, ctx), firstResponse);
+});
+
 test("DDG failure falls back to Tavily without exposing the first failure", async (t) => {
 	const fetch = boundaries(t, "unknown", secret);
 	fetch.mock.mockImplementation(async (input) => String(input).includes("duckduckgo") ? new Response("captcha", { status: 400 }) : new Response(tavily));
@@ -102,6 +118,42 @@ test("DDG retries a blocked request before succeeding", async (t) => {
 	valid("web_search", await search());
 	assert.equal(fetch.mock.callCount(), 2);
 });
+
+for (const stall of ["before headers", "while sending the body"]) {
+	test(`DDG retries an attempt that stalls ${stall} after its 15-second timeout`, async (t) => {
+		const fetch = boundaries(t);
+		t.mock.timers.enable({ apis: ["setTimeout"] });
+		t.mock.method(AbortSignal, "timeout", (ms: number) => {
+			assert.equal(ms, 15_000);
+			const controller = new AbortController();
+			setTimeout(() => controller.abort(new DOMException("offline timeout", "TimeoutError")), ms);
+			return controller.signal;
+		});
+		let calls = 0;
+		fetch.mock.mockImplementation((_input, init) => {
+			if (++calls > 1) return Promise.resolve(new Response(ddg));
+			const signal = init!.signal!;
+			if (stall === "while sending the body") {
+				return Promise.resolve(new Response(new ReadableStream({
+					start(controller) {
+						signal.addEventListener("abort", () => controller.error(signal.reason), { once: true });
+					},
+				})));
+			}
+			return new Promise<Response>((_resolve, reject) => {
+				signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+			});
+		});
+		const pending = search(`DDG attempt stalled ${stall}`, new AbortController().signal);
+		t.mock.timers.tick(15_000);
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		t.mock.timers.tick(1500);
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		assert.equal(fetch.mock.callCount(), 2, "search retries after the timeout and backoff");
+		const response = await pending;
+		assert.deepEqual(response.structuredContent, { backend: "duckduckgo-lite", query: `DDG attempt stalled ${stall}`, results: [result] });
+	});
+}
 
 test("DDG failure without a key still throws its original error", async (t) => {
 	const fetch = boundaries(t);

@@ -43,7 +43,7 @@ const NAMED_ENTITIES: Record<string, string> = {
 
 // Single-pass decoder: a '&' produced by decoding '&amp;' is never re-scanned,
 // matching cheerio semantics (no double-decode).
-export function decodeEntities(text: string): string {
+function decodeEntities(text: string): string {
 	return text.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (match, entity: string) => {
 		if (entity.startsWith("#x") || entity.startsWith("#X")) {
 			const value = parseInt(entity.slice(2), 16);
@@ -64,7 +64,7 @@ function stripTags(text: string): string {
 // DuckDuckGo lite wraps real URLs in //duckduckgo.com/l/?uddg=<encoded>&rut=... redirects.
 // The href is entity-decoded first so the uddg value is bounded at a real '&', then
 // percent-decoded exactly once (no URLSearchParams implicit decode).
-export function extractTargetUrl(rawHref: string): string {
+function extractTargetUrl(rawHref: string): string {
 	const href = decodeEntities(rawHref);
 	const url = href.startsWith("//") ? `https:${href}` : href;
 	try {
@@ -82,7 +82,7 @@ export function extractTargetUrl(rawHref: string): string {
 	}
 }
 
-export function parseDuckDuckGoLite(html: string): SearchResult[] {
+function parseDuckDuckGoLite(html: string): SearchResult[] {
 	const results: SearchResult[] = [];
 	const anchorRe = /<a\b([^>]*)>([\s\S]*?)<\/a>/gi;
 	let match: RegExpExecArray | null;
@@ -101,7 +101,7 @@ export function parseDuckDuckGoLite(html: string): SearchResult[] {
 	return results;
 }
 
-export function parseTavilyResponse(body: unknown): SearchResult[] | undefined {
+function parseTavilyResponse(body: unknown): SearchResult[] | undefined {
 	if (!body || typeof body !== "object") return undefined;
 	const rawResults = (body as { results?: unknown }).results;
 	if (!Array.isArray(rawResults)) return undefined;
@@ -116,7 +116,7 @@ export function parseTavilyResponse(body: unknown): SearchResult[] | undefined {
 	});
 }
 
-export function looksLikeErrorPage(body: string): boolean {
+function looksLikeErrorPage(body: string): boolean {
 	const text = body.toLowerCase();
 	return (
 		text.includes("if this persists") ||
@@ -128,7 +128,7 @@ export function looksLikeErrorPage(body: string): boolean {
 	);
 }
 
-export function classifySearchFailure(status: number, body: string): string {
+function classifySearchFailure(status: number, body: string): string {
 	const text = body.toLowerCase();
 	const blocked =
 		status === 403 ||
@@ -146,7 +146,7 @@ export function classifySearchFailure(status: number, body: string): string {
 	return "DuckDuckGo returned an unreadable response.";
 }
 
-export function classifyTavilyFailure(status: number, body: string): string {
+function classifyTavilyFailure(status: number, body: string): string {
 	const text = body.toLowerCase();
 	if (status === 401 || status === 403 || text.includes("api key")) {
 		return "Tavily rejected the API key. Check TAVILY_API_KEY.";
@@ -164,12 +164,16 @@ async function searchDuckDuckGo(query: string, signal?: AbortSignal): Promise<Se
 	const endpoint = `https://lite.duckduckgo.com/lite/?${new URLSearchParams({ q: query }).toString()}`;
 	for (let attempt = 0; attempt < 2; attempt++) {
 		if (signal?.aborted) throw new Error("Search cancelled.");
+		const timeoutSignal = AbortSignal.timeout(15000);
+		const combined = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
 		let response: Response;
+		let body: string;
 		try {
 			response = await fetch(endpoint, {
 				headers: { "User-Agent": USER_AGENT },
-				signal,
+				signal: combined,
 			});
+			body = await response.text();
 		} catch (error) {
 			if (signal?.aborted) throw new Error("Search cancelled.");
 			if (attempt === 0) {
@@ -178,7 +182,6 @@ async function searchDuckDuckGo(query: string, signal?: AbortSignal): Promise<Se
 			}
 			throw new Error(`DuckDuckGo request failed: ${error instanceof Error ? error.message : String(error)}`);
 		}
-		const body = await response.text();
 		if (!response.ok || looksLikeErrorPage(body)) {
 			const retriable = response.status === 403 || response.status === 429 || response.status === 503;
 			if (retriable && attempt === 0) {
@@ -258,22 +261,6 @@ async function searchWithFallback(query: string, signal?: AbortSignal): Promise<
 }
 
 type CachedSearch = SearchResponse & { expires: number };
-const cache = new Map<string, CachedSearch>();
-
-function getCached(query: string): SearchResponse | undefined {
-	const entry = cache.get(query);
-	if (!entry) return undefined;
-	if (entry.expires < Date.now()) {
-		cache.delete(query);
-		return undefined;
-	}
-	return { backend: entry.backend, results: entry.results };
-}
-
-function setCached(query: string, response: SearchResponse): void {
-	cache.set(query, { ...response, expires: Date.now() + CACHE_TTL_MS });
-}
-
 function formatResults(query: string, results: SearchResult[]): string {
 	if (results.length === 0) return `No results found for "${query}".`;
 	const lines = [`${results.length} results for "${query}":`];
@@ -301,7 +288,7 @@ const BINARY_MEDIA_TYPES = new Set([
 	"application/zip",
 ]);
 
-export function isClearlyBinaryContentType(contentType: string): boolean {
+function isClearlyBinaryContentType(contentType: string): boolean {
 	const mediaType = contentType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
 	if (/^(audio|font|video)\//.test(mediaType)) return true;
 	if (mediaType.startsWith("image/") && mediaType !== "image/svg+xml") return true;
@@ -309,7 +296,7 @@ export function isClearlyBinaryContentType(contentType: string): boolean {
 	return /^application\/vnd\.(?:ms-|openxmlformats-officedocument\.)/.test(mediaType);
 }
 
-export function looksLikeBinaryContent(bytes: Uint8Array): boolean {
+function looksLikeBinaryContent(bytes: Uint8Array): boolean {
 	const sample = bytes.subarray(0, Math.min(bytes.length, 8192));
 	if (sample.length === 0) return false;
 	if (
@@ -337,7 +324,7 @@ function longestRegion(html: string, tag: string): string | undefined {
 	return best;
 }
 
-export function extractRegion(stripped: string): string {
+function extractRegion(stripped: string): string {
 	const article = longestRegion(stripped, "article");
 	if (article) return article;
 	const main = longestRegion(stripped, "main");
@@ -349,7 +336,7 @@ export function extractRegion(stripped: string): string {
 // Drop a leading run of nav/boilerplate lines (language lists, TOC entries, nav
 // items — all under ~45 chars, unlike real sentences) only when there are 5+ of
 // them and the remaining text is non-trivial, so short intros are never eaten.
-export function stripBoilerplatePrefix(text: string): string {
+function stripBoilerplatePrefix(text: string): string {
 	const lines = text.split("\n");
 	let skip = 0;
 	while (skip < lines.length && (lines[skip] ?? "").length < 45) skip++;
@@ -360,7 +347,7 @@ export function stripBoilerplatePrefix(text: string): string {
 
 // Zero-dependency readability extraction: prefers <article>/<main>, falls back
 // to <body>, strips scripts/styles/svg/comments, and keeps paragraph breaks.
-export function extractReadableContent(html: string): {
+function extractReadableContent(html: string): {
 	title: string;
 	description: string;
 	text: string;
@@ -409,7 +396,7 @@ export function extractReadableContent(html: string): {
 	return { title, description, text: finalText, charCount, truncated };
 }
 
-export function isWeakContent(html: string, text: string): boolean {
+function isWeakContent(html: string, text: string): boolean {
 	if (text.length < 40) return true;
 	const lower = html.toLowerCase();
 	const jsShell =
@@ -521,6 +508,22 @@ function formatPage(_url: string, page: FetchedPage): string {
 }
 
 export default function (pi: ExtensionAPI) {
+	const cache = new Map<string, CachedSearch>();
+
+	function getCached(query: string): SearchResponse | undefined {
+		const entry = cache.get(query);
+		if (!entry) return undefined;
+		if (entry.expires < Date.now()) {
+			cache.delete(query);
+			return undefined;
+		}
+		return { backend: entry.backend, results: entry.results };
+	}
+
+	function setCached(query: string, response: SearchResponse): void {
+		cache.set(query, { ...response, expires: Date.now() + CACHE_TTL_MS });
+	}
+
 	pi.registerTool({
 		name: "web_search",
 		label: "Web Search",
