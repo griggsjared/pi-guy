@@ -191,6 +191,13 @@ for (const html of [false, true]) {
 	}
 }
 
+test("web_fetch leaves out-of-range numeric entities as written", async (t) => {
+	const fetch = boundaries(t);
+	const prose = "A readable article with enough content to avoid the weak-content check:";
+	fetch.mock.mockImplementation(async () => new Response(`<html><article><p>${prose} &#x110000; &#99999999999; &#x3c0;</p></article></html>`, { headers: { "content-type": "text/html" } }));
+	assert.equal(page(await execute("web_fetch", { url: "https://example.test/entities" })).text, `${prose} &#x110000; &#99999999999; π`);
+});
+
 test("web_fetch honors charset decoding", async (t) => {
 	const fetch = boundaries(t);
 	fetch.mock.mockImplementation(async () => new Response(new Uint8Array([0xff, 0xfe, 0x68, 0, 0x69, 0]), { headers: { "content-type": "text/plain" } }));

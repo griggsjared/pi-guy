@@ -47,11 +47,11 @@ export function decodeEntities(text: string): string {
 	return text.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (match, entity: string) => {
 		if (entity.startsWith("#x") || entity.startsWith("#X")) {
 			const value = parseInt(entity.slice(2), 16);
-			return Number.isNaN(value) ? match : String.fromCodePoint(value);
+			return Number.isNaN(value) || value > 0x10ffff ? match : String.fromCodePoint(value);
 		}
 		if (entity.startsWith("#")) {
 			const value = parseInt(entity.slice(1), 10);
-			return Number.isNaN(value) ? match : String.fromCodePoint(value);
+			return Number.isNaN(value) || value > 0x10ffff ? match : String.fromCodePoint(value);
 		}
 		return NAMED_ENTITIES[entity.toLowerCase()] ?? match;
 	});
