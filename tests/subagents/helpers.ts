@@ -4,7 +4,6 @@ import { spawn } from "node:child_process";
 import type { Component } from "@earendil-works/pi-tui";
 import type { ExtensionAPI, ExtensionContext, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig, SubagentSettings } from "../../src/subagents/agents.ts";
-import { restoreActiveProfile } from "../../src/subagents/index.ts";
 import { createJobRegistry } from "../../src/subagents/registry.ts";
 import { createSubagentTool } from "../../src/subagents/tools.ts";
 import { captureHandlers } from "../helpers/pi.ts";
@@ -39,10 +38,10 @@ export function complete(registry: ReturnType<typeof createJobRegistry>, id: num
 export function makeTool(
   spawnOverride?: { spawnFn: typeof spawn },
   settings: SubagentSettings = { profiles: {}, extensions: [] },
-  activeProfile: string | undefined = restoreActiveProfile([], settings),
+  activeProfile: string | undefined = undefined,
   confirmProfile: (ctx: ExtensionContext, onPause?: (message: string) => void) => Promise<boolean> = async () => true,
 ) {
-  const registry = createJobRegistry({ now: () => Date.now() });
+  const registry = createJobRegistry();
   const sendMessage = spy();
   const sendUserMessage = spy();
   const appendEntry = spy();
@@ -81,7 +80,7 @@ export function makeTool(
     hasUI: false,
     isIdle: () => true,
   } as unknown as ExtensionToolContext;
-  return { tool, registry, sendMessage, sendUserMessage, appendEntry, handlers, activeTickers, activeProcs, child, ctx };
+  return { tool, pi, registry, sendMessage, sendUserMessage, appendEntry, handlers, activeTickers, activeProcs, child, ctx };
 }
 
 export function customProfilePicker(interact: (component: Component) => void | Promise<void>, requestRender = () => {}) {

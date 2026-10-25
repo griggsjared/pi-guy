@@ -1,17 +1,17 @@
 import { randomUUID } from "node:crypto";
 import { normalizeTitle } from "./format.ts";
-import {
-  EMPTY_USAGE,
-  type CancellationReason,
-  type JobEvent,
-  type JobEventInput,
-  type JobStep,
-  type JobStepInput,
-  type SubagentDelivery,
-  type SubagentQuestion,
-  type SubagentResult,
-  type SubagentUsage,
-  type ToolCallInfo,
+import { EMPTY_USAGE } from "./types.ts";
+import type {
+  CancellationReason,
+  JobEvent,
+  JobEventInput,
+  JobStep,
+  JobStepInput,
+  SubagentDelivery,
+  SubagentQuestion,
+  SubagentResult,
+  SubagentUsage,
+  ToolCallInfo,
 } from "./types.ts";
 
 export interface SubagentControl {

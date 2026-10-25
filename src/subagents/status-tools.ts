@@ -1,13 +1,16 @@
-import { Container, fuzzyFilter, getKeybindings, Input, SelectList, Text, truncateToWidth, visibleWidth, type Component } from "@earendil-works/pi-tui";
+import { Container, fuzzyFilter, getKeybindings, Input, SelectList, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import type { Component } from "@earendil-works/pi-tui";
 import type { ExtensionAPI, ExtensionContext, Theme, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { OFF_PROFILE_NAME, resolveAgentSettings, SESSION_PROFILE_NAME, type AgentConfig, type SubagentSettings } from "./agents.ts";
+import { OFF_PROFILE_NAME, resolveAgentSettings, SESSION_PROFILE_NAME } from "./agents.ts";
+import type { AgentConfig, SubagentSettings } from "./agents.ts";
 import { formatDuration } from "../lib/format.ts";
 import { capOutput, formatUsageStats, normalizeTitle, shortLabel, toolCallLabel } from "./format.ts";
 import type { JobRegistry, Job } from "./registry.ts";
 import { openSubagentTail, TruncatedText } from "./render.ts";
 import { eventColor, eventKindLabel, formatEventSummary, formatEventTiming, formatLocalTime, formatStepTiming } from "./tail.ts";
-import { PROFILE_ENTRY_TYPE, type JobEvent, type ToolCallInfo } from "./types.ts";
+import { PROFILE_ENTRY_TYPE } from "./types.ts";
+import type { JobEvent, ToolCallInfo } from "./types.ts";
 
 const StatusParams = Type.Object({ jobId: Type.Optional(Type.Integer({ minimum: 1 })) });
 const CancelParams = Type.Object({ jobId: Type.Optional(Type.Integer({ minimum: 1 })), all: Type.Optional(Type.Boolean()) });

@@ -1,23 +1,13 @@
 import type { TUI } from "@earendil-works/pi-tui";
 import { Box, Markdown, Spacer, Text, TruncatedText as TuiTruncatedText, truncateToWidth } from "@earendil-works/pi-tui";
-import {
-  getMarkdownTheme,
-  type ExtensionAPI,
-  type ExtensionContext,
-  type Theme,
-  type ThemeColor,
-} from "@earendil-works/pi-coding-agent";
+import { getMarkdownTheme } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { formatDuration } from "../lib/format.ts";
 import { formatUsageStats, normalizeTitle, shortLabel, toolCallLabel } from "./format.ts";
 import type { JobRegistry } from "./registry.ts";
 import { SubagentTail } from "./tail.ts";
-import {
-  ENTRY_TYPE,
-  QUESTION_ENTRY_TYPE,
-  WIDGET_KEY,
-  type SubagentMessageDetails,
-  type SubagentQuestionMessageDetails,
-} from "./types.ts";
+import { ENTRY_TYPE, QUESTION_ENTRY_TYPE, WIDGET_KEY } from "./types.ts";
+import type { SubagentMessageDetails, SubagentQuestionMessageDetails } from "./types.ts";
 
 export type Fg = (color: ThemeColor, text: string) => string;
 
@@ -67,10 +57,6 @@ function renderWidgetRows(registry: JobRegistry, fg: Fg, width = 80): { jobId?: 
     rows.push({ line: truncateToWidth(fg("muted", "... (widget truncated)"), maxWidth, "") });
   }
   return rows;
-}
-
-export function renderFullWidget(registry: JobRegistry, fg: Fg, width = 80): string[] {
-  return renderWidgetRows(registry, fg, width).map((row) => row.line);
 }
 
 export async function openSubagentTail(ui: ExtensionContext["ui"], registry: JobRegistry, jobId: number): Promise<void> {

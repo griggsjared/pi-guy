@@ -1,9 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { visibleWidth, type Component } from "@earendil-works/pi-tui";
+import { visibleWidth } from "@earendil-works/pi-tui";
+import type { Component } from "@earendil-works/pi-tui";
 import { Check } from "typebox/value";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { parseSubagentSettings, SESSION_PROFILE_NAME, type AgentConfig } from "../../src/subagents/agents.ts";
+import { parseSubagentSettings, SESSION_PROFILE_NAME } from "../../src/subagents/agents.ts";
+import type { AgentConfig } from "../../src/subagents/agents.ts";
 import { createJobRegistry } from "../../src/subagents/registry.ts";
 import { formatLocalTime } from "../../src/subagents/tail.ts";
 import {

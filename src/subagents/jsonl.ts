@@ -1,13 +1,8 @@
-import {
-  ASK_PARENT_TITLE_PREFIX,
-  EMPTY_USAGE,
-  type SubagentQuestion,
-  type SubagentUsage,
-  type ToolCallInfo,
-} from "./types.ts";
+import { ASK_PARENT_TITLE_PREFIX, EMPTY_USAGE } from "./types.ts";
+import type { SubagentQuestion, SubagentUsage, ToolCallInfo } from "./types.ts";
 
 /** Keep only the most recent tool calls; a long-running agent can accumulate many. */
-export const MAX_TOOL_CALLS = 20;
+const MAX_TOOL_CALLS = 20;
 
 interface UsageInfo {
   input?: number;

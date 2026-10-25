@@ -1,4 +1,5 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { mkdtemp, rmdir, unlink, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { tmpdir } from "node:os";
@@ -85,7 +86,7 @@ function toolEndSummary(event: Record<string, unknown>): string {
  * Resolve how to invoke pi from this (extension) process. Children are spawned
  * the same way the current process was started, with a PATH fallback.
  */
-export function getPiCommand(
+function getPiCommand(
   argv: string[] = process.argv,
   execPath: string = process.execPath,
 ): { cmd: string; args: string[] } {
@@ -110,7 +111,7 @@ export function formatModel(model: { provider: string; id: string } | undefined)
 }
 
 /** SIGTERM, escalating to SIGKILL if the process ignores it. */
-export function killProcess(proc: ChildProcess, delayMs = 5000): void {
+function killProcess(proc: ChildProcess, delayMs = 5000): void {
   try {
     proc.kill("SIGTERM");
   } catch { /* already dead */ }

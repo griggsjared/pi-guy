@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { Box, visibleWidth } from "@earendil-works/pi-tui";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createJobRegistry } from "../../src/subagents/registry.ts";
-import { refreshUi, registerRenderers, renderFullWidget } from "../../src/subagents/render.ts";
+import { refreshUi, registerRenderers } from "../../src/subagents/render.ts";
 import { createSendTool } from "../../src/subagents/status-tools.ts";
 import { EMPTY_USAGE, ENTRY_TYPE, QUESTION_ENTRY_TYPE } from "../../src/subagents/types.ts";
 import { fakeTheme, taggedTheme as createTaggedTheme } from "../helpers/theme.ts";
@@ -183,7 +183,7 @@ test("refreshUi: truncation rows and vanished jobs are not clickable", () => {
   widget.dispose();
 });
 
-test("renderFullWidget: shows one line per active agent", () => {
+test("installed widget shows compact agent rows and result colors", () => {
   const registry = createJobRegistry();
   const id = registry.add("scout", "task", "a".repeat(60), {
     model: "openai-codex/gpt-5.6-luna",
@@ -191,7 +191,16 @@ test("renderFullWidget: shows one line per active agent", () => {
     profile: "primary",
   });
   registry.updateLive(id, { progress: "reading files", text: "live agent output" });
-  const lines = renderFullWidget(registry, (_color, text) => text, 80);
+  let widget: { render(width: number): string[] } | undefined;
+  const theme = fakeTheme();
+  const ui = {
+    setWidget: (_key: string, factory: unknown) => {
+      if (typeof factory === "function") widget = factory({ requestRender: () => {} }, theme);
+    },
+  };
+  refreshUi({ hasUI: true, ui } as never, registry);
+  assert.ok(widget);
+  const lines = widget.render(80);
   const output = lines.join("\n");
   assert.equal(lines.length, 1);
   assert.ok(lines.every((line) => visibleWidth(line) <= 80));
@@ -203,7 +212,7 @@ test("renderFullWidget: shows one line per active agent", () => {
 
   registry.recordQuestion(id, { id: "question-1", question: "Which API?" });
   registry.recordQuestion(id, { id: "question-2", question: "Which format?" });
-  const waitingLines = renderFullWidget(registry, (_color, text) => text, 80);
+  const waitingLines = widget.render(80);
   assert.equal(waitingLines.length, 1);
   assert.doesNotMatch(waitingLines.join("\n"), /waiting for parent \(2\)/);
 
@@ -216,23 +225,29 @@ test("renderFullWidget: shows one line per active agent", () => {
     exitCode: 0,
     error: "",
   });
-  const tagged = renderFullWidget(
-    registry,
-    (color, text) => `[${color}]${text}[/${color}]`,
-    200,
-  ).join("\n");
+  theme.fg = createTaggedTheme().fg;
+  const tagged = widget.render(200).join("\n");
   assert.match(tagged, /\[success\]✓ /);
   assert.match(tagged, /\[accent\]#2 worker/);
   assert.match(tagged, /\[muted\] \([^)]*\)/);
   assert.match(tagged, /\[dim\]: Finished task/);
 });
 
-test("renderFullWidget: shows at least 1s for running and finished jobs under a second", () => {
+test("installed widget shows at least 1s for running and finished jobs under a second", (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: 1000 });
   const registry = createJobRegistry();
   const runningId = registry.add("scout", "task");
   const finishedId = registry.add("worker", "task");
   complete(registry, finishedId);
-  const output = renderFullWidget(registry, (_color, text) => text, 80).join("\n");
+  let widget: { render(width: number): string[] } | undefined;
+  const ui = {
+    setWidget: (_key: string, factory: unknown) => {
+      if (typeof factory === "function") widget = factory({ requestRender: () => {} }, fakeTheme());
+    },
+  };
+  refreshUi({ hasUI: true, ui } as never, registry);
+  assert.ok(widget);
+  const output = widget.render(80).join("\n");
   assert.match(output, new RegExp(`⊙ #${runningId} scout \\(1s\\)`));
   assert.match(output, new RegExp(`✓ #${finishedId} worker \\(1s\\)`));
 });

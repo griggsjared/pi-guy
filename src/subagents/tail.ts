@@ -1,5 +1,6 @@
 import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
-import { Key, matchesKey, type Component, type TUI } from "@earendil-works/pi-tui";
+import { Key, matchesKey } from "@earendil-works/pi-tui";
+import type { Component, TUI } from "@earendil-works/pi-tui";
 import { boxed } from "../lib/box.ts";
 import { formatDuration } from "../lib/format.ts";
 import type { Job, JobRegistry } from "./registry.ts";

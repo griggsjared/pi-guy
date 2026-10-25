@@ -1,19 +1,20 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { getPiCommand, runSubagent, runWithConcurrencyLimit } from "../../src/subagents/runner.ts";
+import { runSubagent, runWithConcurrencyLimit } from "../../src/subagents/runner.ts";
 import type { AgentConfig } from "../../src/subagents/agents.ts";
 import type { JobEventInput, JobStepInput, SubagentInactivity } from "../../src/subagents/types.ts";
 import { sleep } from "../helpers/wait.ts";
 import {
   FakeChild,
   fakeSpawn,
+  fakeSpawnChildren,
   endEvent,
   questionEvent,
   responseEvent,
   updateEvent,
-  type SpawnCall,
 } from "./fake-child.ts";
+import type { SpawnCall } from "./fake-child.ts";
 
 const agent: AgentConfig = {
   name: "worker",
@@ -29,18 +30,29 @@ function respondToCommand(child: FakeChild, index = 0, success = true, error?: s
   return command;
 }
 
-test("getPiCommand", () => {
-  // npm-installed pi: node + cli entry script
-  assert.deepEqual(getPiCommand(["/usr/bin/node", "/path/to/pi/cli.js"], "/usr/bin/node"), {
-    cmd: "/usr/bin/node",
-    args: ["/path/to/pi/cli.js"],
-  });
-  // compiled single binary
-  assert.deepEqual(getPiCommand(["/opt/pi/bin/pi"], "/opt/pi/bin/pi"), { cmd: "/opt/pi/bin/pi", args: [] });
-  // bun virtual bundle: fall back to PATH
-  assert.deepEqual(getPiCommand(["bun", "/$bunfs/root/app.js"], "bun"), { cmd: "pi", args: [] });
-  // bare node/bun with a full path: original behavior returns the binary itself
-  assert.deepEqual(getPiCommand(["/usr/bin/node"], "/usr/bin/node"), { cmd: "/usr/bin/node", args: [] });
+test("children use the parent invocation or PATH fallback", async (t) => {
+  const argv = process.argv;
+  const execPath = process.execPath;
+  t.after(() => { process.argv = argv; process.execPath = execPath; });
+  for (const entry of [
+    { argv: ["/usr/bin/node", "/path/to/pi/cli.js"], cmd: "/usr/bin/node", args: ["/path/to/pi/cli.js"] },
+    { argv: ["/opt/pi/bin/pi"], cmd: "/opt/pi/bin/pi", args: [] },
+    { argv: ["bun", "/$bunfs/root/app.js"], cmd: "pi", args: [] },
+    { argv: ["/usr/bin/node"], cmd: "/usr/bin/node", args: [] },
+  ]) {
+    process.argv = entry.argv;
+    process.execPath = entry.argv[0]!;
+    const child = new FakeChild();
+    const { spawnFn, calls } = fakeSpawnChildren([child]);
+    const run = await runSubagent(agent, "task", "/tmp", undefined, { spawnFn });
+    try {
+      assert.equal(calls[0]!.cmd, entry.cmd);
+      assert.deepEqual(calls[0]!.args.slice(0, entry.args.length + 2), [...entry.args, "--mode", "rpc"]);
+    } finally {
+      child.finish(0);
+      await run.result;
+    }
+  }
 });
 
 test("runWithConcurrencyLimit: preserves order and caps concurrency", async () => {

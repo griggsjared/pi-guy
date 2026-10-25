@@ -1,5 +1,5 @@
 import { readFile, readdir } from "node:fs/promises";
-import { homedir } from "node:os";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { join, parse } from "node:path";
 
 export const SESSION_PROFILE_NAME = "session";
@@ -60,7 +60,7 @@ function parseAgentSettings(value: unknown): AgentSettings {
   };
 }
 
-export function isValidProfileName(value: unknown): value is string {
+function isValidProfileName(value: unknown): value is string {
   return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(value);
 }
 
@@ -76,7 +76,7 @@ function parsePackageSpecs(value: unknown): string[] {
  */
 export async function resolveExtensionPaths(
   specs: readonly string[],
-  packageDir = process.env.PI_PACKAGE_DIR || join(homedir(), ".pi", "agent", "npm"),
+  packageDir = process.env.PI_PACKAGE_DIR || join(getAgentDir(), "npm"),
 ): Promise<string[]> {
   const paths: string[] = [];
   for (const spec of specs) {
@@ -136,8 +136,8 @@ export function parseSubagentSettings(value: unknown): SubagentSettings {
 }
 
 export async function loadSubagentSettings(
-  path = join(homedir(), ".pi", "agent", "subagents.json"),
-  fallbackPath = join(homedir(), ".pi", "agent", "settings.json"),
+  path = join(getAgentDir(), "subagents.json"),
+  fallbackPath = join(getAgentDir(), "settings.json"),
 ): Promise<SubagentSettings> {
   let text: string;
   try {
@@ -161,7 +161,7 @@ export async function loadSubagentSettings(
   return parseSubagentSettings(config);
 }
 
-export function getSubagentProfile(settings: SubagentSettings, profileName?: string): SubagentProfile {
+function getSubagentProfile(settings: SubagentSettings, profileName?: string): SubagentProfile {
   if (profileName !== undefined) return Object.hasOwn(settings.profiles, profileName) ? settings.profiles[profileName]! : EMPTY_PROFILE;
   const names = Object.keys(settings.profiles);
   return names.length === 1 ? settings.profiles[names[0]!]! : EMPTY_PROFILE;
@@ -199,7 +199,7 @@ export function parseFrontmatter(text: string): { meta: Record<string, string>; 
   return { meta, body: bodyBlock.trim() };
 }
 
-export async function loadAgentFile(path: string): Promise<AgentConfig | undefined> {
+async function loadAgentFile(path: string): Promise<AgentConfig | undefined> {
   try {
     const text = await readFile(path, "utf8");
     const { meta, body } = parseFrontmatter(text);
@@ -226,7 +226,7 @@ export async function discoverAgents(agentsDir: string): Promise<AgentConfig[]> 
   const agents: AgentConfig[] = [];
 
   try {
-    const files = await readdir(agentsDir);
+    const files = (await readdir(agentsDir)).sort();
     for (const file of files) {
       if (!file.endsWith(".md")) continue;
       const agent = await loadAgentFile(join(agentsDir, file));

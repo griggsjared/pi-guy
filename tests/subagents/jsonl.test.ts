@@ -5,7 +5,6 @@ import {
   assistantText,
   createStreamState,
   extractFinalText,
-  MAX_TOOL_CALLS,
   normalizeToolArgs,
   parseEventLine,
   parseParentQuestion,
@@ -112,15 +111,15 @@ test("accumulateEvent: tool calls parsed, sanitized, and truncated", () => {
   assert.deepEqual(state.toolCalls[1], { name: "read", args: { path: "/y.ts" } });
 });
 
-test("accumulateEvent: keeps only the most recent MAX_TOOL_CALLS", () => {
+test("stream retains the newest 20 tool calls", () => {
   const state = createStreamState("m");
-  const parts = Array.from({ length: MAX_TOOL_CALLS + 5 }, (_, i) => ({
+  const parts = Array.from({ length: 25 }, (_, i) => ({
     type: "toolCall", name: "read", arguments: { path: `/f${i}.ts` },
   }));
   accumulateEvent(state, end(parts));
-  assert.equal(state.toolCalls.length, MAX_TOOL_CALLS);
-  assert.equal(state.toolCalls[0]?.args.path, "/f5.ts");
-  assert.equal(state.toolCalls[MAX_TOOL_CALLS - 1]?.args.path, `/f${MAX_TOOL_CALLS + 4}.ts`);
+  assert.equal(state.toolCalls.length, 20);
+  assert.deepEqual(state.toolCalls.map((call) => call.args.path),
+    Array.from({ length: 20 }, (_, i) => `/f${i + 5}.ts`));
 });
 
 test("accumulateEvent: message_update keeps the longest legacy chunk", () => {

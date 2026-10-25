@@ -1,22 +1,21 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createJobRegistry } from "../../src/subagents/registry.ts";
-import { Batch, CompletionMailbox, resolveMode } from "../../src/subagents/tools.ts";
+import { resolveMode } from "../../src/subagents/tools.ts";
 import { createPeekTool, createReplyTool } from "../../src/subagents/status-tools.ts";
-import { ENTRY_TYPE, QUESTION_ENTRY_TYPE } from "../../src/subagents/types.ts";
+import { QUESTION_ENTRY_TYPE } from "../../src/subagents/types.ts";
 import {
   FakeChild,
   fakeSpawnChildren,
   endEvent,
   questionEvent,
   responseEvent,
-  type SpawnCall,
 } from "./fake-child.ts";
+import type { SpawnCall } from "./fake-child.ts";
 import { fakeTheme } from "../helpers/theme.ts";
 import { flush, sleep, waitFor } from "../helpers/wait.ts";
-import { spy, complete, makeTool, renderable, renderText } from "./helpers.ts";
+import { makeTool, renderable, renderText } from "./helpers.ts";
 
 test("resolveMode: single, batch, and validation", () => {
   assert.deepEqual(resolveMode({ agent: "a", task: "t", title: "x" }), {
@@ -34,196 +33,65 @@ test("resolveMode: single, batch, and validation", () => {
   assert.throws(() => resolveMode({ tasks: [] }), /at least one task/);
 });
 
-function makeBatch(isIdle = true) {
-  const registry = createJobRegistry();
-  const sendMessage = spy();
-  const sendUserMessage = spy();
-  const appendEntry = spy();
-  const pi = { sendMessage: sendMessage.fn, sendUserMessage: sendUserMessage.fn, appendEntry: appendEntry.fn } as unknown as ExtensionAPI;
-  let refreshes = 0;
-  const mailbox = new CompletionMailbox(pi);
-  const batch = new Batch({ pi, registry, refresh: () => { refreshes += 1; }, mailbox, isIdle: () => isIdle });
-  return { registry, batch, mailbox, sendMessage, sendUserMessage, appendEntry, refreshes: () => refreshes };
-}
-
-test("Batch: clears completed jobs only when the last job completes", () => {
-  const { registry, batch, sendMessage } = makeBatch();
-  const id1 = registry.add("a", "t1");
-  const id2 = registry.add("b", "t2");
-  batch.addJob(id1);
-  batch.addJob(id2);
-
-  complete(registry, id1);
-  batch.recordCompletion(id1);
-  batch.summary();
-  assert.deepEqual(registry.pendingCompleted().map((job) => job.id), [id1]);
-
-  complete(registry, id2, 1);
-  batch.recordCompletion(id2);
-  batch.summary();
-  assert.equal(sendMessage.calls.length, 0);
-  assert.equal(registry.pendingCompleted().length, 0);
+test("overlapping tool launches deliver independently and clear only their own jobs", async (t) => {
+  const children = [new FakeChild(), new FakeChild(), new FakeChild()];
+  const { spawnFn } = fakeSpawnChildren(children);
+  const { tool, registry, sendMessage, activeTickers, ctx } = makeTool({ spawnFn });
+  t.after(() => { children.forEach((child) => child.finish(0)); for (const ticker of activeTickers) clearInterval(ticker); });
+  await tool.execute("first", { tasks: [{ agent: "scout", task: "one" }, { agent: "scout", task: "two" }] }, undefined, undefined, ctx);
+  await tool.execute("second", { agent: "scout", task: "three" }, undefined, undefined, ctx);
+  await waitFor(() => children.every((child) => child.stdin.writes.length > 0));
+  const first = children.find((child) => child.stdin.commands()[0]!.message === "Task: one")!;
+  const second = children.find((child) => child.stdin.commands()[0]!.message === "Task: two")!;
+  const third = children.find((child) => child.stdin.commands()[0]!.message === "Task: three")!;
+  first.stdout.emit("data", Buffer.from(endEvent("one")));
+  first.finish(0);
+  await waitFor(() => sendMessage.calls.length === 1);
+  assert.deepEqual(registry.pendingCompleted().map((job) => job.id), [1]);
+  third.stdout.emit("data", Buffer.from(endEvent("three")));
+  third.finish(0);
+  await waitFor(() => sendMessage.calls.length === 2);
+  assert.deepEqual(registry.pendingCompleted().map((job) => job.id), [1]);
+  assert.equal(registry.get(2)!.status, "running");
+  second.stdout.emit("data", Buffer.from(endEvent("two")));
+  second.finish(0);
+  await waitFor(() => activeTickers.size === 0);
+  assert.deepEqual(registry.pendingCompleted(), []);
+  assert.deepEqual(sendMessage.calls.map((call) => (call[0] as { details: { jobId: number } }).details.jobId), [1, 3, 2]);
 });
 
-test("Batch: an extra summary call has no effect", () => {
-  const { registry, batch, sendMessage, refreshes } = makeBatch();
-  const id = registry.add("a", "t");
-  batch.addJob(id);
-  complete(registry, id);
-  batch.recordCompletion(id);
-  batch.summary();
-  assert.equal(refreshes(), 1);
-  batch.summary();
-  assert.equal(refreshes(), 1);
-  assert.equal(sendMessage.calls.length, 0);
+test("failed inactivity delivery leaves the child running", async (t) => {
+  const { tool, pi, registry, activeTickers, child, ctx } = makeTool();
+  t.after(() => { child.finish(0); for (const ticker of activeTickers) clearInterval(ticker); });
+  const errors = t.mock.method(console, "error", () => {});
+  const delivery = t.mock.method(pi, "sendMessage", () => { throw new Error("parent unavailable"); });
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1000 });
+  await tool.execute("launch", { agent: "scout", task: "Keep working" }, undefined, undefined, ctx);
+  while (child.stdin.commands().length === 0) await flush();
+  assert.doesNotThrow(() => t.mock.timers.tick(300000));
+  assert.equal(delivery.mock.callCount(), 1);
+  assert.equal(errors.mock.callCount(), 1);
+  assert.equal(registry.get(1)!.status, "running");
+  assert.equal(registry.get(1)!.cancellationReason, undefined);
+  assert.deepEqual(registry.get(1)!.pendingQuestions, []);
+  assert.equal(child.killed, null);
+  child.stdout.emit("data", Buffer.from(endEvent("still working")));
+  assert.equal(registry.get(1)!.text, "still working");
 });
 
-test("Batch: summary with no completed jobs sends nothing", () => {
-  const { registry, batch, sendMessage } = makeBatch();
-  const id = registry.add("a", "t");
-  batch.addJob(id);
-  batch.summary();
-  assert.equal(sendMessage.calls.length, 0);
-});
-
-test("Batch: overlapping batches don't cross-suppress and clear only their own ids", () => {
-  const registry = createJobRegistry();
-  const sendMessage = spy();
-  const sendUserMessage = spy();
-  const pi = { sendMessage: sendMessage.fn, sendUserMessage: sendUserMessage.fn } as unknown as ExtensionAPI;
-  const mailbox = new CompletionMailbox(pi);
-  const b1 = new Batch({ pi, registry, refresh: () => {}, mailbox, isIdle: () => true });
-  const b2 = new Batch({ pi, registry, refresh: () => {}, mailbox, isIdle: () => true });
-
-  const id1 = registry.add("a", "t1");
-  const id2 = registry.add("b", "t2");
-  b1.addJob(id1);
-  b2.addJob(id2);
-
-  complete(registry, id1);
-  b1.recordCompletion(id1);
-  b1.summary();
-  assert.equal(sendMessage.calls.length, 0);
-
-  complete(registry, id2);
-  b2.recordCompletion(id2);
-  b2.summary();
-  assert.equal(sendMessage.calls.length, 0);
-
-  // b1 cleared id1 but not id2; b2's own summary then cleared id2 as well
-  assert.equal(registry.pendingCompleted().length, 0);
-});
-
-test("Batch: deliverResult displays a card and sends a hidden parent message", () => {
-  const { registry, batch, sendMessage, appendEntry } = makeBatch();
-  const id = registry.add("a", "t");
-  batch.addJob(id);
-  complete(registry, id);
-  const longText = "x".repeat(25000);
-  batch.deliverResult(id, {
-    agent: "a",
-    task: "t",
-    text: longText,
-    exitCode: 0,
-    error: "",
-    model: "openai-codex/gpt-5.6-luna",
-    thinkingLevel: "high",
-  });
-  assert.equal(appendEntry.calls.length, 1);
-  const [entryType, entry] = appendEntry.calls[0] as [string, { content: string }];
-  assert.equal(entryType, ENTRY_TYPE);
-  assert.equal(entry.content.length, 20002); // 20000 + "\n…"
-  assert.equal(sendMessage.calls.length, 1);
-  const [message, options] = sendMessage.calls[0] as [
-    { customType: string; content: string; display: boolean; details: { status: string; icon: string; jobId?: number; agent: string; model?: string; thinkingLevel?: string } },
-    { deliverAs: string; triggerTurn: boolean },
-  ];
-  assert.equal(message.customType, ENTRY_TYPE);
-  assert.equal(message.display, false);
-  assert.equal(message.content.length, 20002);
-  assert.equal(message.details.status, "completed");
-  assert.equal(message.details.icon, "✓");
-  assert.equal(message.details.jobId, id);
-  assert.equal(message.details.model, "openai-codex/gpt-5.6-luna");
-  assert.equal(message.details.thinkingLevel, "high");
-  assert.equal(options.deliverAs, "steer");
-  assert.equal(options.triggerTurn, true);
-  // Complete the first batch member before adding the second one so the
-  // summary bookkeeping represents both jobs.
-  batch.summary();
-
-  const cancelledId = registry.add("b", "cancelled");
-  batch.addJob(cancelledId);
-  registry.cancel(cancelledId, "timeout");
-  registry.complete(cancelledId, {
-    agent: "b", task: "cancelled", title: "cancelled", text: "", exitCode: 130,
-    error: "Cancelled (timeout).", cancelled: true, cancellationReason: "timeout",
-  });
-  batch.recordCompletion(cancelledId);
-  batch.deliverResult(cancelledId, {
-    agent: "b", task: "cancelled", text: "", exitCode: 130, error: "Cancelled (timeout).",
-    cancelled: true, cancellationReason: "timeout",
-  });
-  const cancelledMessage = sendMessage.calls[1]?.[0] as { details: { status: string; icon: string; cancellationReason?: string } };
-  assert.equal(cancelledMessage.details.status, "cancelled");
-  assert.equal(cancelledMessage.details.icon, "⊘");
-  assert.equal(cancelledMessage.details.cancellationReason, "timeout");
-  batch.summary();
-  assert.equal(appendEntry.calls.length, 2);
-  assert.match((sendMessage.calls[1]?.[0] as { content: string }).content, /Cancelled \(timeout\)/);
-});
-
-test("Batch: inactivity delivery rechecks question, cancellation, completion, and removal", () => {
-  const { registry, batch, sendMessage, appendEntry } = makeBatch(false);
-  const id = registry.add("scout", "Inspect the slow tool");
-  const notice = { lastActivityAt: 1000, detectedAt: 301000, inactivityTimeoutMs: 300000 };
-  registry.recordQuestion(id, { id: "question-1", question: "Which API?" });
-  batch.deliverInactivity(id, notice);
-  assert.equal(sendMessage.calls.length, 0);
-
-  registry.cancel(id, "manual");
-  assert.deepEqual(registry.get(id)?.pendingQuestions, []);
-  batch.deliverInactivity(id, notice);
-  assert.equal(sendMessage.calls.length, 0);
-
-  const completedId = registry.add("scout", "Finished task");
-  complete(registry, completedId);
-  batch.deliverInactivity(completedId, notice);
-  assert.equal(sendMessage.calls.length, 0);
-  registry.jobs.delete(id);
-  batch.deliverInactivity(id, notice);
+test("inactivity does not deliver for completed or removed registry jobs", async (t) => {
+  const children = [new FakeChild(), new FakeChild()];
+  const { spawnFn } = fakeSpawnChildren(children);
+  const { tool, registry, sendMessage, appendEntry, activeTickers, ctx } = makeTool({ spawnFn });
+  t.after(() => { children.forEach((child) => child.finish(0)); for (const ticker of activeTickers) clearInterval(ticker); });
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1000 });
+  await tool.execute("launch", { tasks: [{ agent: "scout", task: "one" }, { agent: "scout", task: "two" }] }, undefined, undefined, ctx);
+  while (children.some((child) => child.stdin.commands().length === 0)) await flush();
+  registry.complete(1, { agent: "scout", task: "one", text: "done", exitCode: 0, error: "" });
+  registry.jobs.delete(2);
+  t.mock.timers.tick(300000);
   assert.equal(sendMessage.calls.length, 0);
   assert.equal(appendEntry.calls.length, 0);
-});
-
-test("Batch: a failed check-in delivery does not interrupt the child", (t) => {
-  const registry = createJobRegistry();
-  const id = registry.add("scout", "Keep working");
-  const pi = { sendMessage: () => { throw new Error("parent unavailable"); } } as unknown as ExtensionAPI;
-  const errors = t.mock.method(console, "error", () => {});
-  const batch = new Batch({ pi, registry, refresh: () => {}, mailbox: new CompletionMailbox(pi), isIdle: () => false });
-  assert.doesNotThrow(() => batch.deliverInactivity(id, {
-    lastActivityAt: 1000, detectedAt: 301000, inactivityTimeoutMs: 300000,
-  }));
-  assert.equal(registry.get(id)?.status, "running");
-  assert.equal(registry.get(id)?.cancellationReason, undefined);
-  assert.deepEqual(registry.get(id)?.pendingQuestions, []);
-  assert.equal(errors.mock.callCount(), 1);
-});
-
-test("CompletionMailbox displays active-turn results and waits to deliver them", () => {
-  const { registry, batch, mailbox, sendMessage, appendEntry } = makeBatch(false);
-  const id = registry.add("a", "t");
-  batch.addJob(id);
-  complete(registry, id);
-  batch.deliverResult(id, { agent: "a", task: "t", text: "done", exitCode: 0, error: "" });
-
-  assert.equal(appendEntry.calls.length, 1);
-  assert.equal(sendMessage.calls.length, 0);
-
-  mailbox.flush(() => true);
-  assert.equal(sendMessage.calls.length, 1);
-  assert.deepEqual(sendMessage.calls[0]?.[1], { triggerTurn: true, deliverAs: "steer" });
 });
 
 test("launch failures and cancellations keep status while avoiding a repeated target", () => {
@@ -349,6 +217,7 @@ test("execute: local settings set child model and thinking level", async () => {
       },
       extensions: [],
     },
+    "default",
   );
   await tool.execute("call1", { agent: "scout", task: "t" }, undefined, undefined, ctx);
 
@@ -362,7 +231,7 @@ test("execute: local settings set child model and thinking level", async () => {
   assert.equal(args[args.indexOf("--thinking") + 1], "high");
 });
 
-test("execute: sole profile defaults set child model and thinking level", async () => {
+test("execute: selected profile defaults set child model and thinking level", async () => {
   const child = new FakeChild();
   const calls: SpawnCall[] = [];
   const spawnFn = ((cmd: string, args: string[], options?: Record<string, unknown>) => {
@@ -375,6 +244,7 @@ test("execute: sole profile defaults set child model and thinking level", async 
       profiles: { default: { defaults: { model: "default-model", thinkingLevel: "low" }, agents: {} } },
       extensions: [],
     },
+    "default",
   );
   await tool.execute("call1", { agent: "scout", task: "t" }, undefined, undefined, ctx);
 
@@ -487,7 +357,8 @@ test("execute: legacy sync input cannot make a single job block", async () => {
 });
 
 test("execute: single returns launched, then displays and delivers its result", async () => {
-  const { tool, registry, sendMessage, child, ctx } = makeTool();
+  const { tool, registry, sendMessage, appendEntry, child, ctx } = makeTool();
+  (ctx as unknown as { thinkingLevel: string }).thinkingLevel = "high";
   const result = await tool.execute("call1", { agent: "scout", task: "t" }, undefined, undefined, ctx);
   assert.equal(result.details.status, "launched");
   assert.equal(result.details.jobScope, registry.scope);
@@ -495,15 +366,25 @@ test("execute: single returns launched, then displays and delivers its result", 
   assert.equal((result.content[0] as { text: string }).text, 'Launched **scout** subagent #1: "t"');
 
   await waitFor(() => child.stdin.writes.length > 0);
-  child.stdout.emit("data", Buffer.from(endEvent("scouted")));
+  child.stdout.emit("data", Buffer.from(endEvent("x".repeat(25000), { model: "served/model" })));
   child.finish(0);
-  await sleep(20); // let the .then chain run
+  await waitFor(() => sendMessage.calls.length === 1);
 
-  assert.equal(sendMessage.calls.length, 1);
-  const [message, options] = sendMessage.calls[0] as [{ display: boolean; details: { status: string } }, { triggerTurn: boolean }];
+  const [message, options] = sendMessage.calls[0]! as [
+    { customType: string; content: string; display: boolean; details: { status: string; icon: string; jobId: number; agent: string; model: string; thinkingLevel?: string } },
+    { triggerTurn: boolean; deliverAs: string },
+  ];
+  assert.equal(message.customType, "subagents");
+  assert.equal(message.content, `${"x".repeat(20000)}\n…`);
   assert.equal(message.details.status, "completed");
+  assert.equal(message.details.icon, "✓");
+  assert.equal(message.details.jobId, 1);
+  assert.equal(message.details.agent, "scout");
+  assert.equal(message.details.model, "served/model");
+  assert.equal(message.details.thinkingLevel, "high");
   assert.equal(message.display, false);
-  assert.equal(options.triggerTurn, true);
+  assert.deepEqual(options, { triggerTurn: true, deliverAs: "steer" });
+  assert.deepEqual(appendEntry.calls, [["subagents", { content: message.content, details: message.details }]]);
 });
 
 test("execute: active parent holds results until agent_settled", async () => {
@@ -514,20 +395,23 @@ test("execute: active parent holds results until agent_settled", async () => {
   await waitFor(() => child.stdin.writes.length > 0);
   child.stdout.emit("data", Buffer.from(endEvent("scouted")));
   child.finish(0);
-  await sleep(20);
+  await waitFor(() => appendEntry.calls.length === 1);
 
   assert.equal(appendEntry.calls.length, 1);
   assert.equal(sendMessage.calls.length, 0);
-  handlers.get("agent_settled")?.({}, { isIdle: () => true });
+  handlers.get("agent_settled")!({}, { isIdle: () => false });
+  assert.equal(sendMessage.calls.length, 0);
+  handlers.get("agent_settled")!({}, { isIdle: () => true });
   assert.equal(sendMessage.calls.length, 1);
+  assert.deepEqual(sendMessage.calls[0]![1], { triggerTurn: true, deliverAs: "steer" });
 });
 
 test("execute: inactivity steers a busy parent once per idle stretch without stopping the child", async (t) => {
+  const now = Date.now();
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now });
   const { tool, registry, sendMessage, appendEntry, activeTickers, child, ctx } = makeTool();
   t.after(() => { child.finish(0); for (const ticker of activeTickers) clearInterval(ticker); });
   (ctx as unknown as { isIdle: () => boolean }).isIdle = () => false;
-  const now = Date.now();
-  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now });
   await tool.execute("launch", { agent: "scout", task: "Inspect the slow tool" }, undefined, undefined, ctx);
   while (child.stdin.commands().length === 0) await flush();
   child.stdout.emit("data", Buffer.from(`${JSON.stringify({
@@ -781,18 +665,21 @@ test("execute: parent abort does not cancel running or queued jobs", async () =>
 });
 
 test("execute: registry cancellation reason wins over child completion", async () => {
-  const { tool, registry, sendMessage, child, ctx } = makeTool();
+  const { tool, registry, sendMessage, appendEntry, child, ctx } = makeTool();
   const result = await tool.execute("call1", { agent: "scout", task: "t" }, undefined, undefined, ctx);
   assert.equal(result.details.status, "launched");
   await waitFor(() => child.stdin.writes.length > 0);
   assert.equal(registry.cancel(1, "manual"), true);
   child.finish(143);
-  await sleep(20);
+  await waitFor(() => sendMessage.calls.length === 1);
 
   assert.equal(registry.get(1)?.cancellationReason, "manual");
-  const details = (sendMessage.calls[0]?.[0] as { details: { status: string; cancellationReason?: string } }).details;
-  assert.equal(details.status, "cancelled");
-  assert.equal(details.cancellationReason, "manual");
+  const message = sendMessage.calls[0]![0] as { content: string; details: { status: string; icon: string; cancellationReason?: string } };
+  assert.equal(message.details.status, "cancelled");
+  assert.equal(message.details.icon, "⊘");
+  assert.equal(message.details.cancellationReason, "manual");
+  assert.match(message.content, /Cancelled \(manual\)/);
+  assert.deepEqual(appendEntry.calls, [["subagents", { content: message.content, details: message.details }]]);
 });
 
 test("execute: setup cancellation reports cancellation instead of failure", async () => {
@@ -830,7 +717,7 @@ test("execute: jobs outlive the tool-call abort signal", async () => {
 test("execute: parallel batch displays and delivers each result", async () => {
   const children = [new FakeChild(), new FakeChild()];
   const { spawnFn, calls } = fakeSpawnChildren(children);
-  const { tool, sendMessage, sendUserMessage, activeTickers, activeProcs, ctx } = makeTool({ spawnFn });
+  const { tool, registry, sendMessage, sendUserMessage, activeTickers, activeProcs, ctx } = makeTool({ spawnFn });
   const result = await tool.execute(
     "call1",
     { tasks: [{ agent: "scout", task: "t1" }, { agent: "scout", task: "t2" }] },
@@ -847,11 +734,18 @@ test("execute: parallel batch displays and delivers each result", async () => {
 
   await waitFor(() => children.every((child) => child.stdin.writes.length > 0));
   assert.equal(calls.length, 2, "one child spawned per task");
-  children[0]!.stdout.emit("data", Buffer.from(endEvent("one")));
-  children[0]!.finish(0);
-  children[1]!.stdout.emit("data", Buffer.from(endEvent("two")));
-  children[1]!.finish(0);
-  await sleep(30); // let the .then chains run
+  const first = children.find((child) => child.stdin.commands()[0]!.message === "Task: t1")!;
+  const second = children.find((child) => child.stdin.commands()[0]!.message === "Task: t2")!;
+  first.stdout.emit("data", Buffer.from(endEvent("one")));
+  first.finish(0);
+  await waitFor(() => sendMessage.calls.length === 1);
+  assert.deepEqual(registry.pendingCompleted().map((job) => job.id), [1]);
+  assert.equal(registry.get(2)!.status, "running");
+  second.stdout.emit("data", Buffer.from(endEvent("two")));
+  second.finish(1);
+  await waitFor(() => activeTickers.size === 0);
+  assert.deepEqual(registry.pendingCompleted(), []);
+  assert.equal(registry.get(2)!.status, "failed");
 
   assert.equal(sendMessage.calls.length, 2, "one hidden parent message per result");
   assert.equal(sendUserMessage.calls.length, 0);

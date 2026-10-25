@@ -3,11 +3,11 @@ import assert from "node:assert/strict";
 import childProcess from "node:child_process";
 import { mkdtemp, writeFile, rm, mkdir } from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
-import os, { tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import { OFF_PROFILE_NAME, parseSubagentSettings, SESSION_PROFILE_NAME } from "../../src/subagents/agents.ts";
-import subagentsExtension, { restoreActiveProfile } from "../../src/subagents/index.ts";
+import subagentsExtension from "../../src/subagents/index.ts";
 import { createSubagentTool } from "../../src/subagents/tools.ts";
 import { PROFILE_ENTRY_TYPE, STATUS_KEY } from "../../src/subagents/types.ts";
 import {
@@ -16,42 +16,22 @@ import {
   endEvent,
 } from "./fake-child.ts";
 import { captureHandlers } from "../helpers/pi.ts";
-import { sleep } from "../helpers/wait.ts";
+import { waitFor } from "../helpers/wait.ts";
 import { spy, customProfilePicker, renderText } from "./helpers.ts";
-
-test("restoreActiveProfile restores only the latest session selection", () => {
-  const settings = parseSubagentSettings({ profiles: { primary: {}, backup: {} } });
-  assert.equal(restoreActiveProfile([], settings), undefined);
-  assert.equal(restoreActiveProfile([], parseSubagentSettings({})), SESSION_PROFILE_NAME);
-  assert.equal(restoreActiveProfile([], parseSubagentSettings({ profiles: { primary: {} } })), undefined);
-  assert.equal(restoreActiveProfile([
-    { type: "custom", customType: PROFILE_ENTRY_TYPE, data: { name: SESSION_PROFILE_NAME } },
-  ], settings), SESSION_PROFILE_NAME);
-  assert.equal(restoreActiveProfile([
-    { type: "custom", customType: PROFILE_ENTRY_TYPE, data: { name: "constructor" } },
-  ], settings), undefined);
-  assert.equal(restoreActiveProfile([
-    { type: "custom", customType: PROFILE_ENTRY_TYPE, data: { name: "backup" } },
-    { type: "custom", customType: PROFILE_ENTRY_TYPE, data: { name: "removed" } },
-  ], settings), undefined);
-  const model = (modelId: string, provider = "p") => ({ type: "model_change", provider, modelId });
-  const backup = { type: "custom", customType: PROFILE_ENTRY_TYPE, data: { name: "backup" } };
-  assert.equal(restoreActiveProfile([model("b"), model("a"), backup, model("a")], settings), "backup");
-  assert.equal(restoreActiveProfile([model("a"), backup, model("b"), model("a")], settings), undefined);
-  assert.equal(restoreActiveProfile([model("team/m", "custom"), backup, model("m", "custom/team")], settings), undefined);
-  const off = { type: "custom", customType: PROFILE_ENTRY_TYPE, data: { name: OFF_PROFILE_NAME } };
-  assert.equal(restoreActiveProfile([model("a"), off, model("b")], settings), OFF_PROFILE_NAME);
-});
 
 test("extension selects profiles explicitly and uses the headless fallback", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "subagents-test-"));
   const extensionDir = join(dir, "src", "subagents");
   const agentsDir = join(dir, "resources", "subagents");
-  const settingsDir = join(dir, ".pi", "agent");
+  const settingsDir = join(dir, "agent-config");
+  const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+  process.env.PI_CODING_AGENT_DIR = settingsDir;
   const dirname = Object.getOwnPropertyDescriptor(globalThis, "__dirname");
   t.after(async () => {
     t.mock.restoreAll();
     syncBuiltinESMExports();
+    if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
     if (dirname) Object.defineProperty(globalThis, "__dirname", dirname);
     else Reflect.deleteProperty(globalThis, "__dirname");
     await rm(dir, { recursive: true, force: true });
@@ -60,8 +40,6 @@ test("extension selects profiles explicitly and uses the headless fallback", asy
   await mkdir(settingsDir, { recursive: true });
   await writeFile(join(agentsDir, "scout.md"), "---\nname: scout\nthinkingLevel: high\n---\nYou are a scout.");
   Object.defineProperty(globalThis, "__dirname", { configurable: true, value: extensionDir });
-  t.mock.method(os, "homedir", () => dir);
-  syncBuiltinESMExports();
 
   const profiles = {
     primary: { defaults: { model: "primary/model" }, agents: {} },
@@ -69,10 +47,12 @@ test("extension selects profiles explicitly and uses the headless fallback", asy
   };
   const switchesToSession = { profile: SESSION_PROFILE_NAME, model: "p/next", thinking: "high" };
   const keepsBackup = { profile: "backup", model: "backup/model", thinking: "medium" };
+  const model = (modelId: string, provider = "p") => ({ type: "model_change", provider, modelId });
+  const choice = (name: string) => ({ type: "custom", customType: "subagent-profile", data: { name } });
   const cases: Array<{
     name: string; mode: "print" | "tui"; profiles: Record<string, unknown>; flag?: string;
     profile?: string; model?: string; thinking?: string; error?: RegExp;
-    restored?: string; live?: boolean; picker?: boolean;
+    restored?: string; history?: unknown[]; initial?: string; live?: boolean; picker?: boolean;
     modelSwitch?: { profile: string; model: string; thinking: string; picker?: boolean };
   }> = [
     { name: "sole session", mode: "print", profiles: {}, profile: SESSION_PROFILE_NAME, model: "p/m", thinking: "high" },
@@ -86,6 +66,13 @@ test("extension selects profiles explicitly and uses the headless fallback", asy
     { name: "interactive sole session is inferred", mode: "tui", profiles: {}, profile: SESSION_PROFILE_NAME, model: "p/m", thinking: "high", modelSwitch: switchesToSession },
     { name: "interactive custom profile requires a choice alongside session", mode: "tui", profiles: { primary: profiles.primary }, profile: SESSION_PROFILE_NAME, model: "p/m", thinking: "high", picker: true, modelSwitch: { ...switchesToSession, picker: true } },
     { name: "interactive resume keeps the restored profile until the model changes", mode: "tui", profiles, restored: "backup", profile: "backup", model: "backup/model", thinking: "medium", modelSwitch: { ...switchesToSession, picker: true } },
+    { name: "restored session ignores configured defaults", mode: "tui", profiles, history: [choice("session")], initial: "session", profile: "session", model: "p/m", thinking: "high" },
+    { name: "inherited restored name requires a new choice", mode: "tui", profiles, history: [choice("constructor")], profile: "session", model: "p/m", thinking: "high", picker: true },
+    { name: "latest invalid choice does not restore an older valid choice", mode: "tui", profiles, history: [choice("backup"), choice("removed")], profile: "session", model: "p/m", thinking: "high", picker: true },
+    { name: "same model history keeps the restored profile", mode: "tui", profiles, history: [model("b"), model("a"), choice("backup"), model("a")], initial: "backup", profile: "backup", model: "backup/model", thinking: "medium" },
+    { name: "model switch and return clears the restored profile", mode: "tui", profiles, history: [model("a"), choice("backup"), model("b"), model("a")], profile: "session", model: "p/m", thinking: "high", picker: true },
+    { name: "provider and model boundaries remain distinct", mode: "tui", profiles, history: [model("team/m", "custom"), choice("backup"), model("m", "custom/team")], profile: "session", model: "p/m", thinking: "high", picker: true },
+    { name: "restored off survives model history and blocks launch", mode: "tui", profiles, history: [model("a"), choice("off"), model("b")], initial: "off", profile: "off" },
     { name: "interactive launch requires a choice", mode: "tui", profiles, profile: SESSION_PROFILE_NAME, model: "p/m", thinking: "high", live: true, picker: true },
     { name: "interactive flag keeps its profile after a model change", mode: "tui", profiles, flag: "backup", profile: "backup", model: "backup/model", thinking: "medium", modelSwitch: keepsBackup },
   ];
@@ -107,6 +94,7 @@ test("extension selects profiles explicitly and uses the headless fallback", asy
       const titles: string[] = [];
       const notices: string[] = [];
       const profileNotes: string[] = [];
+      let completions = 0;
       const pi = {
         registerFlag: (name: string, options: { type: string }) => flags.push([name, options.type]),
         getFlag: (name: string) => name === "subagent-profile" ? entry.flag : undefined,
@@ -119,6 +107,7 @@ test("extension selects profiles explicitly and uses the headless fallback", asy
         appendEntry: entries.fn,
         sendMessage: (message: { customType: string; content: string }) => {
           if (message.customType === PROFILE_ENTRY_TYPE) profileNotes.push(message.content);
+          if (message.customType === "subagents") completions += 1;
         },
       } as unknown as ExtensionAPI;
       const ctx = {
@@ -131,9 +120,9 @@ test("extension selects profiles explicitly and uses the headless fallback", asy
         hasUI: entry.mode === "tui",
         isIdle: () => true,
         sessionManager: {
-          getEntries: () => entry.mode === "tui" && entry.flag === undefined && !entry.restored ? [] : [
+          getEntries: () => entry.history ?? (entry.mode === "tui" && entry.flag === undefined && !entry.restored ? [] : [
             { type: "custom", customType: PROFILE_ENTRY_TYPE, data: { name: entry.restored ?? "primary" } },
-          ],
+          ]),
         },
         ui: {
           notify: (text: string) => notices.push(text),
@@ -152,7 +141,7 @@ test("extension selects profiles explicitly and uses the headless fallback", asy
         assert.deepEqual(statuses.calls, []);
         await handlers.get("session_start")!({}, ctx);
         const names = Object.keys(parseSubagentSettings({ profiles: entry.profiles }).profiles);
-        const initialProfile = entry.flag ?? entry.restored ?? (names.length === 1 ? names[0] : undefined);
+        const initialProfile = entry.flag ?? entry.initial ?? entry.restored ?? (names.length === 1 ? names[0]! : undefined);
         assert.deepEqual(statuses.calls, entry.mode === "tui" ? [[PROFILE_ENTRY_TYPE, initialProfile]] : []);
         const tool = tools.get("subagent")!;
         if (entry.error) {
@@ -167,18 +156,26 @@ test("extension selects profiles explicitly and uses the headless fallback", asy
           assert.deepEqual(notices, ["Active subagent profile: session. Available: session, off"]);
         }
         const result = await tool.execute("launch", { agent: "scout", task: "t" }, undefined, undefined, ctx);
+        if (entry.profile === "off") {
+          assert.equal(result.details.status, "failed");
+          assert.match((result.content[0] as { text: string }).text, /turned subagents off/);
+          await handlers.get("model_select")!({ source: "set" }, ctx);
+          assert.deepEqual(statuses.calls.at(-1), ["subagent-profile", "off"]);
+          assert.equal(calls.length, 0);
+          return;
+        }
         assert.equal(result.details.profile, entry.profile);
         assert.deepEqual(titles, entry.picker ? [`Subagent profile (active: ${initialProfile ?? "none"})`] : []);
         assert.deepEqual(profileNotes, []);
         assert.deepEqual(statuses.calls.at(-1), entry.mode === "tui" ? [PROFILE_ENTRY_TYPE, entry.profile] : undefined);
-        for (let waited = 0; calls.length === 0 && waited < 1000; waited += 5) await sleep(5);
+        await waitFor(() => calls.length > 0);
         assert.equal(calls.length, 1);
         const args = calls[0]!.args;
         assert.equal(args[args.indexOf("--model") + 1], entry.model);
         assert.equal(args[args.indexOf("--thinking") + 1], entry.thinking);
         children[0]!.stdout.emit("data", Buffer.from(endEvent("done")));
         children[0]!.finish(0);
-        await sleep(20);
+        await waitFor(() => completions === 1);
         const after = entry.modelSwitch;
         if (after) {
           const beforeTitles = [...titles];
@@ -200,14 +197,14 @@ test("extension selects profiles explicitly and uses the headless fallback", asy
           if (after.picker) {
             assert.deepEqual(entries.calls.filter((call) => call[0] === PROFILE_ENTRY_TYPE).at(-1), [PROFILE_ENTRY_TYPE, { name: after.profile }]);
           }
-          await sleep(10);
+          await waitFor(() => calls.length === 2);
           assert.equal(calls.length, 2);
           const nextArgs = calls[1]!.args;
           assert.equal(nextArgs[nextArgs.indexOf("--model") + 1], after.model);
           assert.equal(nextArgs[nextArgs.indexOf("--thinking") + 1], after.thinking);
           children[1]!.stdout.emit("data", Buffer.from(endEvent("done")));
           children[1]!.finish(0);
-          await sleep(20);
+          await waitFor(() => completions === 2);
         }
         if (entry.mode === "tui" && names.length === 1) {
           let pickerOpens = 0;
@@ -293,7 +290,6 @@ test("extension selects profiles explicitly and uses the headless fallback", asy
           assert.deepEqual(resetStatuses.calls.at(-1), [PROFILE_ENTRY_TYPE, OFF_PROFILE_NAME]);
           const stillBlocked = await tool.execute("off-again", { agent: "scout", task: "t" }, undefined, undefined, resetCtx as unknown as ExtensionToolContext);
           assert.equal(stillBlocked.details.status, "failed");
-          await sleep(10);
           assert.equal(calls.length, launchesBeforeOff);
           assert.equal(profileNotes.length, notesBeforeOff);
         }

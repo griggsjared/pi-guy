@@ -1,28 +1,30 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { Container, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import type {
   ExtensionAPI,
   ExtensionContext,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { Type, type Static } from "typebox";
-import { OFF_PROFILE_NAME, resolveAgentSettings, type AgentConfig, type SubagentSettings } from "./agents.ts";
+import { Type } from "typebox";
+import type { Static } from "typebox";
+import { OFF_PROFILE_NAME, resolveAgentSettings } from "./agents.ts";
+import type { AgentConfig, SubagentSettings } from "./agents.ts";
 import { formatDuration } from "../lib/format.ts";
 import { capOutput, formatResultOutput, normalizeTitle, shortLabel } from "./format.ts";
 import type { Job, JobRegistry } from "./registry.ts";
 import { formatModel, runSubagent, runWithConcurrencyLimit } from "./runner.ts";
 import { TruncatedText } from "./render.ts";
 import { formatEventSummary, formatLocalTime, formatStepTiming } from "./tail.ts";
-import {
-  ENTRY_TYPE,
-  QUESTION_ENTRY_TYPE,
-  type SubagentInactivity,
-  type SubagentMessageDetails,
-  type SubagentQuestion,
-  type SubagentQuestionMessageDetails,
-  type SubagentResult,
-  type SubagentToolDetails,
-  type SubagentToolTarget,
+import { ENTRY_TYPE, QUESTION_ENTRY_TYPE } from "./types.ts";
+import type {
+  SubagentInactivity,
+  SubagentMessageDetails,
+  SubagentQuestion,
+  SubagentQuestionMessageDetails,
+  SubagentResult,
+  SubagentToolDetails,
+  SubagentToolTarget,
 } from "./types.ts";
 
 const MAX_PARALLEL = 8;
@@ -206,7 +208,7 @@ interface CompletionMessage {
   details: SubagentMessageDetails;
 }
 
-export class CompletionMailbox {
+class CompletionMailbox {
   private readonly pending: CompletionMessage[] = [];
   private readonly pi: ExtensionAPI;
 
@@ -248,7 +250,7 @@ interface BatchDeps {
 }
 
 /** Per-invocation bookkeeping for completion display and cleanup. */
-export class Batch {
+class Batch {
   private readonly jobIds = new Set<number>();
   private readonly completed: Job[] = [];
   private pending = 0;

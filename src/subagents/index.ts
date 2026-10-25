@@ -1,8 +1,11 @@
 import { join } from "node:path";
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
-import { PROVIDER_USAGE_REQUEST_EVENT, type ProviderUsageRequest } from "../lib/events.ts";
-import { discoverAgents, loadSubagentSettings, OFF_PROFILE_NAME, resolveExtensionPaths, type SubagentSettings } from "./agents.ts";
-import { refreshUi, registerRenderers, type UiContext } from "./render.ts";
+import { PROVIDER_USAGE_REQUEST_EVENT } from "../lib/events.ts";
+import type { ProviderUsageRequest } from "../lib/events.ts";
+import { discoverAgents, loadSubagentSettings, OFF_PROFILE_NAME, resolveExtensionPaths } from "./agents.ts";
+import type { SubagentSettings } from "./agents.ts";
+import { refreshUi, registerRenderers } from "./render.ts";
+import type { UiContext } from "./render.ts";
 import { createJobRegistry } from "./registry.ts";
 import {
   confirmSubagentProfile,
@@ -16,7 +19,7 @@ import {
 import { createSubagentTool } from "./tools.ts";
 import { PROFILE_ENTRY_TYPE, STATUS_KEY, WIDGET_KEY } from "./types.ts";
 
-export function restoreActiveProfile(entries: readonly unknown[], settings: SubagentSettings): string | undefined {
+function restoreActiveProfile(entries: readonly unknown[], settings: SubagentSettings): string | undefined {
   const models = new Set<string>();
   let choice: unknown;
   let found = false;
