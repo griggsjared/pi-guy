@@ -11,9 +11,8 @@ import {
 	decodeUsageStatus,
 	isQuotaProvider,
 	USAGE_STATUS_KEY,
-	type UsageBalance,
-	type UsageStatus,
 } from "./usage-status.ts";
+import type { UsageBalance, UsageStatus } from "./usage-status.ts";
 const WINDOW_ORDER = ["rolling", "weekly", "monthly"] as const;
 const CURRENCY_SYMBOLS: Record<string, string> = { USD: "$", CNY: "¥" };
 
@@ -79,7 +78,7 @@ export function calculateFooterCost(entries: ReadonlyArray<{ type: string; messa
 	return cost;
 }
 
-export function calculateFooterCacheHit(entries: ReadonlyArray<{ type: string; message?: unknown }>): number | undefined {
+function calculateFooterCacheHit(entries: ReadonlyArray<{ type: string; message?: unknown }>): number | undefined {
 	let cacheRead = 0;
 	let cacheInput = 0;
 	for (const entry of entries) {

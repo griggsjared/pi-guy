@@ -4,10 +4,7 @@ import {
 	decodeUsageStatus,
 	encodeUsageStatus,
 	isQuotaProvider,
-	isUsageBalance,
 	isUsageProvider,
-	isUsageStatus,
-	isUsageWindow,
 	normalizeUsagePercent,
 } from "../../src/statusline/usage-status.ts";
 
@@ -40,26 +37,35 @@ test("recognizes claude-bridge quota status and round trips Claude windows", () 
 	assert.deepEqual(decodeUsageStatus(encodeUsageStatus(status)), status);
 });
 
-test("validates balances directly", () => {
-	assert.equal(isUsageBalance({ amount: 1, currency: "USD" }), true);
-	assert.equal(isUsageBalance({ amount: 0, currency: "CNY" }), true);
-	assert.equal(isUsageBalance({ amount: 1, currency: "usd" }), false);
-	assert.equal(isUsageBalance({ amount: -1, currency: "USD" }), false);
-	assert.equal(isUsageBalance({ amount: Number.NaN, currency: "USD" }), false);
-	assert.equal(isUsageBalance({ amount: 1 }), false);
+test("accepts valid balances and rejects invalid balances in decoded status", () => {
+	for (const balance of [{ amount: 1, currency: "USD" }, { amount: 0, currency: "CNY" }]) {
+		const status = { ...readyStatus, balance };
+		assert.deepEqual(decodeUsageStatus(JSON.stringify(status)), status);
+	}
+	for (const balance of [
+		{ amount: 1, currency: "usd" },
+		{ amount: -1, currency: "USD" },
+		{ amount: Number.NaN, currency: "USD" },
+		{ amount: 1 },
+	]) {
+		assert.equal(decodeUsageStatus(JSON.stringify({ ...readyStatus, balance })), undefined);
+	}
 });
 
 test("round trips a usage status", () => {
 	assert.deepEqual(decodeUsageStatus(encodeUsageStatus(readyStatus)), readyStatus);
-	assert.equal(isUsageStatus(readyStatus), true);
 });
 
 test("rejects malformed JSON and invalid usage shapes", () => {
 	assert.equal(decodeUsageStatus("not json"), undefined);
-	assert.equal(isUsageStatus({ ...readyStatus, provider: "other" }), false);
-	assert.equal(isUsageStatus({ ...readyStatus, capturedAtMs: -1 }), false);
-	assert.equal(isUsageWindow({ ...readyStatus.windows[0], usedPercent: Number.NaN }), false);
-	assert.equal(isUsageWindow({ ...readyStatus.windows[0], resetAtMs: Infinity }), false);
+	assert.equal(decodeUsageStatus(JSON.stringify({ ...readyStatus, provider: "other" })), undefined);
+	assert.equal(decodeUsageStatus(JSON.stringify({ ...readyStatus, capturedAtMs: -1 })), undefined);
+	assert.equal(decodeUsageStatus(JSON.stringify({
+		...readyStatus, windows: [{ ...readyStatus.windows[0]!, usedPercent: Number.NaN }],
+	})), undefined);
+	assert.equal(decodeUsageStatus(JSON.stringify({
+		...readyStatus, windows: [{ ...readyStatus.windows[0]!, resetAtMs: 0 }],
+	}).replace('"resetAtMs":0', '"resetAtMs":1e400')), undefined);
 });
 
 test("accepts optional reset timestamps and unknown status without windows", () => {
@@ -70,8 +76,8 @@ test("accepts optional reset timestamps and unknown status without windows", () 
 		capturedAtMs: 0,
 	};
 	const noReset = { ...readyStatus, windows: [{ kind: "weekly" as const, label: "7d", usedPercent: 0 }] };
-	assert.equal(isUsageStatus(unknown), true);
-	assert.equal(isUsageStatus(noReset), true);
+	assert.deepEqual(decodeUsageStatus(JSON.stringify(unknown)), unknown);
+	assert.deepEqual(decodeUsageStatus(JSON.stringify(noReset)), noReset);
 });
 
 test("normalizes percentages and rejects non-numbers", () => {
@@ -92,7 +98,11 @@ test("round trips a balance status and rejects invalid balances", () => {
 		balance: { amount: 110, currency: "USD" },
 	};
 	assert.deepEqual(decodeUsageStatus(encodeUsageStatus(balanceStatus)), balanceStatus);
-	assert.equal(isUsageStatus({ ...balanceStatus, balance: { amount: -1, currency: "USD" } }), false);
-	assert.equal(isUsageStatus({ ...balanceStatus, balance: { amount: 1, currency: "usd" } }), false);
-	assert.equal(isUsageStatus({ ...balanceStatus, balance: { amount: Number.NaN, currency: "USD" } }), false);
+	for (const balance of [
+		{ amount: -1, currency: "USD" },
+		{ amount: 1, currency: "usd" },
+		{ amount: Number.NaN, currency: "USD" },
+	]) {
+		assert.equal(decodeUsageStatus(JSON.stringify({ ...balanceStatus, balance })), undefined);
+	}
 });

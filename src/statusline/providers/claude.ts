@@ -2,7 +2,8 @@ import childProcess from "node:child_process";
 import { stripVTControlCharacters } from "node:util";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { REQUEST_TIMEOUT_MS } from "../http.ts";
-import { normalizeUsagePercent, type UsageStatus, type UsageWindow } from "../usage-status.ts";
+import { normalizeUsagePercent } from "../usage-status.ts";
+import type { UsageStatus, UsageWindow } from "../usage-status.ts";
 
 export const CLAUDE_PROVIDER = "claude-bridge";
 export const CLAUDE_CACHE_TTL_MS = 300_000;
@@ -59,6 +60,7 @@ export function normalizeClaudeUsage(payload: unknown, capturedAt = Date.now()):
 export async function fetchClaudeUsage(_ctx: ExtensionContext, signal: AbortSignal): Promise<UsageStatus> {
 	signal.throwIfAborted();
 	const output = await new Promise<string>((resolve, reject) => {
+		// pi.exec lacks per-process env overrides, a 64 KiB output cap, and immediate SIGKILL.
 		const child = childProcess.execFile("claude", [
 			"--settings", JSON.stringify({ remoteControlAtStartup: false, disableAllHooks: true }),
 			"--strict-mcp-config", "--tools", "", "--setting-sources", "", "/usage",

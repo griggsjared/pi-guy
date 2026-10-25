@@ -1,5 +1,6 @@
 import { cancelResponseBody, readResponseTextLimited } from "../http.ts";
-import { normalizeUsagePercent, type UsageStatus, type UsageWindow } from "../usage-status.ts";
+import { normalizeUsagePercent } from "../usage-status.ts";
+import type { UsageStatus, UsageWindow } from "../usage-status.ts";
 
 export const OPENCODE_PROVIDER = "opencode-go";
 export const OPENCODE_CACHE_TTL_MS = 5 * 60_000;

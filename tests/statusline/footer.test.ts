@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { calculateFooterCacheHit, calculateFooterCost, decodeFooterUsageStatus, formatFooterBalance, formatFooterReset, formatFooterUsage, registerStatusline } from "../../src/statusline/footer.ts";
+import { calculateFooterCost, decodeFooterUsageStatus, formatFooterBalance, formatFooterReset, formatFooterUsage, registerStatusline } from "../../src/statusline/footer.ts";
 import { captureHandlers } from "../helpers/pi.ts";
 import { fakeTheme } from "../helpers/theme.ts";
 
@@ -162,13 +162,6 @@ test("refreshes footer leaf cache for persisted usage and keeps totals branch-lo
 		rendered?.dispose();
 		rmSync(directory, { recursive: true, force: true });
 	}
-});
-
-test("calculates cache hit percentage from assistant usage", () => {
-	assert.equal(calculateFooterCacheHit([
-		{ type: "message", message: { role: "assistant", usage: { input: 25, cacheRead: 75, cacheWrite: 0 } } },
-	]), 75);
-	assert.equal(calculateFooterCacheHit([]), undefined);
 });
 
 test("formats balances by currency", () => {

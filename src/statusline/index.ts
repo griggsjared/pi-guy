@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
-import { PROVIDER_USAGE_REQUEST_EVENT, type ProviderUsageRequest } from "../lib/events.ts";
+import { PROVIDER_USAGE_REQUEST_EVENT } from "../lib/events.ts";
+import type { ProviderUsageRequest } from "../lib/events.ts";
 import { ANTHROPIC_CACHE_TTL_MS, ANTHROPIC_PROVIDER, fetchAnthropicUsage, normalizeAnthropicHeaders } from "./providers/anthropic.ts";
 import { CLAUDE_CACHE_TTL_MS, CLAUDE_PROVIDER, fetchClaudeUsage } from "./providers/claude.ts";
 import { CODEX_CACHE_TTL_MS, CODEX_PROVIDER, fetchCodexUsage } from "./providers/codex.ts";
@@ -11,9 +12,8 @@ import {
 	encodeUsageStatus,
 	isUsageProvider,
 	USAGE_STATUS_KEY,
-	type UsageProvider,
-	type UsageStatus,
 } from "./usage-status.ts";
+import type { UsageProvider, UsageStatus } from "./usage-status.ts";
 
 const REFRESH_INTERVAL_MS = 60_000;
 

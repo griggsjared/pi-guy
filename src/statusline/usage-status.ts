@@ -48,7 +48,7 @@ export function isQuotaProvider(value: unknown): value is UsageProvider {
 	return typeof value === "string" && quotaProviders.has(value as UsageProvider);
 }
 
-export function isUsageStatus(value: unknown): value is UsageStatus {
+function isUsageStatus(value: unknown): value is UsageStatus {
 	if (!value || typeof value !== "object") return false;
 	const status = value as Record<string, unknown>;
 	return isUsageProvider(status.provider)
@@ -61,7 +61,7 @@ export function isUsageStatus(value: unknown): value is UsageStatus {
 		&& (status.balance === undefined || isUsageBalance(status.balance));
 }
 
-export function isUsageBalance(value: unknown): value is UsageBalance {
+function isUsageBalance(value: unknown): value is UsageBalance {
 	if (!value || typeof value !== "object") return false;
 	const balance = value as Record<string, unknown>;
 	return typeof balance.amount === "number"
@@ -71,7 +71,7 @@ export function isUsageBalance(value: unknown): value is UsageBalance {
 		&& /^[A-Z]{3}$/.test(balance.currency);
 }
 
-export function isUsageWindow(value: unknown): value is UsageWindow {
+function isUsageWindow(value: unknown): value is UsageWindow {
 	if (!value || typeof value !== "object") return false;
 	const window = value as Record<string, unknown>;
 	const resetAtMs = window.resetAtMs;

@@ -1,6 +1,7 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { asNumber, asObject, readJson } from "../http.ts";
-import { normalizeUsagePercent, type UsageStatus, type UsageWindow } from "../usage-status.ts";
+import { normalizeUsagePercent } from "../usage-status.ts";
+import type { UsageStatus, UsageWindow } from "../usage-status.ts";
 import { resolveProviderAuth } from "./auth.ts";
 
 export const ANTHROPIC_PROVIDER = "anthropic";
@@ -32,7 +33,7 @@ export function normalizeAnthropicHeaders(headers: Record<string, string>, captu
 }
 
 /** Unlike the headers, the usage endpoint reports utilization as 0-100. */
-export function normalizeAnthropicUsage(payload: unknown, capturedAt = Date.now()): UsageStatus | undefined {
+function normalizeAnthropicUsage(payload: unknown, capturedAt = Date.now()): UsageStatus | undefined {
 	const object = asObject(payload);
 	const windows: UsageWindow[] = [];
 	for (const [key, kind, label] of [["five_hour", "rolling", "5h"], ["seven_day", "weekly", "7d"]] as const) {
