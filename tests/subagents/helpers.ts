@@ -7,6 +7,8 @@ import type { AgentConfig, SubagentSettings } from "../../src/subagents/agents.t
 import { restoreActiveProfile } from "../../src/subagents/index.ts";
 import { createJobRegistry } from "../../src/subagents/registry.ts";
 import { createSubagentTool } from "../../src/subagents/tools.ts";
+import { captureHandlers } from "../helpers/pi.ts";
+import { fakeTheme } from "../helpers/theme.ts";
 import { FakeChild, fakeSpawn } from "./fake-child.ts";
 
 export const AGENT: AgentConfig = {
@@ -22,8 +24,6 @@ export function spy() {
   };
   return { calls, fn };
 }
-
-export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export function complete(registry: ReturnType<typeof createJobRegistry>, id: number, exitCode = 0) {
   registry.complete(id, {
@@ -46,12 +46,12 @@ export function makeTool(
   const sendMessage = spy();
   const sendUserMessage = spy();
   const appendEntry = spy();
-  const handlers = new Map<string, (...args: unknown[]) => void>();
+  const { handlers, on } = captureHandlers();
   const pi = {
     sendMessage: sendMessage.fn,
     sendUserMessage: sendUserMessage.fn,
     appendEntry: appendEntry.fn,
-    on: (event: string, handler: (...args: unknown[]) => void) => handlers.set(event, handler),
+    on,
   } as unknown as ExtensionAPI;
   const activeTickers = new Set<ReturnType<typeof setInterval>>();
   const activeProcs = new Set<ChildProcess>();
@@ -82,14 +82,6 @@ export function makeTool(
     isIdle: () => true,
   } as unknown as ExtensionToolContext;
   return { tool, registry, sendMessage, sendUserMessage, appendEntry, handlers, activeTickers, activeProcs, child, ctx };
-}
-
-export function fakeTheme() {
-  return {
-    fg: (_color: string, text: string) => text,
-    bg: (_color: string, text: string) => text,
-    bold: (text: string) => text,
-  };
 }
 
 export function customProfilePicker(interact: (component: Component) => void | Promise<void>, requestRender = () => {}) {

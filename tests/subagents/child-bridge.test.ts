@@ -1,16 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import childBridge from "../../src/subagents/child-bridge.ts";
 import { ASK_PARENT_TITLE_PREFIX } from "../../src/subagents/types.ts";
+import { captureTools } from "../helpers/pi.ts";
 
 function registeredTool() {
-  let tool: ToolDefinition | undefined;
-  childBridge({
-    registerTool(definition: ToolDefinition) {
-      tool = definition;
-    },
-  } as unknown as ExtensionAPI);
+  const tool = captureTools(childBridge).get("ask_parent");
   assert.ok(tool);
   return tool;
 }

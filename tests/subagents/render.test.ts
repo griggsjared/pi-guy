@@ -6,7 +6,9 @@ import { createJobRegistry } from "../../src/subagents/registry.ts";
 import { refreshUi, registerRenderers, renderFullWidget } from "../../src/subagents/render.ts";
 import { createSendTool } from "../../src/subagents/status-tools.ts";
 import { EMPTY_USAGE, ENTRY_TYPE, QUESTION_ENTRY_TYPE } from "../../src/subagents/types.ts";
-import { complete, makeTool, fakeTheme, renderable, renderAtWidth, renderText } from "./helpers.ts";
+import { fakeTheme, taggedTheme as createTaggedTheme } from "../helpers/theme.ts";
+import { flush } from "../helpers/wait.ts";
+import { complete, makeTool, renderable, renderAtWidth, renderText } from "./helpers.ts";
 
 test("refreshUi: keeps one widget component and requests in-place renders", () => {
   const registry = createJobRegistry();
@@ -96,12 +98,12 @@ test("refreshUi: clicks open the rendered job's tail and leave other mouse gestu
   assert.deepEqual(widget.handleMouse({ type: "click", button: "left", y: 1 }), { handled: true });
   assert.equal(tails.length, 1);
   tails[0]!.handleInput("q");
-  await new Promise<void>((resolve) => setImmediate(resolve));
+  await flush();
 
   assert.deepEqual(widget.handleMouse({ type: "click", button: "left", y: 1 }), { handled: true });
   assert.match(renderText(tails[1]), new RegExp(`Subagent #${completedId}`));
   tails[1]!.handleInput("\x1b");
-  await new Promise<void>((resolve) => setImmediate(resolve));
+  await flush();
 
   widget.render(30);
   assert.deepEqual(widget.handleMouse({ type: "click", button: "left", y: 1 }), { handled: true });
@@ -137,7 +139,7 @@ test("refreshUi: failed tail opens recover and disposed widgets cannot open tail
   const click = { type: "click", button: "left", y: 0 };
   for (let attempt = 0; attempt < 3; attempt += 1) {
     assert.doesNotThrow(() => widget.handleMouse(click));
-    await new Promise<void>((resolve) => setImmediate(resolve));
+    await flush();
     assert.equal(opens, attempt + 1);
   }
   widget.dispose();
@@ -404,10 +406,7 @@ test("message and entry renderers render results and parent questions", () => {
   assert.doesNotMatch(questionText, /question-1/);
   assert.doesNotMatch(questionText, /model-facing instructions/);
 
-  const taggedTheme = {
-    ...fakeTheme(),
-    fg: (color: string, text: string) => `[${color}]${text}[/${color}]`,
-  } as never;
+  const taggedTheme = createTaggedTheme() as never;
   const taggedResult = renderText(captured!(
     {
       content: "out",

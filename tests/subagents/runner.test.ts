@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import { getPiCommand, runSubagent, runWithConcurrencyLimit } from "../../src/subagents/runner.ts";
 import type { AgentConfig } from "../../src/subagents/agents.ts";
 import type { JobEventInput, JobStepInput, SubagentInactivity } from "../../src/subagents/types.ts";
+import { sleep } from "../helpers/wait.ts";
 import {
   FakeChild,
   fakeSpawn,
@@ -48,7 +49,7 @@ test("runWithConcurrencyLimit: preserves order and caps concurrency", async () =
   const fn = async (n: number) => {
     active += 1;
     peak = Math.max(peak, active);
-    await new Promise((r) => setTimeout(r, 5));
+    await sleep(5);
     active -= 1;
     return n * 2;
   };
@@ -229,7 +230,7 @@ test("runSubagent: final message alone does not trigger the shutdown watchdog", 
     shutdownGraceMs: 20,
   });
   child.stdout.emit("data", Buffer.from(endEvent("final answer")));
-  await new Promise((resolve) => setTimeout(resolve, 40));
+  await sleep(40);
   assert.equal(child.killed, null);
   child.finish(0);
   assert.equal((await result).exitCode, 0);
@@ -245,7 +246,7 @@ test("runSubagent: cancels the shutdown watchdog when the child closes", async (
   child.stdout.emit("data", Buffer.from(`${JSON.stringify({ type: "agent_settled" })}\n`));
   child.finish(0);
   assert.equal((await result).exitCode, 0);
-  await new Promise((resolve) => setTimeout(resolve, 40));
+  await sleep(40);
   assert.equal(child.killed, null);
 });
 

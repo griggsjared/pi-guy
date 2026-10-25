@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { ExtensionAPI, ExtensionContext, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import askUser from "../../src/ask-user/index.ts";
+import { captureTools } from "../helpers/pi.ts";
+import { fakeTheme } from "../helpers/theme.ts";
 
 const DISCUSS_LABEL = "Discuss this after the questions";
 const question = {
@@ -10,9 +12,7 @@ const question = {
 };
 
 function tool() {
-	let registered!: Parameters<ExtensionAPI["registerTool"]>[0];
-	askUser({ registerTool: (definition) => { registered = definition as typeof registered; } } as ExtensionAPI);
-	return registered;
+	return captureTools(askUser).get("ask_user")!;
 }
 
 function tui(screens: string[][], rendered: string[][] = []): ExtensionContext {
@@ -32,7 +32,7 @@ function tui(screens: string[][], rendered: string[][] = []): ExtensionContext {
 				let result: unknown;
 				const component = factory(
 					{ requestRender() {} },
-					{ fg: (_color: string, text: string) => text, bg: (_color: string, text: string) => text, bold: (text: string) => text },
+					fakeTheme(),
 					undefined,
 					(value: unknown) => { settled = true; result = value; },
 				);

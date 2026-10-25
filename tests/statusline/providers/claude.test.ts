@@ -1,20 +1,14 @@
 import assert from "node:assert/strict";
-import childProcess from "node:child_process";
-import { test, type TestContext } from "node:test";
+import { test } from "node:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { fetchClaudeUsage, normalizeClaudeUsage } from "../../../src/statusline/providers/claude.ts";
+import { claudeCapturedAt, claudeOutput, mockCli } from "../../helpers/claude-cli.ts";
 
-const capturedAt = Date.parse("2026-10-07T16:00:00Z");
-const output = [
-	"You are currently using your subscription to power your Claude Code usage",
-	"Current session: 10% used · resets Oct 7 at 12:59pm (America/Boise)",
-	"Current week (all models): 12% used · resets Oct 13 at 4:59am (America/Boise)",
-].join("\n");
 const context = {} as ExtensionContext;
 
 test("publishes only aggregate Claude CLI quotas and timezone-aware resets", () => {
-	assert.deepEqual(normalizeClaudeUsage(`${output}\nCurrent week (Sonnet): 20% used\nTop skills: secret\n50% of your usage was at >150k context`, capturedAt), {
-		provider: "claude-bridge", state: "ready", capturedAtMs: capturedAt,
+	assert.deepEqual(normalizeClaudeUsage(`${claudeOutput}\nCurrent week (Sonnet): 20% used\nTop skills: secret\n50% of your usage was at >150k context`, claudeCapturedAt), {
+		provider: "claude-bridge", state: "ready", capturedAtMs: claudeCapturedAt,
 		windows: [
 			{ kind: "rolling", label: "5h", usedPercent: 10, resetAtMs: Date.parse("2026-10-07T18:59:00Z") },
 			{ kind: "weekly", label: "7d", usedPercent: 12, resetAtMs: Date.parse("2026-10-13T10:59:00Z") },
@@ -23,13 +17,13 @@ test("publishes only aggregate Claude CLI quotas and timezone-aware resets", () 
 });
 
 test("handles Claude CLI color, zero usage, and partial quotas without requiring reset text", () => {
-	assert.deepEqual(normalizeClaudeUsage("\u001b[32mCurrent session: 0% used\u001b[0m", capturedAt)?.windows, [
+	assert.deepEqual(normalizeClaudeUsage("\u001b[32mCurrent session: 0% used\u001b[0m", claudeCapturedAt)?.windows, [
 		{ kind: "rolling", label: "5h", usedPercent: 0 },
 	]);
-	assert.deepEqual(normalizeClaudeUsage("Current week (all models): 12.5% used", capturedAt)?.windows, [
+	assert.deepEqual(normalizeClaudeUsage("Current week (all models): 12.5% used", claudeCapturedAt)?.windows, [
 		{ kind: "weekly", label: "7d", usedPercent: 12.5 },
 	]);
-	assert.deepEqual(normalizeClaudeUsage("Current session: -5% used\nCurrent week (all models): 105% used", capturedAt)?.windows, [
+	assert.deepEqual(normalizeClaudeUsage("Current session: -5% used\nCurrent week (all models): 105% used", claudeCapturedAt)?.windows, [
 		{ kind: "rolling", label: "5h", usedPercent: 0 },
 		{ kind: "weekly", label: "7d", usedPercent: 100 },
 	]);
@@ -38,14 +32,14 @@ test("handles Claude CLI color, zero usage, and partial quotas without requiring
 test("does not mistake Claude local usage insights or unsupported quota output for account limits", () => {
 	for (const value of [null, {}, [], "", "You are currently using your subscription", "50% of your usage was at >150k context",
 		"Current week (Sonnet): 10% used", "Current session: NaN% used", "Current session: Infinity% used", "Current session: lots% used"]) {
-		assert.equal(normalizeClaudeUsage(value, capturedAt), undefined);
+		assert.equal(normalizeClaudeUsage(value, claudeCapturedAt), undefined);
 	}
 });
 
 test("omits invalid Claude CLI resets without losing quota percentages", () => {
 	for (const reset of ["not a date", "Oct 7 at 12:59pm (Invalid/Zone)", "Feb 30 at 12:59pm (UTC)",
 		"Oct 0 at 12:59pm (UTC)", "Oct 7 at 13:59pm (UTC)", "Oct 7 at 12:60pm (UTC)", "Oct 7 at 0:59am (UTC)"]) {
-		assert.deepEqual(normalizeClaudeUsage(`Current session: 10% used · resets ${reset}`, capturedAt)?.windows, [
+		assert.deepEqual(normalizeClaudeUsage(`Current session: 10% used · resets ${reset}`, claudeCapturedAt)?.windows, [
 			{ kind: "rolling", label: "5h", usedPercent: 10 },
 		]);
 	}
@@ -70,7 +64,7 @@ test("fetches Claude CLI usage despite inherited traffic restrictions with bound
 		if (previous === undefined) delete process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
 		else process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = previous;
 	});
-	const calls = mockCli(t, (call) => call.complete(null, output));
+	const calls = mockCli(t, (call) => call.complete(null, claudeOutput));
 	const controller = new AbortController();
 	const usage = await fetchClaudeUsage(context, controller.signal);
 	assert.deepEqual(usage.windows.map((window) => [window.label, window.usedPercent]), [["5h", 10], ["7d", 12]]);
@@ -95,7 +89,7 @@ test("fetches Claude CLI usage despite inherited traffic restrictions with bound
 
 test("rejects failed Claude CLI probes and output without quotas without exposing stderr", async (t) => {
 	for (const [name, error, stdout] of [
-		["nonzero exit", new Error("secret credentials in stderr"), output],
+		["nonzero exit", new Error("secret credentials in stderr"), claudeOutput],
 		["missing executable", Object.assign(new Error("missing executable"), { code: "ENOENT" }), ""],
 		["output buffer exceeded", Object.assign(new Error("secret output"), { code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" }), ""],
 		["no account quota", null, "50% of your usage was at >150k context"],
@@ -112,7 +106,7 @@ test("rejects failed Claude CLI probes and output without quotas without exposin
 });
 
 test("does not start the Claude CLI for an already aborted request", async (t) => {
-	const calls = mockCli(t, (call) => call.complete(null, output));
+	const calls = mockCli(t, (call) => call.complete(null, claudeOutput));
 	const controller = new AbortController();
 	controller.abort();
 	await assert.rejects(fetchClaudeUsage(context, controller.signal), { name: "AbortError" });
@@ -128,23 +122,3 @@ test("cancels an in-flight Claude CLI request through its abort signal", async (
 	assert.equal(calls[0]?.options.signal.aborted, true);
 	assert.equal(calls[0]?.stdinClosed, true);
 });
-
-type CliCall = {
-	file: string;
-	args: string[];
-	options: { signal: AbortSignal };
-	stdinClosed: boolean;
-	complete(error: Error | null, stdout: string): void;
-};
-
-function mockCli(t: TestContext, load: (call: CliCall) => void): CliCall[] {
-	const calls: CliCall[] = [];
-	t.mock.method(childProcess, "execFile", (file: string, args: string[], options: any, callback: any) => {
-		const call: CliCall = { file, args, options, stdinClosed: false, complete: (error, stdout) => callback(error, stdout, "secret stderr") };
-		calls.push(call);
-		options.signal.addEventListener("abort", () => call.complete(options.signal.reason, ""), { once: true });
-		queueMicrotask(() => load(call));
-		return { stdin: { end() { call.stdinClosed = true; } } } as any;
-	});
-	return calls;
-}

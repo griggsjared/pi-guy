@@ -3,6 +3,8 @@ import { test } from "node:test";
 import { CustomEditor, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import workingIndicator from "../../src/working-indicator/index.ts";
+import { captureHandlers } from "../helpers/pi.ts";
+import { fakeTheme } from "../helpers/theme.ts";
 
 type TestContext = ReturnType<typeof createContext>["ctx"];
 type Handler = (event: Record<string, unknown>, context: TestContext) => void;
@@ -15,12 +17,8 @@ type Calls = {
 };
 
 function register() {
-	const handlers = new Map<string, Handler>();
-	workingIndicator({
-		on(event: string, handler: Handler) {
-			handlers.set(event, handler);
-		},
-	} as unknown as ExtensionAPI);
+	const { handlers, on } = captureHandlers();
+	workingIndicator({ on } as unknown as ExtensionAPI);
 	return handlers;
 }
 
@@ -32,10 +30,7 @@ function createContext() {
 			mode: "tui",
 			hasUI: true,
 			ui: {
-				theme: {
-					fg(_color: string, text: string) { return text; },
-					bold(text: string) { return text; },
-				},
+				theme: fakeTheme(),
 				setWorkingMessage(message?: string) { calls.messages.push(message); },
 				setWorkingIndicator(indicator?: unknown) { calls.indicators.push(indicator); },
 				setWorkingVisible(visible: boolean) { calls.visibility.push(visible); },

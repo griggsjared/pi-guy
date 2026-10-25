@@ -4,6 +4,8 @@ import type { AssistantMessage, Context } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionCommandContext, SessionEntry, SessionMessageEntry } from "@earendil-works/pi-coding-agent";
 import { KeybindingsManager, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
 import btw, { fitModalBody, transcript } from "../../src/btw/index.ts";
+import { fakeTheme } from "../helpers/theme.ts";
+import { flush } from "../helpers/wait.ts";
 
 function answer(text: string): AssistantMessage {
 	return { role: "assistant", content: [{ type: "text", text }], stopReason: "stop", timestamp: 1 } as AssistantMessage;
@@ -121,7 +123,7 @@ function harness(history: SessionMessageEntry["message"][] = []) {
 				const pending = Promise.withResolvers<string | null>();
 				modal = factory(
 					{ requestRender: () => { renders++; }, terminal: { rows: 24 } },
-					{ fg: (_color: string, text: string) => text },
+					fakeTheme(),
 					new KeybindingsManager(TUI_KEYBINDINGS),
 					(value) => { completions++; pending.resolve(value); },
 				);
@@ -137,10 +139,6 @@ function harness(history: SessionMessageEntry["message"][] = []) {
 		get renders() { return renders; },
 		get completions() { return completions; },
 	};
-}
-
-async function flush() {
-	await new Promise<void>((resolve) => setImmediate(resolve));
 }
 
 test("registry requests isolate all system state while retaining context and successive private turns", async () => {

@@ -17,7 +17,9 @@ import {
 } from "../../src/subagents/status-tools.ts";
 import { EMPTY_USAGE, PROFILE_ENTRY_TYPE } from "../../src/subagents/types.ts";
 import { responseEvent } from "./fake-child.ts";
-import { AGENT, sleep, makeTool, fakeTheme, customProfilePicker, renderAtWidth, renderText } from "./helpers.ts";
+import { fakeTheme, taggedTheme as createTaggedTheme } from "../helpers/theme.ts";
+import { sleep } from "../helpers/wait.ts";
+import { AGENT, makeTool, customProfilePicker, renderAtWidth, renderText } from "./helpers.ts";
 
 test("subagent status includes compact model and effort", async () => {
   const registry = createJobRegistry();
@@ -245,10 +247,7 @@ test("subagent status structured results preserve empty, filtered, and unknown s
 
 test("subagent peek renderer labels events and compacts structured results", () => {
   const { renderResult } = createPeekTool({ registry: createJobRegistry() });
-  const theme = {
-    ...fakeTheme(),
-    fg: (color: string, text: string) => `[${color}]${text}[/${color}]`,
-  } as never;
+  const theme = createTaggedTheme() as never;
   const rendered = renderText(renderResult!({
     content: [{ type: "text", text: "legacy peek text" }],
     details: {
@@ -422,10 +421,7 @@ test("status, cancel, and send tools render job-aware output", async () => {
   assert.doesNotMatch(renderedStatus, /f7455070/);
   assert.ok(["muted", "dim", "toolOutput"].every((color) => statusColors.includes(color)));
 
-  const taggedStatusTheme = {
-    ...fakeTheme(),
-    fg: (color: string, text: string) => `[${color}]${text}[/${color}]`,
-  } as never;
+  const taggedStatusTheme = createTaggedTheme() as never;
   const taggedStatus = renderText(
     statusTool.renderResult!(statusResult, { expanded: false, isPartial: false }, taggedStatusTheme, { args: { jobId } } as never),
   );
@@ -480,10 +476,7 @@ test("status, cancel, and send tools render job-aware output", async () => {
   const combinedSendPreview = `${sendCall}\n${renderedSendResult}`;
   assert.equal(combinedSendPreview.match(/Check the failure path/g)?.length, 1);
   assert.equal(combinedSendPreview.match(/Inspect the error path/g)?.length, 1);
-  const taggedTheme = {
-    ...fakeTheme(),
-    fg: (color: string, text: string) => `[${color}]${text}[/${color}]`,
-  } as never;
+  const taggedTheme = createTaggedTheme() as never;
   const taggedSendResult = renderText(
     sendTool.renderResult!(sendResult, { expanded: false, isPartial: false }, taggedTheme, { args: sendArgs } as never),
   );
@@ -1557,10 +1550,7 @@ test("subagent_reply renders a compact call and result", async () => {
   assert.equal(renderedResult, "✓ answered\n  Q: Continue?\n  A: yes");
   const combinedReply = `${renderText(call)}\n${renderedResult}`;
   assert.equal(combinedReply.split("#1 scout · task").length - 1, 1);
-  const taggedTheme = {
-    ...fakeTheme(),
-    fg: (color: string, text: string) => `[${color}]${text}[/${color}]`,
-  } as never;
+  const taggedTheme = createTaggedTheme() as never;
   const taggedResult = renderText(
     tool.renderResult!(result, { expanded: false, isPartial: false }, taggedTheme, {
       args: { jobId, questionId: "f7455070-1bdd-4bf8-9806-2647a04b1eba", answer: "yes" },

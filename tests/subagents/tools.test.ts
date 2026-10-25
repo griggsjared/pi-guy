@@ -14,7 +14,9 @@ import {
   responseEvent,
   type SpawnCall,
 } from "./fake-child.ts";
-import { spy, sleep, complete, makeTool, fakeTheme, renderable, renderText } from "./helpers.ts";
+import { fakeTheme } from "../helpers/theme.ts";
+import { flush, sleep } from "../helpers/wait.ts";
+import { spy, complete, makeTool, renderable, renderText } from "./helpers.ts";
 
 test("resolveMode: single, batch, and validation", () => {
   assert.deepEqual(resolveMode({ agent: "a", task: "t", title: "x" }), {
@@ -527,7 +529,7 @@ test("execute: inactivity steers a busy parent once per idle stretch without sto
   const now = Date.now();
   t.mock.timers.enable({ apis: ["Date", "setTimeout"], now });
   await tool.execute("launch", { agent: "scout", task: "Inspect the slow tool" }, undefined, undefined, ctx);
-  while (child.stdin.commands().length === 0) await new Promise<void>((resolve) => setImmediate(resolve));
+  while (child.stdin.commands().length === 0) await flush();
   child.stdout.emit("data", Buffer.from(`${JSON.stringify({
     type: "tool_execution_start", toolCallId: "read-1", toolName: "read", args: { path: "src/auth.ts" },
   })}\n`));
@@ -666,7 +668,7 @@ test("cancelling a child waiting on the parent invalidates its question and supp
   t.after(() => { child.finish(0); for (const ticker of activeTickers) clearInterval(ticker); });
   t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: Date.now() });
   await tool.execute("call1", { agent: "scout", task: "t" }, undefined, undefined, ctx);
-  while (child.stdin.commands().length === 0) await new Promise<void>((resolve) => setImmediate(resolve));
+  while (child.stdin.commands().length === 0) await flush();
   const initial = child.stdin.commands()[0];
   assert.ok(initial);
   child.stdout.emit("data", Buffer.from(responseEvent(initial)));

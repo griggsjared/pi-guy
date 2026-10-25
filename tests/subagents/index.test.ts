@@ -5,7 +5,7 @@ import { mkdtemp, writeFile, rm, mkdir } from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import os, { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ExtensionAPI, ExtensionContext, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import { OFF_PROFILE_NAME, parseSubagentSettings, SESSION_PROFILE_NAME } from "../../src/subagents/agents.ts";
 import subagentsExtension, { restoreActiveProfile } from "../../src/subagents/index.ts";
 import { createSubagentTool } from "../../src/subagents/tools.ts";
@@ -15,7 +15,9 @@ import {
   fakeSpawnChildren,
   endEvent,
 } from "./fake-child.ts";
-import { spy, sleep, customProfilePicker, renderText } from "./helpers.ts";
+import { captureHandlers } from "../helpers/pi.ts";
+import { sleep } from "../helpers/wait.ts";
+import { spy, customProfilePicker, renderText } from "./helpers.ts";
 
 test("restoreActiveProfile restores only the latest session selection", () => {
   const settings = parseSubagentSettings({ profiles: { primary: {}, backup: {} } });
@@ -96,7 +98,7 @@ test("extension selects profiles explicitly and uses the headless fallback", asy
       syncBuiltinESMExports();
       const tools = new Map<string, ReturnType<typeof createSubagentTool>>();
       const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
-      const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => unknown>();
+      const { handlers, on } = captureHandlers();
       const shortcuts = new Map<string, { handler: (ctx: unknown) => Promise<void> | void }>();
       const flags: Array<[string, string]> = [];
       const entries = spy();
@@ -113,7 +115,7 @@ test("extension selects profiles explicitly and uses the headless fallback", asy
         registerShortcut: (key: string, shortcut: { handler: (ctx: unknown) => Promise<void> | void }) => shortcuts.set(key, shortcut),
         registerEntryRenderer: () => {},
         registerMessageRenderer: () => {},
-        on: (event: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) => handlers.set(event, handler),
+        on,
         appendEntry: entries.fn,
         sendMessage: (message: { customType: string; content: string }) => {
           if (message.customType === PROFILE_ENTRY_TYPE) profileNotes.push(message.content);

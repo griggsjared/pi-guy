@@ -9,6 +9,9 @@ import { createEventBus, loadProjectContextFiles, VERSION, type ExtensionAPI } f
 import { visibleWidth } from "@earendil-works/pi-tui";
 import agentsLocal from "../../src/agents-local/index.ts";
 import header from "../../src/header/index.ts";
+import { captureHandlers } from "../helpers/pi.ts";
+import { fakeTheme } from "../helpers/theme.ts";
+import { sleep } from "../helpers/wait.ts";
 
 test("header shows final context files regardless of extension order and resets each session", async (t) => {
 	const root = await mkdtemp(join(tmpdir(), "pi-header-"));
@@ -118,9 +121,9 @@ test("header shows final context files regardless of extension order and resets 
 test("header shows startup reports from multiple sources and clears updated reports", async (t) => {
 	const root = await mkdtemp(join(tmpdir(), "pi-header-reports-"));
 	t.after(() => rm(root, { recursive: true, force: true }));
-	const handlers = new Map<string, (event: any, ctx: any) => unknown>();
+	const { handlers, on } = captureHandlers();
 	const events = createEventBus();
-	header({ events, on(event: string, handler: (event: any, ctx: any) => unknown) { handlers.set(event, handler); } } as unknown as ExtensionAPI);
+	header({ events, on } as unknown as ExtensionAPI);
 	let rendered: { render(width: number): string[] } | undefined;
 	let renderRequests = 0;
 	const ctx = {
@@ -129,7 +132,7 @@ test("header shows startup reports from multiple sources and clears updated repo
 			setHeader(factory: any) {
 				rendered = factory(
 					{ requestRender() { renderRequests++; } },
-					{ fg: (_color: string, value: string) => value, bold: (value: string) => value },
+					fakeTheme(),
 				);
 			},
 		},
@@ -168,8 +171,8 @@ test("header shows the pi-bolt version between Pi and pi-guy only when running o
 	});
 	let renderRequests = 0;
 	const start = async () => {
-		const handlers = new Map<string, (event: any, ctx: any) => unknown>();
-		header({ events: createEventBus(), on(event: string, handler: (event: any, ctx: any) => unknown) { handlers.set(event, handler); } } as unknown as ExtensionAPI);
+		const { handlers, on } = captureHandlers();
+		header({ events: createEventBus(), on } as unknown as ExtensionAPI);
 		let rendered: { render(width: number): string[] } | undefined;
 		await handlers.get("session_start")!({}, {
 			mode: "tui", cwd: tmpdir(), isProjectTrusted: () => true,
@@ -177,7 +180,7 @@ test("header shows the pi-bolt version between Pi and pi-guy only when running o
 				setHeader(factory: any) {
 					rendered = factory(
 						{ requestRender() { renderRequests++; } },
-						{ fg: (_color: string, value: string) => value, bold: (value: string) => value },
+						fakeTheme(),
 					);
 				},
 			},
@@ -225,8 +228,8 @@ test("header lists configured extensions by short name, without pi-guy or untrus
 		await writeFile(join(root, path), content);
 	}
 	const start = async (trusted: boolean) => {
-		const handlers = new Map<string, (event: any, ctx: any) => unknown>();
-		header({ events: createEventBus(), on(event: string, handler: (event: any, ctx: any) => unknown) { handlers.set(event, handler); } } as unknown as ExtensionAPI);
+		const { handlers, on } = captureHandlers();
+		header({ events: createEventBus(), on } as unknown as ExtensionAPI);
 		let rendered: { render(width: number): string[] } | undefined;
 		let resolved = false;
 		await handlers.get("session_start")!({}, {
@@ -235,12 +238,12 @@ test("header lists configured extensions by short name, without pi-guy or untrus
 				setHeader(factory: any) {
 					rendered = factory(
 						{ requestRender() { resolved = true; } },
-						{ fg: (_color: string, value: string) => value, bold: (value: string) => value },
+						fakeTheme(),
 					);
 				},
 			},
 		});
-		for (let waited = 0; !resolved && waited < 1000; waited += 5) await new Promise((resolve) => setTimeout(resolve, 5));
+		for (let waited = 0; !resolved && waited < 1000; waited += 5) await sleep(5);
 		return rendered!.render(500).join("\n");
 	};
 
@@ -249,8 +252,8 @@ test("header lists configured extensions by short name, without pi-guy or untrus
 });
 
 test("header does not install or request terminal rendering in noninteractive modes", async () => {
-	const handlers = new Map<string, (event: any, ctx: any) => unknown>();
-	header({ events: createEventBus(), on(event: string, handler: (event: any, ctx: any) => unknown) { handlers.set(event, handler); } } as unknown as ExtensionAPI);
+	const { handlers, on } = captureHandlers();
+	header({ events: createEventBus(), on } as unknown as ExtensionAPI);
 	for (const mode of ["print", "json", "rpc"]) {
 		const ctx = {
 			mode,

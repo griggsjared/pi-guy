@@ -1,20 +1,16 @@
 import assert from "node:assert/strict";
 import { test, type TestContext } from "node:test";
-import type { ExtensionAPI, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import { Check } from "typebox/value";
 import webSearch from "../../src/web-search/index.ts";
+import { captureTools } from "../helpers/pi.ts";
 const secret = "offline-test-api-key";
 const result = { title: "Example & title", url: "https://example.test/page", snippet: "Useful snippet" };
 const ddg = `<a class="result-link" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.test%2Fpage&amp;rut=ignored">Example &amp; title</a><td class="result-snippet">Useful snippet</td>`;
 const tavily = JSON.stringify({ results: [{ title: ` ${result.title} `, url: ` ${result.url} `, content: ` ${result.snippet} `, score: 1, private: secret }, null, { title: "missing url" }] });
 let queryNumber = 0;
 
-function tools() {
-	const registered = new Map<string, Parameters<ExtensionAPI["registerTool"]>[0]>();
-	webSearch({ registerTool: (definition) => { registered.set(definition.name, definition as Parameters<ExtensionAPI["registerTool"]>[0]); } } as ExtensionAPI);
-	return registered;
-}
-const registered = tools();
+const registered = captureTools(webSearch);
 const ctx = {} as ExtensionToolContext;
 
 function boundaries(t: TestContext, backend = "", key = "") {

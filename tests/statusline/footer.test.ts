@@ -6,6 +6,8 @@ import { test } from "node:test";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { calculateFooterCacheHit, calculateFooterCost, decodeFooterUsageStatus, formatFooterBalance, formatFooterReset, formatFooterUsage, registerStatusline } from "../../src/statusline/footer.ts";
+import { captureHandlers } from "../helpers/pi.ts";
+import { fakeTheme } from "../helpers/theme.ts";
 
 test("formats shared usage status", () => {
 	assert.equal(formatFooterUsage({
@@ -106,11 +108,11 @@ test("refreshes footer leaf cache for persisted usage and keeps totals branch-lo
 		input: 25, output: 0, cacheRead: 75, cacheWrite: 0, totalTokens: 100,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total },
 	});
-	const handlers = new Map<string, (event: any, context: any) => void>();
+	const { handlers, on } = captureHandlers();
 	let footer: any;
 	let rendered: any;
 	let branchReads = 0;
-	registerStatusline({ on(event: string, handler: (event: any, context: any) => void) { handlers.set(event, handler); } } as any);
+	registerStatusline({ on } as any);
 	const context = {
 		model: { name: "model", provider: "deepseek" }, thinkingLevel: "off",
 		getContextUsage: () => undefined,
@@ -127,7 +129,7 @@ test("refreshes footer leaf cache for persisted usage and keeps totals branch-lo
 			usage: usage(1), stopReason: "stop", timestamp: 0,
 		});
 		handlers.get("session_start")?.({}, context);
-		rendered = footer({ invalidate() {} }, { fg: (_color: string, value: string) => value }, { getExtensionStatuses: () => new Map() });
+		rendered = footer({ invalidate() {} }, fakeTheme(), { getExtensionStatuses: () => new Map() });
 		assert.match(rendered.render(120)[0], /c:75% {2,}deepseek $/);
 		assert.equal(calculateFooterCost(sessionManager.getBranch()), 1);
 		rendered.render(120);
@@ -176,13 +178,13 @@ test("formats balances by currency", () => {
 });
 
 test("right-aligns balance beside DeepSeek", () => {
-	const handlers = new Map<string, (event: any, context: any) => void>();
+	const { handlers, on } = captureHandlers();
 	let footer: ((...args: any[]) => any) | undefined;
 	let rendered: any;
 	const statuses = new Map([["provider-usage", JSON.stringify({
 		provider: "deepseek", state: "ready", capturedAtMs: 0, windows: [], balance: { amount: 42.5, currency: "USD" },
 	})]]);
-	registerStatusline({ on(event: string, handler: (event: any, context: any) => void) { handlers.set(event, handler); } } as any);
+	registerStatusline({ on } as any);
 	const context = {
 		model: { name: "DeepSeek V4.1 Flash", provider: "deepseek" }, thinkingLevel: "off",
 		getContextUsage: () => undefined,
@@ -191,7 +193,7 @@ test("right-aligns balance beside DeepSeek", () => {
 	};
 	try {
 		handlers.get("session_start")?.({}, context);
-		rendered = footer?.({ invalidate() {} }, { fg: (_color: string, value: string) => value, bold: (value: string) => value }, { getExtensionStatuses: () => statuses });
+		rendered = footer?.({ invalidate() {} }, fakeTheme(), { getExtensionStatuses: () => statuses });
 		const line = rendered.render(120)[0];
 		assert.match(line, /^ DeepSeek V4\.1 Flash {2,}b:\$42\.50 deepseek $/);
 		assert.equal(line.length, 120);
@@ -204,11 +206,11 @@ test("right-aligns balance beside DeepSeek", () => {
 });
 
 test("right-aligns nonquota providers without a balance", () => {
-	const handlers = new Map<string, (event: any, context: any) => void>();
+	const { handlers, on } = captureHandlers();
 	let footer: ((...args: any[]) => any) | undefined;
 	let rendered: any;
 	const statuses = new Map([["provider-usage", JSON.stringify({ provider: "deepseek", state: "unknown", capturedAtMs: 0, windows: [] })]]);
-	registerStatusline({ on(event: string, handler: (event: any, context: any) => void) { handlers.set(event, handler); } } as any);
+	registerStatusline({ on } as any);
 	const context = {
 		model: { name: "DeepSeek V4.1 Flash", provider: "deepseek" }, thinkingLevel: "off",
 		getContextUsage: () => undefined,
@@ -217,7 +219,7 @@ test("right-aligns nonquota providers without a balance", () => {
 	};
 	try {
 		handlers.get("session_start")?.({}, context);
-		rendered = footer?.({ invalidate() {} }, { fg: (_color: string, value: string) => value, bold: (value: string) => value }, { getExtensionStatuses: () => statuses });
+		rendered = footer?.({ invalidate() {} }, fakeTheme(), { getExtensionStatuses: () => statuses });
 		for (const provider of ["deepseek", "google"]) {
 			context.model.provider = provider;
 			const line = rendered.render(120)[0];
@@ -232,14 +234,14 @@ test("right-aligns nonquota providers without a balance", () => {
 });
 
 test("right-aligns quota windows and the pending marker beside the provider without session cost", () => {
-	const handlers = new Map<string, (event: any, context: any) => void>();
+	const { handlers, on } = captureHandlers();
 	let footer: ((...args: any[]) => any) | undefined;
 	let rendered: any;
 	const statuses = new Map([
 		["provider-usage", JSON.stringify({ provider: "openai-codex", state: "unknown", capturedAtMs: 0, windows: [] })],
 		["subagent-profile", "review"],
 	]);
-	registerStatusline({ on(event: string, handler: (event: any, context: any) => void) { handlers.set(event, handler); } } as any);
+	registerStatusline({ on } as any);
 	const context = {
 		model: { name: "GPT-5.6 Luna", provider: "openai-codex" }, thinkingLevel: "high",
 		getContextUsage: () => ({ tokens: 1000, contextWindow: 200000 }),
@@ -248,7 +250,7 @@ test("right-aligns quota windows and the pending marker beside the provider with
 	};
 	try {
 		handlers.get("session_start")?.({}, context);
-		rendered = footer?.({ invalidate() {} }, { fg: (_color: string, value: string) => value, bold: (value: string) => value }, { getExtensionStatuses: () => statuses });
+		rendered = footer?.({ invalidate() {} }, fakeTheme(), { getExtensionStatuses: () => statuses });
 		const left = "GPT-5.6 Luna high s:review 1k/200k c:75%";
 		const pending = "quota:? openai-codex";
 		const line = rendered.render(120)[0];
@@ -285,13 +287,13 @@ test("right-aligns quota windows and the pending marker beside the provider with
 test("renders Claude unknown quota then 5h and 7d usage resets beside claude-bridge", (t) => {
 	const now = 1_000_000_000_000;
 	t.mock.method(Date, "now", () => now);
-	const handlers = new Map<string, (event: any, context: any) => void>();
+	const { handlers, on } = captureHandlers();
 	let footer: any;
 	let rendered: any;
 	const statuses = new Map([["provider-usage", JSON.stringify({
 		provider: "claude-bridge", state: "unknown", capturedAtMs: now, windows: [],
 	})]]);
-	registerStatusline({ on(event: string, handler: (event: any, context: any) => void) { handlers.set(event, handler); } } as any);
+	registerStatusline({ on } as any);
 	const context = {
 		model: { name: "Claude Sonnet", provider: "claude-bridge" }, thinkingLevel: "off",
 		getContextUsage: () => undefined,
@@ -300,7 +302,7 @@ test("renders Claude unknown quota then 5h and 7d usage resets beside claude-bri
 	};
 	try {
 		handlers.get("session_start")?.({}, context);
-		rendered = footer({ invalidate() {} }, { fg: (_color: string, value: string) => value }, { getExtensionStatuses: () => statuses });
+		rendered = footer({ invalidate() {} }, fakeTheme(), { getExtensionStatuses: () => statuses });
 		assert.match(rendered.render(120)[0], /quota:\? claude-bridge $/);
 		statuses.set("provider-usage", JSON.stringify({
 			provider: "claude-bridge", state: "ready", capturedAtMs: now,
@@ -316,11 +318,11 @@ test("renders Claude unknown quota then 5h and 7d usage resets beside claude-bri
 });
 
 test("colors each quota window at usage thresholds across footer widths", () => {
-	const handlers = new Map<string, (event: any, context: any) => void>();
+	const { handlers, on } = captureHandlers();
 	let footer: any;
 	let rendered: any;
 	const statuses = new Map<string, string>();
-	registerStatusline({ on(event: string, handler: (event: any, context: any) => void) { handlers.set(event, handler); } } as any);
+	registerStatusline({ on } as any);
 	const context = {
 		model: { name: "model", provider: "openai-codex" }, thinkingLevel: "off",
 		getContextUsage: () => undefined,
@@ -364,11 +366,11 @@ test("colors each quota window at usage thresholds across footer widths", () => 
 });
 
 test("colors dollar balances below one dollar and fifty cents", () => {
-	const handlers = new Map<string, (event: any, context: any) => void>();
+	const { handlers, on } = captureHandlers();
 	let footer: any;
 	let rendered: any;
 	const statuses = new Map<string, string>();
-	registerStatusline({ on(event: string, handler: (event: any, context: any) => void) { handlers.set(event, handler); } } as any);
+	registerStatusline({ on } as any);
 	const context = {
 		model: { name: "model", provider: "deepseek" }, thinkingLevel: "off",
 		getContextUsage: () => undefined,
@@ -407,13 +409,13 @@ test("colors dollar balances below one dollar and fifty cents", () => {
 });
 
 test("never clips balance mid-number on narrow footers", () => {
-	const handlers = new Map<string, (event: any, context: any) => void>();
+	const { handlers, on } = captureHandlers();
 	let footer: ((...args: any[]) => any) | undefined;
 	let rendered: any;
 	const statuses = new Map([["provider-usage", JSON.stringify({
 		provider: "deepseek", state: "ready", capturedAtMs: 0, windows: [], balance: { amount: 123456.78, currency: "USD" },
 	})]]);
-	registerStatusline({ on(event: string, handler: (event: any, context: any) => void) { handlers.set(event, handler); } } as any);
+	registerStatusline({ on } as any);
 	const context = {
 		model: { name: "DeepSeek V4.1 Flash", provider: "deepseek" }, thinkingLevel: "off",
 		getContextUsage: () => undefined,
@@ -422,7 +424,7 @@ test("never clips balance mid-number on narrow footers", () => {
 	};
 	try {
 		handlers.get("session_start")?.({}, context);
-		rendered = footer?.({ invalidate() {} }, { fg: (_color: string, value: string) => value, bold: (value: string) => value }, { getExtensionStatuses: () => statuses });
+		rendered = footer?.({ invalidate() {} }, fakeTheme(), { getExtensionStatuses: () => statuses });
 		const wide = rendered.render(120)[0];
 		assert.match(wide, /^ DeepSeek V4\.1 Flash {2,}b:\$123456\.78 deepseek $/);
 		assert.equal(wide.length, 120);
@@ -440,11 +442,11 @@ test("never clips balance mid-number on narrow footers", () => {
 });
 
 test("renders the subagent profile inline and reflects updates without duplicating job rows", () => {
-	const handlers = new Map<string, (event: any, context: any) => void>();
+	const { handlers, on } = captureHandlers();
 	let footer: any;
 	let rendered: any;
 	const statuses = new Map([["subagents", "jobs:1 running"], ["modes", "plan"], ["other", "other status"]]);
-	registerStatusline({ on(event: string, handler: (event: any, context: any) => void) { handlers.set(event, handler); } } as any);
+	registerStatusline({ on } as any);
 	const context = {
 		model: { name: "model", provider: "anthropic" }, thinkingLevel: "high" as string | undefined,
 		getContextUsage: () => ({ tokens: 1000, contextWindow: 200000 }),
@@ -453,7 +455,7 @@ test("renders the subagent profile inline and reflects updates without duplicati
 	};
 	try {
 		handlers.get("session_start")?.({}, context);
-		rendered = footer({ invalidate() {} }, { fg: (_color: string, value: string) => value }, { getExtensionStatuses: () => statuses });
+		rendered = footer({ invalidate() {} }, fakeTheme(), { getExtensionStatuses: () => statuses });
 		const absent = rendered.render(120);
 		assert.match(absent[0], /^ \[p\] model high 1k\/200k/);
 		assert.doesNotMatch(absent[0], /s:/);
@@ -481,7 +483,7 @@ test("renders the subagent profile inline and reflects updates without duplicati
 });
 
 test("renders ANSI-themed footer within a narrow width and disposes its timer", () => {
-	const handlers = new Map<string, (event: any, context: any) => void>();
+	const { handlers, on } = captureHandlers();
 	let footer: any;
 	let rendered: any;
 	const statuses = new Map([
@@ -489,7 +491,7 @@ test("renders ANSI-themed footer within a narrow width and disposes its timer", 
 		["subagent-profile", "a-very-long-selected-profile-name"],
 		["subagents", "jobs:1 running"],
 	]);
-	registerStatusline({ on(event: string, handler: (event: any, context: any) => void) { handlers.set(event, handler); } } as any);
+	registerStatusline({ on } as any);
 	let contextTokens = 1000;
 	const context = {
 		model: { name: "a-very-long-model-name", provider: "openai-codex" }, thinkingLevel: "off",

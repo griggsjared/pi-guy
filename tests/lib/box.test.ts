@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { boxed } from "../../src/lib/box.ts";
+import { fakeTheme } from "../helpers/theme.ts";
 
-const theme = { fg: (_color: string, text: string) => text };
+const theme = fakeTheme();
 const plain = (lines: string[]) => lines.map((line) => line.replaceAll("\x1b[0m", ""));
 
 test("boxed centers the title and pads or clips each line to the box width", () => {
