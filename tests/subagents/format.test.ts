@@ -3,35 +3,13 @@ import assert from "node:assert/strict";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import {
   capOutput,
-  formatDuration,
   formatResultOutput,
-  formatTokens,
   formatUsageStats,
   normalizeTitle,
   shortLabel,
   toolCallLabel,
 } from "../../src/subagents/format.ts";
 import { EMPTY_USAGE, type SubagentUsage } from "../../src/subagents/types.ts";
-
-test("formatTokens", () => {
-  assert.equal(formatTokens(0), "0");
-  assert.equal(formatTokens(999), "999");
-  assert.equal(formatTokens(1000), "1.0k");
-  assert.equal(formatTokens(9999), "10.0k");
-  assert.equal(formatTokens(10000), "10k");
-  assert.equal(formatTokens(999999), "1000k");
-  assert.equal(formatTokens(1000000), "1.0M");
-});
-
-test("formatDuration uses whole seconds and compact minutes", () => {
-  assert.equal(formatDuration(0), "1s");
-  assert.equal(formatDuration(999), "1s");
-  assert.equal(formatDuration(1999), "1s");
-  assert.equal(formatDuration(2000), "2s");
-  assert.equal(formatDuration(59999), "59s");
-  assert.equal(formatDuration(60000), "1m0s");
-  assert.equal(formatDuration(92000), "1m32s");
-});
 
 test("formatUsageStats keeps metadata without usage", () => {
   assert.equal(formatUsageStats(undefined), "");
@@ -51,7 +29,7 @@ test("formatUsageStats renders non-zero fields with compact model and effort suf
   };
   assert.equal(
     formatUsageStats(usage, "opencode-go/x", "high"),
-    "2 turns ↑1.5k ↓400 R5.0k $0.0001 ctx:20k opencode-go/x:high",
+    "2 turns ↑1.5k ↓400 R5k $0.0001 ctx:20k opencode-go/x:high",
   );
 });
 

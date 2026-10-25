@@ -2,7 +2,8 @@ import { Container, fuzzyFilter, getKeybindings, Input, SelectList, Text, trunca
 import type { ExtensionAPI, ExtensionContext, Theme, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { OFF_PROFILE_NAME, resolveAgentSettings, SESSION_PROFILE_NAME, type AgentConfig, type SubagentSettings } from "./agents.ts";
-import { capOutput, formatDuration, formatUsageStats, normalizeTitle, shortLabel, toolCallLabel } from "./format.ts";
+import { formatDuration } from "../lib/format.ts";
+import { capOutput, formatUsageStats, normalizeTitle, shortLabel, toolCallLabel } from "./format.ts";
 import type { JobRegistry, Job } from "./registry.ts";
 import { openSubagentTail, TruncatedText } from "./render.ts";
 import { eventColor, eventKindLabel, formatEventSummary, formatEventTiming, formatLocalTime, formatStepTiming } from "./tail.ts";
@@ -207,21 +208,21 @@ function statusToolCalls(job: Job, now: number): { call: ToolCallInfo; prefix: s
 
 function formatJob(job: StatusJob, now: number): string {
   if (job.status === "running") {
-    const elapsed = formatDuration(now - job.startTime);
+    const elapsed = formatDuration(Math.max(1000, now - job.startTime));
     const progress = job.pendingQuestions.length > 0
       ? " — waiting for parent"
       : job.steps.some((step) => step.endedAt === undefined) ? "" : job.progress ? ` — ${job.progress}` : "";
     const metadata = formatUsageStats(undefined, job.model, job.thinkingLevel);
     return [`- ⊙ #${job.id} ${job.agent} (${formatLocalTime(job.startTime)} · ${elapsed}${metadata ? ` ${metadata}` : ""}): ${jobLabel(job)}${progress}`, ...activeStepLines(job, now)].join("\n");
   }
-  const duration = job.endTime ? formatDuration(job.endTime - job.startTime) : "?";
+  const duration = job.endTime ? formatDuration(Math.max(1000, job.endTime - job.startTime)) : "?";
   const icon = job.status === "completed" ? "✓" : job.status === "cancelled" ? "⊘" : "✗";
   const metadata = formatUsageStats(job.usage, job.model, job.thinkingLevel);
   return `- ${icon} #${job.id} ${job.agent} (${formatLocalTime(job.startTime)} · ${duration}${metadata ? ` ${metadata}` : ""}): ${jobLabel(job)}`;
 }
 
 function formatDetailedStatus(job: Job, now: number): string {
-  const duration = formatDuration((job.endTime ?? now) - job.startTime);
+  const duration = formatDuration(Math.max(1000, (job.endTime ?? now) - job.startTime));
   const metadata = formatUsageStats(job.usage, job.model, job.thinkingLevel);
   const lines = [
     `**Subagent #${job.id}**`,

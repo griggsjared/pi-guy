@@ -7,7 +7,8 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 import { OFF_PROFILE_NAME, resolveAgentSettings, type AgentConfig, type SubagentSettings } from "./agents.ts";
-import { capOutput, formatDuration, formatResultOutput, normalizeTitle, shortLabel } from "./format.ts";
+import { formatDuration } from "../lib/format.ts";
+import { capOutput, formatResultOutput, normalizeTitle, shortLabel } from "./format.ts";
 import type { Job, JobRegistry } from "./registry.ts";
 import { formatModel, runSubagent, runWithConcurrencyLimit } from "./runner.ts";
 import { TruncatedText } from "./render.ts";
@@ -271,7 +272,7 @@ export class Batch {
     const job = this.deps.registry.jobs.get(jobId);
     result = normalizeCancellation(result, job);
     const capped = capOutput(formatResultOutput(result), 20000);
-    const duration = job?.endTime ? formatDuration(job.endTime - job.startTime) : "?";
+    const duration = job?.endTime ? formatDuration(Math.max(1000, job.endTime - job.startTime)) : "?";
     const status = result.cancelled ? "cancelled" : result.exitCode === 0 ? "completed" : "failed";
     const icon = status === "completed" ? "✓" : status === "cancelled" ? "⊘" : "✗";
     const details: SubagentMessageDetails = {
@@ -327,7 +328,7 @@ export class Batch {
     const lines = [
       `Subagent #${jobId} ${job.agent} inactivity check-in`,
       `Task: ${job.task}`,
-      `No activity for ${formatDuration(Math.max(0, notice.detectedAt - notice.lastActivityAt))}. Last activity: ${formatLocalTime(notice.lastActivityAt)}.`,
+      `No activity for ${formatDuration(Math.max(1000, notice.detectedAt - notice.lastActivityAt))}. Last activity: ${formatLocalTime(notice.lastActivityAt)}.`,
       ...active.map((step) => `Active: ${formatStepTiming(step, notice.detectedAt)} · ${step.kind}: ${formatEventSummary({ kind: "state", summary: step.summary })}`),
       ...(latest ? [`Last event: ${formatEventSummary(latest)}`] : []),
       "The child is still running; it has not been paused or cancelled and is not waiting for a parent reply. The main agent should inspect it with subagent_peek, then wait, steer with subagent_send, or cancel with subagent_cancel as appropriate.",

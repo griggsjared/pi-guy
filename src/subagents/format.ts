@@ -1,4 +1,5 @@
 import { sliceByColumn, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { formatTokens } from "../lib/format.ts";
 import type { SubagentUsage } from "./types.ts";
 
 const ANSI_ESCAPE = /\x1b(?:\][^\x07]*?(?:\x07|\x1b\\)|\[[0-?]*[ -/]*[@-~]|[()][0-2A-Z])/g;
@@ -74,19 +75,6 @@ export function shortLabel(title: string | undefined, task: string | undefined, 
   const normalizedTask = normalizeTitle(task);
   if (!normalizedTask) return "...";
   return clip(normalizedTask, max);
-}
-
-export function formatTokens(count: number): string {
-  if (count < 1000) return count.toString();
-  if (count < 10000) return `${(count / 1000).toFixed(1)}k`;
-  if (count < 1000000) return `${Math.round(count / 1000)}k`;
-  return `${(count / 1000000).toFixed(1)}M`;
-}
-
-export function formatDuration(milliseconds: number): string {
-  const seconds = Math.max(1, Math.floor(milliseconds / 1000));
-  const minutes = Math.floor(seconds / 60);
-  return minutes > 0 ? `${minutes}m${seconds % 60}s` : `${seconds}s`;
 }
 
 export function formatUsageStats(usage: SubagentUsage | undefined, model?: string, thinkingLevel?: string): string {

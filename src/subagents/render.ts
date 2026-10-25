@@ -7,7 +7,8 @@ import {
   type Theme,
   type ThemeColor,
 } from "@earendil-works/pi-coding-agent";
-import { formatDuration, formatUsageStats, normalizeTitle, shortLabel, toolCallLabel } from "./format.ts";
+import { formatDuration } from "../lib/format.ts";
+import { formatUsageStats, normalizeTitle, shortLabel, toolCallLabel } from "./format.ts";
 import type { JobRegistry } from "./registry.ts";
 import { SubagentTail } from "./tail.ts";
 import {
@@ -37,7 +38,7 @@ function renderWidgetRows(registry: JobRegistry, fg: Fg, width = 80): { jobId?: 
 
   const rows: { jobId?: number; line: string }[] = [];
   for (const job of running) {
-    const elapsed = formatDuration(now - job.startTime);
+    const elapsed = formatDuration(Math.max(1000, now - job.startTime));
     const title = job.title ? `: ${job.title}` : "";
     rows.push({ jobId: job.id, line: truncateToWidth(
       fg("accent", `⊙ #${job.id} ${job.agent}`) +
@@ -48,7 +49,7 @@ function renderWidgetRows(registry: JobRegistry, fg: Fg, width = 80): { jobId?: 
     ) });
   }
   for (const job of completed) {
-    const duration = job.endTime ? formatDuration(job.endTime - job.startTime) : "?";
+    const duration = job.endTime ? formatDuration(Math.max(1000, job.endTime - job.startTime)) : "?";
     const icon = job.status === "completed" ? "✓" : job.status === "cancelled" ? "⊘" : "✗";
     const color = job.status === "completed" ? "success" : job.status === "cancelled" ? "warning" : "error";
     const label = job.title ? `: ${job.title}` : `: ${shortLabel(undefined, job.task, Infinity)}`;

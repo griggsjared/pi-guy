@@ -225,6 +225,16 @@ test("renderFullWidget: shows one line per active agent", () => {
   assert.match(tagged, /\[dim\]: Finished task/);
 });
 
+test("renderFullWidget: shows at least 1s for running and finished jobs under a second", () => {
+  const registry = createJobRegistry();
+  const runningId = registry.add("scout", "task");
+  const finishedId = registry.add("worker", "task");
+  complete(registry, finishedId);
+  const output = renderFullWidget(registry, (_color, text) => text, 80).join("\n");
+  assert.match(output, new RegExp(`⊙ #${runningId} scout \\(1s\\)`));
+  assert.match(output, new RegExp(`✓ #${finishedId} worker \\(1s\\)`));
+});
+
 test("message and entry renderers render results and parent questions", () => {
   const renderers = new Map<string, (message: unknown, options: unknown, theme: unknown) => unknown>();
   const entryRenderers = new Map<string, (entry: unknown, options: unknown, theme: unknown) => unknown>();

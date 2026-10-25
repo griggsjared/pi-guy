@@ -249,7 +249,7 @@ test("right-aligns quota windows and the pending marker beside the provider with
 	try {
 		handlers.get("session_start")?.({}, context);
 		rendered = footer?.({ invalidate() {} }, { fg: (_color: string, value: string) => value, bold: (value: string) => value }, { getExtensionStatuses: () => statuses });
-		const left = "GPT-5.6 Luna high s:review 1.0k/200k c:75%";
+		const left = "GPT-5.6 Luna high s:review 1k/200k c:75%";
 		const pending = "quota:? openai-codex";
 		const line = rendered.render(120)[0];
 		assert.equal(line, ` ${left}` + " ".repeat(118 - left.length - pending.length) + `${pending} `);
@@ -455,24 +455,24 @@ test("renders the subagent profile inline and reflects updates without duplicati
 		handlers.get("session_start")?.({}, context);
 		rendered = footer({ invalidate() {} }, { fg: (_color: string, value: string) => value }, { getExtensionStatuses: () => statuses });
 		const absent = rendered.render(120);
-		assert.match(absent[0], /^ \[p\] model high 1\.0k\/200k/);
+		assert.match(absent[0], /^ \[p\] model high 1k\/200k/);
 		assert.doesNotMatch(absent[0], /s:/);
 		assert.deepEqual(absent.slice(1), [" other status ", " jobs:1 running "]);
 		statuses.set("subagent-profile", "review");
 		const active = rendered.render(120);
-		assert.match(active[0], /^ \[p\] model high s:review 1\.0k\/200k/);
+		assert.match(active[0], /^ \[p\] model high s:review 1k\/200k/);
 		assert.deepEqual(active.slice(1), [" other status ", " jobs:1 running "]);
 		statuses.set("subagent-profile", "implement");
 		const updated = rendered.render(120);
-		assert.match(updated[0], /^ \[p\] model high s:implement 1\.0k\/200k/);
+		assert.match(updated[0], /^ \[p\] model high s:implement 1k\/200k/);
 		assert.doesNotMatch(updated[0], /review/);
 		for (const effort of ["off", undefined]) {
 			context.thinkingLevel = effort;
-			assert.match(rendered.render(120)[0], /^ \[p\] model s:implement 1\.0k\/200k/);
+			assert.match(rendered.render(120)[0], /^ \[p\] model s:implement 1k\/200k/);
 		}
 		statuses.delete("subagent-profile");
 		const unset = rendered.render(120);
-		assert.match(unset[0], /^ \[p\] model 1\.0k\/200k/);
+		assert.match(unset[0], /^ \[p\] model 1k\/200k/);
 		assert.doesNotMatch(unset[0], /s:/);
 		assert.deepEqual(unset.slice(1), [" other status ", " jobs:1 running "]);
 	} finally {
@@ -505,10 +505,10 @@ test("renders ANSI-themed footer within a narrow width and disposes its timer", 
 		};
 		rendered = footer({ invalidate() {} }, { fg: ansi, bold: (value: string) => value }, { getExtensionStatuses: () => statuses });
 		assert.match(rendered.render(120)[0], /\x1b\[38;2;230;151;92m s:a-very-long-selected-profile-name\x1b\[0m/);
-		assert.match(rendered.render(120)[0], /\x1b\[34m1\.0k\/1m\x1b\[0m/);
+		assert.match(rendered.render(120)[0], /\x1b\[34m1k\/1m\x1b\[0m/);
 		assert.match(rendered.render(120)[0], /\x1b\[33mc:75%\x1b\[0m/);
 		const wide = rendered.render(120)[0].replace(/\x1b\[[0-9;]*m/g, "");
-		assert.match(wide, /^ a-very-long-model-name s:a-very-long-selected-profile-name 1\.0k\/1m c:75% {2,}42% openai-codex $/);
+		assert.match(wide, /^ a-very-long-model-name s:a-very-long-selected-profile-name 1k\/1m c:75% {2,}42% openai-codex $/);
 		assert.equal(wide.length, 120);
 		contextTokens = 200000;
 		assert.match(rendered.render(120)[0], /\x1b\[31m200k\/1m\x1b\[0m/);

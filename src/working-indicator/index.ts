@@ -1,4 +1,5 @@
 import { CustomEditor, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { formatDuration, formatTokens } from "../lib/format.ts";
 
 type Phase = "thinking" | "writing" | "tooling" | "waiting";
 
@@ -247,19 +248,6 @@ function patternColor(
 			return { color: colors[colorIndex] ?? color, intensity: "normal" };
 		}
 	}
-}
-
-function formatTokens(count: number): string {
-	if (count < 1000) return String(count);
-	if (count < 10000) return `${(count / 1000).toFixed(1)}k`;
-	if (count < 1000000) return `${Math.round(count / 1000)}k`;
-	return `${Math.round(count / 1000000)}m`;
-}
-
-function formatDuration(milliseconds: number): string {
-	const seconds = Math.floor(milliseconds / 1000);
-	const minutes = Math.floor(seconds / 60);
-	return minutes > 0 ? `${minutes}m${seconds % 60}s` : `${seconds}s`;
 }
 
 function messageCharacters(content: readonly { type: string; text?: string; thinking?: string; arguments?: unknown }[]): number {

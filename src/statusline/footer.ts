@@ -6,6 +6,7 @@
  */
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { formatTokens } from "../lib/format.ts";
 import {
 	decodeUsageStatus,
 	isQuotaProvider,
@@ -95,13 +96,6 @@ export function calculateFooterCacheHit(entries: ReadonlyArray<{ type: string; m
 		cacheInput += usage.input + usage.cacheRead + usage.cacheWrite;
 	}
 	return cacheInput > 0 ? cacheRead / cacheInput * 100 : undefined;
-}
-
-function formatTokens(count: number): string {
-	if (count < 1000) return String(count);
-	if (count < 10000) return `${(count / 1000).toFixed(1)}k`;
-	if (count < 1000000) return `${Math.round(count / 1000)}k`;
-	return `${Math.round(count / 1000000)}m`;
 }
 
 export function registerStatusline(pi: ExtensionAPI) {

@@ -1,6 +1,6 @@
 import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey, truncateToWidth, visibleWidth, type Component, type TUI } from "@earendil-works/pi-tui";
-import { formatDuration } from "./format.ts";
+import { formatDuration } from "../lib/format.ts";
 import type { Job, JobRegistry } from "./registry.ts";
 import type { JobEvent, JobStep } from "./types.ts";
 
@@ -16,7 +16,7 @@ export function formatLocalTime(timestamp: number): string {
 }
 
 export function formatStepTiming(step: JobStep, now: number): string {
-  return `${formatLocalTime(step.startedAt)} · ${formatDuration((step.endedAt ?? now) - step.startedAt)}${step.endedAt === undefined ? " elapsed" : ""}`;
+  return `${formatLocalTime(step.startedAt)} · ${formatDuration(Math.max(1000, (step.endedAt ?? now) - step.startedAt))}${step.endedAt === undefined ? " elapsed" : ""}`;
 }
 
 export function formatEventTiming(event: JobEvent, job: Job | undefined, now: number): { timestamp: string; suffix: string } {
@@ -29,7 +29,7 @@ export function formatEventTiming(event: JobEvent, job: Job | undefined, now: nu
     : undefined);
   return {
     timestamp: formatLocalTime(event.durationMs === undefined ? startedAt ?? event.timestamp : event.timestamp),
-    suffix: duration === undefined ? "" : ` · ${formatDuration(duration)}${event.durationMs === undefined && active ? " elapsed" : ""}`,
+    suffix: duration === undefined ? "" : ` · ${formatDuration(Math.max(1000, duration))}${event.durationMs === undefined && active ? " elapsed" : ""}`,
   };
 }
 
