@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile, rm, stat } from "node:fs/promises";
-import { test, type TestContext } from "node:test";
+import { test } from "node:test";
+import type { TestContext } from "node:test";
 import type { ExtensionAPI, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import githubPr from "../../src/github-pr/index.ts";
 

@@ -1,7 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { CONTEXT_FILES_EVENT, type ContextFilesEvent } from "../lib/events.ts";
+import { CONTEXT_FILES_EVENT } from "../lib/events.ts";
+import type { ContextFilesEvent } from "../lib/events.ts";
 
 async function readLocalFiles(cwd: string): Promise<Array<{ path: string; content: string }>> {
 	const files: Array<{ path: string; content: string }> = [];

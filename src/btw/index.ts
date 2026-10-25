@@ -1,13 +1,14 @@
-import { uuidv7, type AssistantMessage, type Message } from "@earendil-works/pi-ai";
+import { uuidv7 } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
 import {
 	AssistantMessageComponent,
 	buildSessionContext,
 	convertToLlm,
 	CustomEditor,
 	getMarkdownTheme,
-	type ExtensionAPI,
 	UserMessageComponent,
 } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey } from "@earendil-works/pi-tui";
 import { boxed } from "../lib/box.ts";
 

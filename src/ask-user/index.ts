@@ -3,12 +3,12 @@ import { DynamicBorder } from "@earendil-works/pi-coding-agent";
 import {
 	Container,
 	getKeybindings,
-	type SelectItem,
 	Text,
 	truncateToWidth,
 	visibleWidth,
 	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
+import type { SelectItem } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
 const OTHER_VALUE = "__other__";

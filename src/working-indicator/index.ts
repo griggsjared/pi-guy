@@ -1,4 +1,5 @@
-import { CustomEditor, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { CustomEditor } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { formatDuration, formatTokens } from "../lib/format.ts";
 
 type Phase = "thinking" | "writing" | "tooling" | "waiting";
