@@ -1,11 +1,10 @@
 import assert from "node:assert/strict";
-import childProcess from "node:child_process";
-import { syncBuiltinESMExports } from "node:module";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { createEventBus, loadProjectContextFiles, VERSION, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { createEventBus, loadProjectContextFiles, VERSION } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import agentsLocal from "../../src/agents-local/index.ts";
 import header from "../../src/header/index.ts";
@@ -157,48 +156,51 @@ test("header shows startup reports from multiple sources and clears updated repo
 });
 
 test("header shows the pi-bolt version between Pi and pi-guy only when running on pi-bolt", async (t) => {
-	const runs: string[][] = [];
-	let reply: ((error: Error | null, stdout: string) => void) | undefined;
-	t.mock.method(childProcess, "execFile", ((file: string, args: string[], _options: unknown, callback: typeof reply) => {
-		runs.push([file, ...args]);
-		reply = callback;
-	}) as unknown as typeof childProcess.execFile);
-	syncBuiltinESMExports();
-	t.after(() => {
-		t.mock.restoreAll();
-		syncBuiltinESMExports();
-		Reflect.deleteProperty(process.versions, "bun");
-	});
-	let renderRequests = 0;
-	const start = async () => {
-		const { handlers, on } = captureHandlers();
-		header({ events: createEventBus(), on } as unknown as ExtensionAPI);
-		let rendered: { render(width: number): string[] } | undefined;
-		await handlers.get("session_start")!({}, {
-			mode: "tui", cwd: tmpdir(), isProjectTrusted: () => true,
-			ui: {
-				setHeader(factory: any) {
-					rendered = factory(
-						{ requestRender() { renderRequests++; } },
-						fakeTheme(),
-					);
-				},
-			},
-		});
-		return () => rendered!.render(500).join("\n");
-	};
-
-	const onNode = await start();
-	assert.deepEqual(runs, []);
-	assert.ok(onNode().includes(`π v${VERSION} · pi-guy v`));
+	t.after(() => Reflect.deleteProperty(process.versions, "bun"));
+	const onNode = await startHeaderProbe();
+	assert.deepEqual(onNode.calls, []);
+	assert.ok(onNode.render().includes(`π v${VERSION} · pi-guy v`));
 
 	Object.defineProperty(process.versions, "bun", { configurable: true, value: "1.3.0" });
-	const onPiBolt = await start();
-	assert.deepEqual(runs, [[process.execPath, "--version"]]);
-	const beforeReply = renderRequests;
-	reply!(null, `${VERSION} (Pi-Bolt 1.0.1, darwin-arm64, JIT off)\n`);
-	assert.equal(renderRequests, beforeReply + 1);
-	assert.ok(onPiBolt().includes(`π v${VERSION} · pi-bolt v1.0.1 · pi-guy v`));
+	const onPiBolt = await startHeaderProbe();
+	assert.deepEqual(onPiBolt.calls.map(([file, args]) => [file, ...args]), [[process.execPath, "--version"]]);
+	assert.equal(onPiBolt.calls[0]![2]!.timeout, 5000);
+	assert.ok(onPiBolt.render().includes(`π v${VERSION} · pi-guy v`));
+	const beforeReply = onPiBolt.renderRequests;
+	onPiBolt.result.resolve({ stdout: `${VERSION} (Pi-Bolt 1.0.1, darwin-arm64, JIT off)\n`, stderr: "", code: 0, killed: false });
+	await onPiBolt.result.promise;
+	assert.equal(onPiBolt.renderRequests, beforeReply + 1);
+	assert.ok(onPiBolt.render().includes(`π v${VERSION} · pi-bolt v1.0.1 · pi-guy v`));
+});
+
+test("shutdown aborts the version probe and ignores its late result", async (t) => {
+	Object.defineProperty(process.versions, "bun", { configurable: true, value: "1.3.0" });
+	t.after(() => Reflect.deleteProperty(process.versions, "bun"));
+	const probe = await startHeaderProbe();
+	const signal = probe.calls[0]![2]!.signal!;
+	assert.equal(signal.aborted, false);
+	await probe.handlers.get("session_shutdown")!({}, {});
+	assert.equal(signal.aborted, true);
+	probe.result.resolve({ stdout: `${VERSION} (Pi-Bolt 1.0.1)\n`, stderr: "", code: 0, killed: false });
+	await probe.result.promise;
+	assert.ok(probe.render().includes(`π v${VERSION} · pi-guy v`));
+});
+
+test("header leaves out the pi-bolt version when its probe fails", async (t) => {
+	Object.defineProperty(process.versions, "bun", { configurable: true, value: "1.3.0" });
+	t.after(() => Reflect.deleteProperty(process.versions, "bun"));
+	for (const failure of ["non-zero exit", "killed", "rejection"]) {
+		await t.test(failure, async () => {
+			const probe = await startHeaderProbe();
+			if (failure === "rejection") probe.result.reject(new Error("probe failed"));
+			else probe.result.resolve({
+				stdout: `${VERSION} (Pi-Bolt 1.0.1)\n`, stderr: "probe failed",
+				code: failure === "non-zero exit" ? 1 : 0, killed: failure === "killed",
+			});
+			await new Promise<void>((resolve) => setImmediate(resolve));
+			assert.ok(probe.render().includes(`π v${VERSION} · pi-guy v`));
+		});
+	}
 });
 
 test("header lists configured extensions by short name, without pi-guy or untrusted project extensions", async (t) => {
@@ -265,3 +267,35 @@ test("header does not install or request terminal rendering in noninteractive mo
 		await handlers.get("agent_start")!({}, ctx);
 	}
 });
+
+async function startHeaderProbe() {
+	const calls: Parameters<ExtensionAPI["exec"]>[] = [];
+	const result = Promise.withResolvers<Awaited<ReturnType<ExtensionAPI["exec"]>>>();
+	const { handlers, on } = captureHandlers();
+	header({
+		events: createEventBus(), on,
+		exec(...args: Parameters<ExtensionAPI["exec"]>) {
+			calls.push(args);
+			return result.promise;
+		},
+	} as unknown as ExtensionAPI);
+	let rendered: { render(width: number): string[] } | undefined;
+	let renderRequests = 0;
+	await handlers.get("session_start")!({}, {
+		mode: "tui", cwd: tmpdir(), isProjectTrusted: () => true,
+		ui: {
+			setHeader(factory: any) {
+				rendered = factory(
+					{ requestRender() { renderRequests++; } },
+					fakeTheme(),
+				);
+			},
+		},
+	});
+	await new Promise<void>((resolve) => setImmediate(resolve));
+	return {
+		calls, result, handlers,
+		render: () => rendered!.render(500).join("\n"),
+		get renderRequests() { return renderRequests; },
+	};
+}

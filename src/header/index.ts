@@ -1,13 +1,14 @@
 /**
  * Installer-style Pi startup header.
  */
-import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join, parse } from "node:path";
-import { DefaultPackageManager, loadProjectContextFiles, SettingsManager, VERSION, type BeforeAgentStartEvent, type ExtensionAPI, type ThemeColor } from "@earendil-works/pi-coding-agent";
+import { basename, dirname, parse } from "node:path";
+import { DefaultPackageManager, getAgentDir, loadProjectContextFiles, SettingsManager, VERSION } from "@earendil-works/pi-coding-agent";
+import type { BeforeAgentStartEvent, ExtensionAPI, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
-import { CONTEXT_FILES_EVENT, type ContextFilesEvent } from "../lib/events.ts";
+import { CONTEXT_FILES_EVENT } from "../lib/events.ts";
+import type { ContextFilesEvent } from "../lib/events.ts";
 
 const PACKAGE_VERSION = (JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as { version: string }).version;
 
@@ -28,6 +29,7 @@ export default function (pi: ExtensionAPI) {
 	let requestRender: (() => void) | undefined;
 	let piBoltVersion: string | undefined;
 	let piBoltChecked = false;
+	let piBoltAbort: AbortController | undefined;
 	let extensionNames: string[] | undefined;
 	let extensionsChecked = false;
 	const reportedContextPaths = new Map<string, string[]>();
@@ -47,13 +49,16 @@ export default function (pi: ExtensionAPI) {
 		// Pi-Bolt is a Bun-compiled build that exposes its own version only through --version; extensions see Pi's VERSION.
 		if (!piBoltChecked && process.versions.bun) {
 			piBoltChecked = true;
-			execFile(process.execPath, ["--version"], { timeout: 5000 }, (_error, stdout) => {
-				piBoltVersion = /\(Pi-Bolt ([^,)]+)/.exec(stdout)?.[1];
+			piBoltAbort = new AbortController();
+			const { signal } = piBoltAbort;
+			pi.exec(process.execPath, ["--version"], { timeout: 5000, signal }).then((result) => {
+				if (result.code !== 0 || result.killed || signal.aborted) return;
+				piBoltVersion = /\(Pi-Bolt ([^,)]+)/.exec(result.stdout)?.[1];
 				requestRender?.();
-			});
+			}, () => {});
 		}
 
-		const agentDir = process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");
+		const agentDir = getAgentDir();
 		contextPaths = loadProjectContextFiles({ cwd: ctx.cwd, agentDir }).map(({ path }) => path);
 		// Pi doesn't expose its loaded-extension list, so resolve the configured extensions the same way it does, without loading them.
 		if (!extensionsChecked) {
@@ -95,6 +100,10 @@ export default function (pi: ExtensionAPI) {
 				},
 			};
 		});
+	});
+
+	pi.on("session_shutdown", () => {
+		piBoltAbort?.abort();
 	});
 
 	pi.on("before_agent_start", (event, ctx) => {
