@@ -84,7 +84,7 @@ test("refreshes footer leaf cache for persisted usage and keeps cache hits branc
 		ui: { setFooter(callback: any) { footer = callback; } },
 	};
 	try {
-		sessionManager.appendMessage({ role: "user", content: "test", timestamp: 0 });
+		const userId = sessionManager.appendMessage({ role: "user", content: "test", timestamp: 0 });
 		const assistantId = sessionManager.appendMessage({
 			role: "assistant", content: [], api: "openai-completions", provider: "deepseek", model: "model",
 			usage: usage(1), stopReason: "stop", timestamp: 0,
@@ -101,6 +101,16 @@ test("refreshes footer leaf cache for persisted usage and keeps cache hits branc
 		assert.equal(branchReads, 2);
 		sessionManager.branchWithSummary(assistantId, "branch", undefined, false, usage(6));
 		assert.match(rendered.render(120)[0], /c:75% {2,}deepseek $/);
+		sessionManager.branch(userId);
+		const otherAssistantId = sessionManager.appendMessage({
+			role: "assistant", content: [], api: "openai-completions", provider: "deepseek", model: "model",
+			usage: { ...usage(1), input: 75, cacheRead: 25 }, stopReason: "stop", timestamp: 0,
+		});
+		assert.match(rendered.render(120)[0], /c:25% {2,}deepseek $/);
+		sessionManager.branch(warm.id);
+		assert.match(rendered.render(120)[0], /c:75% {2,}deepseek $/);
+		sessionManager.branch(otherAssistantId);
+		assert.match(rendered.render(120)[0], /c:25% {2,}deepseek $/);
 		sessionManager.resetLeaf();
 		assert.equal(rendered.render(120)[0], " model" + " ".repeat(105) + "deepseek ");
 	} finally {
