@@ -159,18 +159,18 @@ test("header shows the pi-bolt version between Pi and pi-guy only when running o
 	t.after(() => Reflect.deleteProperty(process.versions, "bun"));
 	const onNode = await startHeaderProbe();
 	assert.deepEqual(onNode.calls, []);
-	assert.ok(onNode.render().includes(`π v${VERSION} · pi-guy v`));
+	assert.ok(onNode.render().includes(`pi v${VERSION} · pi-guy v`));
 
 	Object.defineProperty(process.versions, "bun", { configurable: true, value: "1.3.0" });
 	const onPiBolt = await startHeaderProbe();
 	assert.deepEqual(onPiBolt.calls.map(([file, args]) => [file, ...args]), [[process.execPath, "--version"]]);
 	assert.equal(onPiBolt.calls[0]![2]!.timeout, 5000);
-	assert.ok(onPiBolt.render().includes(`π v${VERSION} · pi-guy v`));
+	assert.ok(onPiBolt.render().includes(`pi v${VERSION} · pi-guy v`));
 	const beforeReply = onPiBolt.renderRequests;
 	onPiBolt.result.resolve({ stdout: `${VERSION} (Pi-Bolt 1.0.1, darwin-arm64, JIT off)\n`, stderr: "", code: 0, killed: false });
 	await onPiBolt.result.promise;
 	assert.equal(onPiBolt.renderRequests, beforeReply + 1);
-	assert.ok(onPiBolt.render().includes(`π v${VERSION} · pi-bolt v1.0.1 · pi-guy v`));
+	assert.ok(onPiBolt.render().includes(`pi v${VERSION} · pi-bolt v1.0.1 · pi-guy v`));
 });
 
 test("shutdown aborts the version probe and ignores its late result", async (t) => {
@@ -183,7 +183,7 @@ test("shutdown aborts the version probe and ignores its late result", async (t) 
 	assert.equal(signal.aborted, true);
 	probe.result.resolve({ stdout: `${VERSION} (Pi-Bolt 1.0.1)\n`, stderr: "", code: 0, killed: false });
 	await probe.result.promise;
-	assert.ok(probe.render().includes(`π v${VERSION} · pi-guy v`));
+	assert.ok(probe.render().includes(`pi v${VERSION} · pi-guy v`));
 });
 
 test("header leaves out the pi-bolt version when its probe fails", async (t) => {
@@ -198,7 +198,7 @@ test("header leaves out the pi-bolt version when its probe fails", async (t) => 
 				code: failure === "non-zero exit" ? 1 : 0, killed: failure === "killed",
 			});
 			await new Promise<void>((resolve) => setImmediate(resolve));
-			assert.ok(probe.render().includes(`π v${VERSION} · pi-guy v`));
+			assert.ok(probe.render().includes(`pi v${VERSION} · pi-guy v`));
 		});
 	}
 });
