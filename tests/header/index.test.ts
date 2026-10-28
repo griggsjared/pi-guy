@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { createEventBus, loadProjectContextFiles, VERSION } from "@earendil-works/pi-coding-agent";
+import { fileURLToPath } from "node:url";
+import { createEventBus, DefaultPackageManager, loadProjectContextFiles, VERSION } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import agentsLocal from "../../src/agents-local/index.ts";
@@ -268,13 +270,64 @@ test("header does not install or request terminal rendering in noninteractive mo
 	}
 });
 
-async function startHeaderProbe() {
+test("header uses the package version tag or its Git commit, without using a parent repository", async (t) => {
+	const packageDir = fileURLToPath(new URL("../../", import.meta.url));
+	const version = (JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as { version: string }).version;
+	for (const scenario of ["tagged", "untagged", "git unavailable", "parent repository"]) {
+		await t.test(scenario, async (t) => {
+			const calls: Parameters<ExtensionAPI["exec"]>[] = [];
+			const tagResult = Promise.withResolvers<Awaited<ReturnType<ExtensionAPI["exec"]>>>();
+			if (scenario === "untagged") {
+				t.mock.method(DefaultPackageManager.prototype, "resolve", async () => ({ extensions: [], skills: [], prompts: [], themes: [] }));
+			}
+			const probe = await startHeaderProbe(async (...args) => {
+				calls.push(args);
+				if (scenario === "git unavailable") throw new Error("git unavailable");
+				if (scenario === "untagged" && args[1][0] === "tag") return tagResult.promise;
+				const stdout = args[1][0] === "rev-parse"
+					? `${scenario === "parent repository" ? tmpdir() : packageDir}\n843cbb0\n`
+					: (scenario === "tagged") === (args[1][2] === "843cbb0") ? `v${version}\n` : "";
+				return { stdout, stderr: "", code: 0, killed: false };
+			});
+			if (scenario === "untagged") {
+				assert.ok(probe.render().includes("  Extensions: none\n"));
+				const beforeReply = probe.renderRequests;
+				tagResult.resolve({ stdout: calls[1]![1][2] === "843cbb0" ? "" : `v${version}\n`, stderr: "", code: 0, killed: false });
+				await new Promise<void>((resolve) => setImmediate(resolve));
+				assert.equal(probe.renderRequests, beforeReply + 1);
+			}
+			const suffix = scenario === "untagged" ? "-843cbb0" : "";
+			assert.ok(probe.render().includes(`pi-guy v${version}${suffix}\n`));
+			assert.equal(calls[0]![2]!.cwd, packageDir);
+			assert.equal(calls[0]![2]!.timeout, 5000);
+			if (scenario !== "tagged" && scenario !== "untagged") assert.equal(calls.length, 1);
+		});
+	}
+});
+
+test("shutdown ignores a late Git version result", async () => {
+	const result = Promise.withResolvers<Awaited<ReturnType<ExtensionAPI["exec"]>>>();
+	let signal: AbortSignal | undefined;
+	const probe = await startHeaderProbe(async (_file, _args, options) => {
+		signal = options?.signal;
+		return result.promise;
+	});
+	const before = probe.render();
+	await probe.handlers.get("session_shutdown")!({}, {});
+	assert.equal(signal?.aborted, true);
+	result.resolve({ stdout: `${fileURLToPath(new URL("../../", import.meta.url))}\n843cbb0\n`, stderr: "", code: 0, killed: false });
+	await new Promise<void>((resolve) => setImmediate(resolve));
+	assert.equal(probe.render(), before);
+});
+
+async function startHeaderProbe(gitExec: ExtensionAPI["exec"] = async () => ({ stdout: "", stderr: "", code: 1, killed: false })) {
 	const calls: Parameters<ExtensionAPI["exec"]>[] = [];
 	const result = Promise.withResolvers<Awaited<ReturnType<ExtensionAPI["exec"]>>>();
 	const { handlers, on } = captureHandlers();
 	header({
 		events: createEventBus(), on,
 		exec(...args: Parameters<ExtensionAPI["exec"]>) {
+			if (args[0] === "git") return gitExec(...args);
 			calls.push(args);
 			return result.promise;
 		},

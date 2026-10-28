@@ -1,15 +1,17 @@
 /**
  * Installer-style Pi startup header.
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, parse } from "node:path";
+import { fileURLToPath } from "node:url";
 import { DefaultPackageManager, getAgentDir, loadProjectContextFiles, SettingsManager, VERSION } from "@earendil-works/pi-coding-agent";
 import type { BeforeAgentStartEvent, ExtensionAPI, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { CONTEXT_FILES_EVENT } from "../lib/events.ts";
 import type { ContextFilesEvent } from "../lib/events.ts";
 
+const PACKAGE_DIR = fileURLToPath(new URL("../../", import.meta.url));
 const PACKAGE_VERSION = (JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as { version: string }).version;
 
 // Rows of each letter in "pi-guy"; LOGO_COLORS[i] colors LOGO_GLYPHS[i].
@@ -27,6 +29,9 @@ export default function (pi: ExtensionAPI) {
 	let contextPaths: string[] = [];
 	let promptOptions: BeforeAgentStartEvent["systemPromptOptions"] | undefined;
 	let requestRender: (() => void) | undefined;
+	let packageVersion = PACKAGE_VERSION;
+	let packageVersionChecked = false;
+	let packageVersionAbort: AbortController | undefined;
 	let piBoltVersion: string | undefined;
 	let piBoltChecked = false;
 	let piBoltAbort: AbortController | undefined;
@@ -45,6 +50,28 @@ export default function (pi: ExtensionAPI) {
 		promptOptions = undefined;
 		requestRender = undefined;
 		if (ctx.mode !== "tui") return;
+
+		if (!packageVersionChecked) {
+			packageVersionChecked = true;
+			packageVersionAbort = new AbortController();
+			const { signal } = packageVersionAbort;
+			void (async () => {
+				try {
+					const options = { cwd: PACKAGE_DIR, timeout: 5000, signal };
+					const repo = await pi.exec("git", ["rev-parse", "--show-toplevel", "--short", "HEAD"], options);
+					if (repo.code !== 0 || repo.killed || signal.aborted) return;
+					const [root, hash] = repo.stdout.trim().split("\n");
+					if (!root || !hash || !/^[0-9a-f]+$/i.test(hash) || realpathSync(root) !== realpathSync(PACKAGE_DIR)) return;
+					const tag = await pi.exec("git", ["tag", "--points-at", hash, "--list", `v${PACKAGE_VERSION}`], options);
+					if (tag.code !== 0 || tag.killed || signal.aborted) return;
+					return tag.stdout.trim().split("\n").includes(`v${PACKAGE_VERSION}`) ? PACKAGE_VERSION : `${PACKAGE_VERSION}-${hash}`;
+				} catch {}
+			})().then((version) => {
+				if (!version || signal.aborted) return;
+				packageVersion = version;
+				requestRender?.();
+			});
+		}
 
 		// Pi-Bolt is a Bun-compiled build that exposes its own version only through --version; extensions see Pi's VERSION.
 		if (!piBoltChecked && process.versions.bun) {
@@ -80,7 +107,7 @@ export default function (pi: ExtensionAPI) {
 				invalidate() {},
 				render(width: number): string[] {
 					const logo = LOGO_GLYPHS[0]!.map((_, row) => `  ${LOGO_GLYPHS.map((glyph, letter) => theme.fg(LOGO_COLORS[letter]!, glyph[row]!)).join(" ")}`);
-					const title = `${theme.bold("  pi")}${theme.fg("dim", ` v${VERSION} · `)}${piBoltVersion ? `${theme.bold("pi-bolt")}${theme.fg("dim", ` v${piBoltVersion} · `)}` : ""}${theme.bold("pi-guy")}${theme.fg("dim", ` v${PACKAGE_VERSION}`)}`;
+					const title = `${theme.bold("  pi")}${theme.fg("dim", ` v${VERSION} · `)}${piBoltVersion ? `${theme.bold("pi-bolt")}${theme.fg("dim", ` v${piBoltVersion} · `)}` : ""}${theme.bold("pi-guy")}${theme.fg("dim", ` v${packageVersion}`)}`;
 					const paths = [...new Set([...contextPaths, ...Array.from(reportedContextPaths.values()).flat()])];
 					const agents = paths.length
 						? ["  Context:", ...paths.map((path) => `    ${path.startsWith(`${homedir()}/`) ? `~/${path.slice(homedir().length + 1)}` : path}`)]
@@ -103,6 +130,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("session_shutdown", () => {
+		packageVersionAbort?.abort();
 		piBoltAbort?.abort();
 	});
 
