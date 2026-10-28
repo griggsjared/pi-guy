@@ -108,6 +108,26 @@ function resultText(result: { content: Array<{ type: string; text?: string }> })
   return text?.type === "text" ? text.text ?? "" : "";
 }
 
+function renderFallbackResult(
+  title: string,
+  target: string,
+  text: string,
+  emptyText: string,
+  showTarget: boolean,
+  theme: Theme,
+): Component {
+  const box = new Container();
+  if (showTarget) {
+    box.addChild(new TruncatedText(
+      theme.fg("toolTitle", theme.bold(`${title} `)) + theme.fg("accent", target),
+      0,
+      0,
+    ));
+  }
+  box.addChild(new TruncatedText(theme.fg("muted", normalizeTitle(text) ?? emptyText), 2, 0));
+  return box;
+}
+
 function renderStatusText(
   text: string,
   theme: Theme,
@@ -342,16 +362,7 @@ export function createStatusTool(deps: { registry: JobRegistry }): ToolDefinitio
       const prefix = `subagent status ${target}: `;
       const text = context.args && rawText.startsWith(prefix) ? rawText.slice(prefix.length) : rawText;
       if (context.isError || !details || typeof details.text !== "string") {
-        const box = new Container();
-        if (!context.args) {
-          box.addChild(new TruncatedText(
-            theme.fg("toolTitle", theme.bold("subagent status ")) + theme.fg("accent", target),
-            0,
-            0,
-          ));
-        }
-        box.addChild(new TruncatedText(theme.fg("muted", normalizeTitle(text) ?? "(no status)"), 2, 0));
-        return box;
+        return renderFallbackResult("subagent status", target, text, "(no status)", !context.args, theme);
       }
       const duplicateLines = job && details.jobId === job.id && text.startsWith(`**Subagent #${job.id}**\n`)
         ? [`**Subagent #${job.id}**`, `Agent: ${job.agent}`, `Task: ${jobLabel(job, Infinity)}`, `Title: ${jobLabel(job, Infinity)}`]
@@ -485,17 +496,7 @@ export function createPeekTool(deps: { registry: JobRegistry }): ToolDefinition<
           invalidate() {},
         };
       }
-      const text = resultText(result);
-      const box = new Container();
-      if (!context.args) {
-        box.addChild(new TruncatedText(
-          theme.fg("toolTitle", theme.bold("subagent peek ")) + theme.fg("accent", fallbackTarget),
-          0,
-          0,
-        ));
-      }
-      box.addChild(new TruncatedText(theme.fg("muted", normalizeTitle(text) ?? "(no result)"), 2, 0));
-      return box;
+      return renderFallbackResult("subagent peek", fallbackTarget, resultText(result), "(no result)", !context.args, theme);
     },
   };
 }
@@ -544,16 +545,7 @@ export function createCancelTool(deps: { registry: JobRegistry; activeProcs?: un
         typeof details.count !== "number" ||
         !Array.isArray(details.targets)
       ) {
-        const box = new Container();
-        if (!context.args) {
-          box.addChild(new TruncatedText(
-            theme.fg("toolTitle", theme.bold("subagent cancel ")) + theme.fg("accent", target),
-            0,
-            0,
-          ));
-        }
-        box.addChild(new TruncatedText(theme.fg("muted", normalizeTitle(resultText(result)) ?? "No matching subagents."), 2, 0));
-        return box;
+        return renderFallbackResult("subagent cancel", target, resultText(result), "No matching subagents.", !context.args, theme);
       }
       if (details.count === 0) {
         if (context.args) {
@@ -643,16 +635,7 @@ export function createSendTool(deps: { registry: JobRegistry }): ToolDefinition<
         typeof details.label !== "string" ||
         (details.deliverAs !== "steer" && details.deliverAs !== "followUp")
       ) {
-        const box = new Container();
-        if (!context.args || target !== targetInCall) {
-          box.addChild(new TruncatedText(
-            theme.fg("toolTitle", theme.bold("subagent send ")) + theme.fg("accent", target),
-            0,
-            0,
-          ));
-        }
-        box.addChild(new TruncatedText(theme.fg("muted", normalizeTitle(resultText(result)) ?? "(no result)"), 2, 0));
-        return box;
+        return renderFallbackResult("subagent send", target, resultText(result), "(no result)", !context.args || target !== targetInCall, theme);
       }
       return new TruncatedText(
         theme.fg("success", "✓ ") +
@@ -717,16 +700,7 @@ export function createReplyTool(deps: { registry: JobRegistry }): ToolDefinition
         typeof details.question !== "string" ||
         typeof details.answer !== "string"
       ) {
-        const box = new Container();
-        if (!context.args || target !== targetInCall) {
-          box.addChild(new TruncatedText(
-            theme.fg("toolTitle", theme.bold("subagent reply ")) + theme.fg("accent", target),
-            0,
-            0,
-          ));
-        }
-        box.addChild(new TruncatedText(theme.fg("muted", normalizeTitle(resultText(result)) ?? "(no result)"), 2, 0));
-        return box;
+        return renderFallbackResult("subagent reply", target, resultText(result), "(no result)", !context.args || target !== targetInCall, theme);
       }
       const question = normalizeTitle(details.question) ?? "(question unavailable)";
       const answer = normalizeTitle(details.answer) ?? "(empty)";

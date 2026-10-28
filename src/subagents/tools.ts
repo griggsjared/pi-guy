@@ -252,7 +252,7 @@ interface BatchDeps {
 /** Per-invocation bookkeeping for completion display and cleanup. */
 class Batch {
   private readonly jobIds = new Set<number>();
-  private readonly completed: Job[] = [];
+  private hasCompleted = false;
   private pending = 0;
   private readonly deps: BatchDeps;
 
@@ -266,8 +266,7 @@ class Batch {
   }
 
   recordCompletion(jobId: number): void {
-    const job = this.deps.registry.jobs.get(jobId);
-    if (job) this.completed.push({ ...job });
+    if (this.deps.registry.jobs.has(jobId)) this.hasCompleted = true;
   }
 
   deliverResult(jobId: number, result: SubagentResult): void {
@@ -370,10 +369,10 @@ class Batch {
     this.deps.mailbox.flush(this.deps.isIdle);
   }
 
-  summary(): void {
+  finishOne(): void {
     this.pending -= 1;
     if (this.pending !== 0) return;
-    if (this.completed.length === 0) return;
+    if (!this.hasCompleted) return;
     this.deps.registry.markCleared(this.jobIds);
     this.deps.refresh();
   }
@@ -567,7 +566,7 @@ export function createSubagentTool(deps: SubagentToolDeps): ToolDefinition<typeo
           .then((r) => {
             stopTicker();
             batch.deliverResult(jobId, r);
-            batch.summary();
+            batch.finishOne();
           })
           .catch((err) => {
             stopTicker();
@@ -580,7 +579,7 @@ export function createSubagentTool(deps: SubagentToolDeps): ToolDefinition<typeo
             } else {
               batch.sendError(agent.name, single.task, single.title, err, agent, jobId);
             }
-            batch.summary();
+            batch.finishOne();
           });
 
         // Results are delivered later via sendMessage with the custom renderer.
@@ -636,13 +635,13 @@ export function createSubagentTool(deps: SubagentToolDeps): ToolDefinition<typeo
           batch.recordCompletion(jobId);
           refresh();
           batch.deliverResult(jobId, result);
-          batch.summary();
+          batch.finishOne();
           return;
         }
         try {
           const result = await launchOne(agent, task.task, jobId, task.title);
           batch.deliverResult(jobId, result);
-          batch.summary();
+          batch.finishOne();
         } catch (err) {
           const cancellationReason = registry.get(jobId)?.cancellationReason;
           const result = cancellationReason
@@ -655,7 +654,7 @@ export function createSubagentTool(deps: SubagentToolDeps): ToolDefinition<typeo
           } else {
             batch.sendError(task.agent, task.task, task.title, err, agent, jobId);
           }
-          batch.summary();
+          batch.finishOne();
         }
       };
 

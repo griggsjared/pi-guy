@@ -206,7 +206,7 @@ test("execute: local settings set child model and thinking level", async () => {
     calls.push({ cmd, args, options: options ?? {} });
     return child;
   }) as unknown as typeof spawn;
-  const { tool, ctx } = makeTool(
+  const { tool, activeTickers, ctx } = makeTool(
     { spawnFn },
     {
       profiles: {
@@ -224,7 +224,7 @@ test("execute: local settings set child model and thinking level", async () => {
   await waitFor(() => child.stdin.writes.length > 0);
   child.stdout.emit("data", Buffer.from(endEvent("done")));
   child.finish(0);
-  await sleep(20);
+  await waitFor(() => activeTickers.size === 0);
 
   const args = calls[0]?.args ?? [];
   assert.equal(args[args.indexOf("--model") + 1], "local-model");
@@ -238,7 +238,7 @@ test("execute: selected profile defaults set child model and thinking level", as
     calls.push({ cmd, args, options: options ?? {} });
     return child;
   }) as unknown as typeof spawn;
-  const { tool, ctx } = makeTool(
+  const { tool, activeTickers, ctx } = makeTool(
     { spawnFn },
     {
       profiles: { default: { defaults: { model: "default-model", thinkingLevel: "low" }, agents: {} } },
@@ -251,7 +251,7 @@ test("execute: selected profile defaults set child model and thinking level", as
   await waitFor(() => child.stdin.writes.length > 0);
   child.stdout.emit("data", Buffer.from(endEvent("done")));
   child.finish(0);
-  await sleep(20);
+  await waitFor(() => activeTickers.size === 0);
 
   const args = calls[0]?.args ?? [];
   assert.equal(args[args.indexOf("--model") + 1], "default-model");
