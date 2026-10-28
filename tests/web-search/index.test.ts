@@ -155,12 +155,17 @@ for (const stall of ["before headers", "while sending the body"]) {
 	});
 }
 
-test("DDG failure without a key still throws its original error", async (t) => {
-	const fetch = boundaries(t);
-	fetch.mock.mockImplementation(async () => new Response(secret, { status: 500 }));
-	await assert.rejects(search(), { message: "DuckDuckGo request failed with HTTP 500." });
-	assert.equal(fetch.mock.callCount(), 1);
-});
+for (const [body, status, message] of [
+	[secret, 500, "DuckDuckGo request failed with HTTP 500."],
+	["CaPtChA", 400, "DuckDuckGo blocked or rate-limited the request. Try again shortly or rephrase the query."],
+] as const) {
+	test(`DDG failure without a key still throws its original error: ${message}`, async (t) => {
+		const fetch = boundaries(t);
+		fetch.mock.mockImplementation(async () => new Response(body, { status }));
+		await assert.rejects(search(), { message });
+		assert.equal(fetch.mock.callCount(), 1);
+	});
+}
 
 test("both backends failing retains the combined error without response secrets", async (t) => {
 	const fetch = boundaries(t, "", secret);

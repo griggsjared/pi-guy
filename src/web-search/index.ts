@@ -8,6 +8,14 @@ const TAVILY_ENDPOINT = "https://api.tavily.com/search";
 const TAVILY_MAX_RESULTS = 10;
 const TAVILY_TIMEOUT_MS = 15_000;
 
+const WebSearchParams = Type.Object({
+	query: Type.String({ description: "Search query." }),
+});
+
+const WebFetchParams = Type.Object({
+	url: Type.String({ description: "URL of the page to fetch and read." }),
+});
+
 type SearchResult = { title: string; url: string; snippet: string };
 type SearchBackend = "duckduckgo-lite" | "tavily";
 type SearchResponse = { backend: SearchBackend; results: SearchResult[] };
@@ -129,16 +137,7 @@ function looksLikeErrorPage(body: string): boolean {
 }
 
 function classifySearchFailure(status: number, body: string): string {
-	const text = body.toLowerCase();
-	const blocked =
-		status === 403 ||
-		status === 429 ||
-		text.includes("if this persists") ||
-		text.includes("error-lite") ||
-		text.includes("captcha") ||
-		text.includes("unusual traffic") ||
-		text.includes("are you a robot") ||
-		text.includes("verify you are human");
+	const blocked = status === 403 || status === 429 || looksLikeErrorPage(body);
 	if (blocked) {
 		return "DuckDuckGo blocked or rate-limited the request. Try again shortly or rephrase the query.";
 	}
@@ -497,7 +496,7 @@ async function fetchPage(url: string, signal?: AbortSignal): Promise<FetchedPage
 	};
 }
 
-function formatPage(_url: string, page: FetchedPage): string {
+function formatPage(page: FetchedPage): string {
 	const lines: string[] = [];
 	if (page.title) lines.push(`Title: ${page.title}`);
 	lines.push(`URL: ${page.url}`);
@@ -535,9 +534,7 @@ export default function (pi: ExtensionAPI) {
 			"Use web_fetch to read the full content of a specific page (found via web_search or given by the user).",
 			"Prefer web_search and web_fetch over shell/network commands (curl, Invoke-WebRequest, npm view/search/pack, direct HTTP URLs) for web research.",
 		],
-		parameters: Type.Object({
-			query: Type.String({ description: "Search query." }),
-		}),
+		parameters: WebSearchParams,
 		outputSchema: Type.Object({
 			backend: Type.Union([Type.Literal("duckduckgo-lite"), Type.Literal("tavily")]),
 			query: Type.String(),
@@ -570,9 +567,7 @@ export default function (pi: ExtensionAPI) {
 		promptGuidelines: [
 			"Use web_fetch to read a specific page when its full content matters; combine with web_search to discover pages first.",
 		],
-		parameters: Type.Object({
-			url: Type.String({ description: "URL of the page to fetch and read." }),
-		}),
+		parameters: WebFetchParams,
 		outputSchema: Type.Object({
 			backend: Type.Literal("http"),
 			url: Type.String(),
@@ -587,7 +582,7 @@ export default function (pi: ExtensionAPI) {
 			if (!url) throw new Error("URL must not be empty.");
 			const page = await fetchPage(url, signal);
 			return {
-				content: [{ type: "text", text: formatPage(url, page) }],
+				content: [{ type: "text", text: formatPage(page) }],
 				details: {
 					backend: "http",
 					url: page.url,
