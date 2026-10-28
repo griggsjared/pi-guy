@@ -8,14 +8,11 @@ import type { AgentConfig } from "./agents.ts";
 import { normalizeTitle, toolCallLabel } from "./format.ts";
 import {
   accumulateEvent,
-  assistantText,
   createStreamState,
   extractFinalText,
-  normalizeToolArgs,
   parseParentQuestion,
-  sanitizeToolCallArgs,
-  truncateStrings,
 } from "./jsonl.ts";
+import { createTimeline } from "./timeline.ts";
 import type {
   CancellationReason,
   JobEventInput,
@@ -33,54 +30,6 @@ const MAX_CHILD_ERROR = 1024 * 1024; // keep only the tail of child stderr
 const DEFAULT_INACTIVITY_TIMEOUT_MS = 300000;
 const STREAM_INTERVAL_MS = 2000; // throttle live progress updates to the model
 const SHUTDOWN_GRACE_MS = 10000;
-const MAX_EVENT_SUMMARY = 500;
-
-function flattenSummary(value: string): string {
-  const flattened = value.replace(/\s+/g, " ").trim();
-  return flattened.length > MAX_EVENT_SUMMARY
-    ? `${flattened.slice(0, MAX_EVENT_SUMMARY - 1)}…`
-    : flattened;
-}
-
-function valueSummary(value: unknown): string {
-  if (typeof value === "string") return flattenSummary(String(truncateStrings(value)));
-  let serialized: string;
-  try {
-    serialized = JSON.stringify(truncateStrings(value)) ?? String(value);
-  } catch {
-    serialized = String(value);
-  }
-  return flattenSummary(serialized);
-}
-
-function toolName(event: Record<string, unknown>): string {
-  const nested = event.toolCall;
-  const call = nested && typeof nested === "object" ? nested as Record<string, unknown> : undefined;
-  return String(event.toolName ?? event.name ?? call?.toolName ?? call?.name ?? "tool");
-}
-
-function toolArgs(event: Record<string, unknown>): Record<string, unknown> {
-  const nested = event.toolCall;
-  const call = nested && typeof nested === "object" ? nested as Record<string, unknown> : undefined;
-  return normalizeToolArgs(event.args ?? event.arguments ?? event.input ?? call?.args ?? call?.arguments);
-}
-
-function toolStartSummary(event: Record<string, unknown>): string {
-  const name = toolName(event);
-  const args = truncateStrings(sanitizeToolCallArgs(name, toolArgs(event))) as Record<string, unknown>;
-  return flattenSummary(toolCallLabel(name, args));
-}
-
-function toolEndSummary(event: Record<string, unknown>): string {
-  const name = toolName(event);
-  const isError = event.isError === true || event.success === false || event.error !== undefined;
-  const status = isError ? "error" : "success";
-  const detail = isError ? event.error ?? event.result : event.result;
-  if ((name === "write" || name === "edit") && !isError) return flattenSummary(`${name} success`);
-  return flattenSummary(detail === undefined
-    ? `${name} ${status}`
-    : `${name} ${status}: ${valueSummary(detail)}`);
-}
 
 /**
  * Resolve how to invoke pi from this (extension) process. Children are spawned
@@ -378,38 +327,7 @@ export async function runSubagent(
         console.error("subagents: question callback failed", err);
       }
     };
-    const safeEvent = (event: JobEventInput) => {
-      try {
-        options.onEvent?.(event);
-      } catch (err) {
-        console.error("subagents: event callback failed", err);
-      }
-    };
-    const safeStep = (step: JobStepInput) => {
-      try {
-        options.onStep?.(step);
-      } catch (err) {
-        console.error("subagents: step callback failed", err);
-      }
-    };
-    let nextStepId = 1;
-    let assistantStepId: string | undefined;
-    let retryStepId: string | undefined;
-    const toolSteps = new Map<string, string>();
-    const startAssistant = () => {
-      if (assistantStepId) return;
-      const retryId = retryStepId;
-      retryStepId = undefined;
-      if (retryId) safeStep({ phase: "end", id: retryId });
-      assistantStepId = `assistant-${nextStepId++}`;
-      safeStep({ phase: "start", id: assistantStepId, kind: "assistant", summary: "Assistant response" });
-    };
-    const endAssistant = () => {
-      const id = assistantStepId;
-      assistantStepId = undefined;
-      if (id) safeStep({ phase: "end", id });
-      return id;
-    };
+    const timeline = createTimeline({ onEvent: options.onEvent, onStep: options.onStep });
     const maybeStream = () => {
       const nowMs = Date.now();
       if (nowMs - lastStreamAt < STREAM_INTERVAL_MS) return;
@@ -464,67 +382,35 @@ export async function runSubagent(
       if (!event || settled) return;
       switch (event.type) {
         case "turn_start":
-          startAssistant();
+          timeline.startAssistant();
           break;
         case "message_start":
         case "message_update": {
           const message = event.message as { role?: unknown } | undefined;
-          if (message?.role === "assistant" || (event.type === "message_update" && event.assistantMessageEvent)) startAssistant();
+          if (message?.role === "assistant" || (event.type === "message_update" && event.assistantMessageEvent)) timeline.startAssistant();
           break;
         }
-        case "tool_execution_start": {
-          const summary = toolStartSummary(event);
-          const callId = typeof event.toolCallId === "string" && event.toolCallId ? event.toolCallId : undefined;
-          let stepId = callId ? toolSteps.get(callId) : undefined;
-          if (callId && !stepId) {
-            stepId = `tool-${nextStepId++}`;
-            toolSteps.set(callId, stepId);
-            const name = toolName(event);
-            const args = truncateStrings(sanitizeToolCallArgs(name, toolArgs(event))) as Record<string, unknown>;
-            safeStep({ phase: "start", id: stepId, kind: "tool", summary, toolCall: { name, args } });
-          }
-          safeEvent({ kind: "tool-start", summary, ...(stepId ? { stepId } : {}) });
+        case "tool_execution_start":
+          timeline.toolExecutionStart(event);
           break;
-        }
-        case "tool_execution_end": {
-          const callId = typeof event.toolCallId === "string" ? event.toolCallId : "";
-          const stepId = toolSteps.get(callId);
-          if (stepId) {
-            toolSteps.delete(callId);
-            safeStep({ phase: "end", id: stepId });
-          }
-          safeEvent({ kind: "tool-end", summary: toolEndSummary(event), ...(stepId ? { stepId } : {}) });
+        case "tool_execution_end":
+          timeline.toolExecutionEnd(event);
           break;
-        }
         case "auto_retry_start":
-          endAssistant();
-          if (retryStepId) safeStep({ phase: "end", id: retryStepId });
-          retryStepId = `retry-${nextStepId++}`;
-          safeStep({ phase: "start", id: retryStepId, kind: "retry", summary: "Retry wait" });
-          safeEvent({ kind: "state", summary: "retrying", stepId: retryStepId });
+          timeline.autoRetryStart();
           break;
-        case "auto_retry_end": {
-          const stepId = retryStepId;
-          retryStepId = undefined;
-          if (stepId) safeStep({ phase: "end", id: stepId });
-          safeEvent({ kind: "state", summary: "retry ended", ...(stepId ? { stepId } : {}) });
+        case "auto_retry_end":
+          timeline.autoRetryEnd();
           break;
-        }
-        case "message_end": {
-          const message = event.message;
-          if (message && typeof message === "object" && (message as { role?: unknown }).role === "assistant") {
-            const stepId = endAssistant();
-            const text = assistantText((message as { content?: unknown }).content);
-            if (text) safeEvent({ kind: "assistant", summary: flattenSummary(text), ...(stepId ? { stepId } : {}) });
-          }
+        case "message_end":
+          timeline.assistantMessageEnd(event.message);
           break;
-        }
         case "agent_start":
-          safeEvent({ kind: "state", summary: "started" });
+          timeline.safeEvent({ kind: "state", summary: "started" });
           settling = false;
           break;
         case "agent_settled":
-          safeEvent({ kind: "state", summary: "settled" });
+          timeline.safeEvent({ kind: "state", summary: "settled" });
           settling = true;
           finishSettling();
           break;

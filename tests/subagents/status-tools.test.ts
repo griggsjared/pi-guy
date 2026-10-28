@@ -6,10 +6,10 @@ import { Check } from "typebox/value";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { parseSubagentSettings, SESSION_PROFILE_NAME } from "../../src/subagents/agents.ts";
 import type { AgentConfig } from "../../src/subagents/agents.ts";
+import { confirmSubagentProfile } from "../../src/subagents/profile-ui.ts";
 import { createJobRegistry } from "../../src/subagents/registry.ts";
 import { formatLocalTime } from "../../src/subagents/tail.ts";
 import {
-  confirmSubagentProfile,
   createCancelTool,
   createPeekTool,
   createReplyTool,

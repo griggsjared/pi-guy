@@ -6,9 +6,9 @@ import { discoverAgents, loadSubagentSettings, OFF_PROFILE_NAME, resolveExtensio
 import type { SubagentSettings } from "./agents.ts";
 import { refreshUi, registerRenderers } from "./render.ts";
 import type { UiContext } from "./render.ts";
+import { confirmSubagentProfile } from "./profile-ui.ts";
 import { createJobRegistry } from "./registry.ts";
 import {
-  confirmSubagentProfile,
   createCancelTool,
   createPeekTool,
   createReplyTool,
