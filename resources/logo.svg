@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="310" height="93.333333" viewBox="0 0 1860 560" role="img" aria-labelledby="title" shape-rendering="crispEdges">
+  <title id="title">pi-guy</title>
+  <g transform="scale(6 7)">
+    <path fill="#d9726c" d="M20 20h10v60H20z M30 20h30v10H30z M60 30h10v10H60z M30 50h30v10H30z M60 40h10v10H60z"/>
+    <path fill="#e6975c" d="M80 0h10v10H80z M80 20h10v40H80z"/>
+    <path fill="#d9b85c" d="M100 30h30v10h-30z"/>
+    <path fill="#9d6ac4" d="M140 30h10v20h-10z M150 20h30v10h-30z M180 20h10v40h-10z M150 50h30v10h-30z M140 70h40v10h-40z M180 60h10v10h-10z"/>
+    <path fill="#7acc5c" d="M200 20h10v30h-10z M240 20h10v40h-10z M210 50h30v10h-30z"/>
+    <path fill="#4a8cbd" d="M260 20h10v30h-10z M300 20h10v40h-10z M270 50h30v10h-30z M260 70h40v10h-40z M300 60h10v10h-10z"/>
+  </g>
+</svg>
