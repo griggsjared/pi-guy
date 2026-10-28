@@ -459,6 +459,84 @@ test("ignores a stale OpenCode response after switching providers", async () => 
 	}
 });
 
+test("Claude response headers update bridge usage and renew the CLI cache until fallback is due", async (t) => {
+	const calls = mockCli(t, (call) => call.complete(null, claudeOutput));
+	const originalNow = Date.now;
+	let now = claudeCapturedAt;
+	const { handlers, context, statuses } = entryContext();
+	try {
+		Date.now = () => now;
+		handlers.get("session_start")?.({}, context);
+		await flush();
+		assert.equal(JSON.parse(statuses.at(-1)!).windows[0].usedPercent, 10);
+
+		now += CLAUDE_CACHE_TTL_MS - 1;
+		handlers.get("after_provider_response")?.({ status: 200, headers: {
+			"anthropic-ratelimit-unified-5h-utilization": "0.25",
+			"anthropic-ratelimit-unified-5h-reset": "1791392400",
+			"anthropic-ratelimit-unified-7d-utilization": "0.40",
+			"anthropic-ratelimit-unified-7d-reset": "1791900000",
+		} }, context);
+		const ready = JSON.parse(statuses.at(-1)!);
+		assert.deepEqual(ready, {
+			provider: "claude-bridge", state: "ready", capturedAtMs: now,
+			windows: [
+				{ kind: "rolling", label: "5h", usedPercent: 25, resetAtMs: 1791392400000 },
+				{ kind: "weekly", label: "7d", usedPercent: 40, resetAtMs: 1791900000000 },
+			],
+		});
+
+		now += CLAUDE_CACHE_TTL_MS - 1;
+		handlers.get("after_provider_response")?.({ status: 200, headers: {
+			"anthropic-ratelimit-unified-7d-utilization": "0.45",
+		} }, context);
+		const updated = JSON.parse(statuses.at(-1)!);
+		assert.deepEqual(updated, {
+			provider: "claude-bridge", state: "ready", capturedAtMs: now,
+			windows: [
+				{ kind: "rolling", label: "5h", usedPercent: 25, resetAtMs: 1791392400000 },
+				{ kind: "weekly", label: "7d", usedPercent: 45 },
+			],
+		});
+		for (const headers of [{}, { "anthropic-ratelimit-unified-status": "allowed" }]) {
+			handlers.get("after_provider_response")?.({ status: 200, headers }, context);
+			assert.deepEqual(JSON.parse(statuses.at(-1)!), updated);
+		}
+
+		now += CLAUDE_CACHE_TTL_MS - 1;
+		handlers.get("turn_end")?.({}, context);
+		await flush();
+		assert.equal(calls.length, 1);
+		assert.deepEqual(JSON.parse(statuses.at(-1)!), updated);
+		now++;
+		handlers.get("turn_end")?.({}, context);
+		await flush();
+		assert.equal(calls.length, 2);
+		assert.equal(JSON.parse(statuses.at(-1)!).windows[0].usedPercent, 10);
+	} finally {
+		handlers.get("session_shutdown")?.({}, context);
+		Date.now = originalNow;
+	}
+});
+
+test("Claude replies without usable usage headers keep unknown quota when CLI usage is unavailable", async (t) => {
+	mockCli(t, (call) => call.complete(new Error("CLI unavailable"), ""));
+	const { handlers, context, statuses } = entryContext();
+	try {
+		handlers.get("session_start")?.({}, context);
+		await flush();
+		const unknown = JSON.parse(statuses.at(-1)!);
+		assert.equal(unknown.provider, "claude-bridge");
+		assert.equal(unknown.state, "unknown");
+		for (const headers of [{}, { "anthropic-ratelimit-unified-status": "allowed" }]) {
+			handlers.get("after_provider_response")?.({ status: 200, headers }, context);
+			assert.deepEqual(JSON.parse(statuses.at(-1)!), unknown);
+		}
+	} finally {
+		handlers.get("session_shutdown")?.({}, context);
+	}
+});
+
 test("Claude wiring caches quotas for five minutes and retries failed refreshes until fresh quotas replace them", async (t) => {
 	let reads = 0;
 	mockCli(t, (call) => {

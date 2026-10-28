@@ -238,14 +238,19 @@ export default function providerUsage(pi: ExtensionAPI): void {
 	});
 
 	pi.on("after_provider_response", (event, ctx) => {
-		if (!sessionActive || !ctx.hasUI || ctx.model?.provider !== ANTHROPIC_PROVIDER) return;
+		const provider = ctx.model?.provider;
+		if (!sessionActive || !ctx.hasUI || (provider !== ANTHROPIC_PROVIDER && provider !== CLAUDE_PROVIDER)) return;
 		const usage = normalizeAnthropicHeaders(event.headers);
 		if (usage) {
-			// Header data is as current as the usage endpoint, so it resets the fetch cache.
-			latestUsage = usage;
+			if (provider === CLAUDE_PROVIDER && latestUsage?.provider === provider && latestUsage.state === "ready") {
+				usage.windows.push(...latestUsage.windows.filter((window) => !usage.windows.some((update) => update.kind === window.kind)));
+				usage.windows.sort((a, b) => a.kind.localeCompare(b.kind));
+			}
+			latestUsage = { ...usage, provider };
+			// Usable header updates renew the fetch cache.
 			lastFetchedAt = Date.now();
-			publish(ctx, usage);
-		} else if (event.status < 400 && latestUsage?.provider !== ANTHROPIC_PROVIDER) {
+			publish(ctx, latestUsage);
+		} else if (provider === ANTHROPIC_PROVIDER && event.status < 400 && latestUsage?.provider !== ANTHROPIC_PROVIDER) {
 			// A successful reply without plan headers means an API key, which has no quota to show.
 			publish(ctx, { provider: ANTHROPIC_PROVIDER, state: "ready", windows: [], capturedAtMs: Date.now() });
 		}
