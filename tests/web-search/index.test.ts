@@ -189,6 +189,31 @@ for (const [body, status, message] of [
 	});
 }
 
+for (const cause of ["timeout", "cancellation"] as const) {
+	test(`Tavily reports ${cause} while reading the response body`, async (t) => {
+		const fetch = boundaries(t, "tavily", secret);
+		t.mock.timers.enable({ apis: ["setTimeout"] });
+		t.mock.method(AbortSignal, "timeout", (ms: number) => {
+			assert.equal(ms, 15_000);
+			const controller = new AbortController();
+			setTimeout(() => controller.abort(new DOMException("offline timeout", "TimeoutError")), ms);
+			return controller.signal;
+		});
+		fetch.mock.mockImplementation(async (_input, init) => new Response(new ReadableStream({
+			start(controller) {
+				init!.signal!.addEventListener("abort", () => controller.error(new DOMException("body aborted", "AbortError")), { once: true });
+			},
+		})));
+		const controller = new AbortController();
+		const pending = search(`Tavily body ${cause}`, controller.signal);
+		const rejection = assert.rejects(pending, { message: cause === "timeout" ? "Tavily request timed out after 15 seconds." : "Search cancelled." });
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		if (cause === "timeout") t.mock.timers.tick(15_000);
+		else controller.abort();
+		await rejection;
+	});
+}
+
 test("missing Tavily key, blank query, and cancelled search never use network", async (t) => {
 	const fetch = boundaries(t, "tavily");
 	await assert.rejects(search(), /TAVILY_API_KEY is not set/);

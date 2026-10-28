@@ -223,7 +223,16 @@ async function searchTavily(query: string, signal?: AbortSignal): Promise<Search
 		throw new Error(`Tavily request failed: ${err.message}`);
 	}
 
-	const body = await response.text();
+	let body: string;
+	try {
+		body = await response.text();
+	} catch (error) {
+		if (signal?.aborted) throw new Error("Search cancelled.");
+		if (timeoutSignal.aborted || (error as Error | null | undefined)?.name === "TimeoutError") {
+			throw new Error(`Tavily request timed out after ${TAVILY_TIMEOUT_MS / 1000} seconds.`);
+		}
+		throw error;
+	}
 	if (!response.ok) throw new Error(classifyTavilyFailure(response.status, body));
 
 	let parsed: unknown;
