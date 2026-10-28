@@ -54,28 +54,11 @@ export function formatFooterUsage(status: UsageStatus, now = Date.now(), maxWidt
 	return visibleWidth(truncated) <= width ? truncated : "";
 }
 
-export function formatFooterBalance(balance: UsageBalance): string {
+export function formatFooterBalance(balance: UsageBalance, theme: Pick<Theme, "fg">): string {
 	const symbol = CURRENCY_SYMBOLS[balance.currency] ?? `${balance.currency} `;
-	return `b:${symbol}${balance.amount.toFixed(2)}`;
-}
-
-export function calculateFooterCost(entries: ReadonlyArray<{ type: string; message?: unknown; usage?: unknown }>): number {
-	let cost = 0;
-	for (const entry of entries) {
-		let directUsage: unknown;
-		if (entry.type === "message" && entry.message && typeof entry.message === "object") {
-			const message = entry.message as { role?: unknown; usage?: unknown };
-			if (message.role === "assistant" || message.role === "toolResult") directUsage = message.usage;
-		} else if (entry.type === "usage" || entry.type === "compaction" || entry.type === "branch_summary") {
-			directUsage = entry.usage;
-		}
-		if (!directUsage || typeof directUsage !== "object") continue;
-		const usage = directUsage as { cost?: unknown };
-		if (!usage.cost || typeof usage.cost !== "object") continue;
-		const total = (usage.cost as { total?: unknown }).total;
-		if (typeof total === "number" && Number.isFinite(total)) cost += total;
-	}
-	return cost;
+	const color = balance.currency === "USD" && balance.amount < 0.5 ? "error"
+		: balance.currency === "USD" && balance.amount < 1 ? "warning" : "dim";
+	return theme.fg(color, `b:${symbol}${balance.amount.toFixed(2)}`);
 }
 
 function calculateFooterCacheHit(entries: ReadonlyArray<{ type: string; message?: unknown }>): number | undefined {
@@ -98,14 +81,14 @@ function calculateFooterCacheHit(entries: ReadonlyArray<{ type: string; message?
 }
 
 export function registerStatusline(pi: ExtensionAPI) {
-	let costVersion = 0;
-	let costCache: { version: number; leafId: string | null; cacheHit?: number } | undefined;
-	const invalidateCost = (): void => {
-		costVersion++;
+	let cacheHitVersion = 0;
+	let cacheHitCache: { version: number; leafId: string | null; cacheHit?: number } | undefined;
+	const invalidateCacheHit = (): void => {
+		cacheHitVersion++;
 	};
 
 	pi.on("session_start", (_event, ctx) => {
-		invalidateCost();
+		invalidateCacheHit();
 		ctx.ui.setFooter((tui, theme, footerData) => {
 			const redrawTimer = setInterval(() => tui.invalidate(), 60_000);
 			return {
@@ -150,16 +133,16 @@ export function registerStatusline(pi: ExtensionAPI) {
 					}
 
 					const leafId = ctx.sessionManager.getLeafId();
-					if (!costCache || costCache.version !== costVersion || costCache.leafId !== leafId) {
+					if (!cacheHitCache || cacheHitCache.version !== cacheHitVersion || cacheHitCache.leafId !== leafId) {
 						const branch = ctx.sessionManager.getBranch();
-						costCache = {
-							version: costVersion,
+						cacheHitCache = {
+							version: cacheHitVersion,
 							leafId,
 							cacheHit: calculateFooterCacheHit(branch),
 						};
 					}
-					if (costCache.cacheHit !== undefined) {
-						line += ` ${theme.fg("warning", `c:${Math.round(costCache.cacheHit)}%`)}`;
+					if (cacheHitCache.cacheHit !== undefined) {
+						line += ` ${theme.fg("warning", `c:${Math.round(cacheHitCache.cacheHit)}%`)}`;
 					}
 
 					const usage = decodeFooterUsageStatus(statuses.get(USAGE_STATUS_KEY));
@@ -177,11 +160,9 @@ export function registerStatusline(pi: ExtensionAPI) {
 						right = theme.fg("dim", "quota:?");
 					}
 					if (usageReady && usage.balance) {
-						const text = formatFooterBalance(usage.balance);
+						const text = formatFooterBalance(usage.balance, theme);
 						if (visibleWidth(line) + visibleWidth(right) + (right ? 1 : 0) + visibleWidth(text) + reserved <= width) {
-							const color = usage.balance.currency === "USD" && usage.balance.amount < 0.5 ? "error"
-								: usage.balance.currency === "USD" && usage.balance.amount < 1 ? "warning" : "dim";
-							right += `${right ? " " : ""}${theme.fg(color, text)}`;
+							right += `${right ? " " : ""}${text}`;
 						}
 					}
 					const provider = providerText ? theme.fg("muted", providerText) : "";
@@ -204,7 +185,7 @@ export function registerStatusline(pi: ExtensionAPI) {
 		});
 	});
 
-	pi.on("turn_end", invalidateCost);
-	pi.on("session_tree", invalidateCost);
-	pi.on("session_compact", invalidateCost);
+	pi.on("turn_end", invalidateCacheHit);
+	pi.on("session_tree", invalidateCacheHit);
+	pi.on("session_compact", invalidateCacheHit);
 }

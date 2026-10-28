@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { calculateFooterCost, decodeFooterUsageStatus, formatFooterBalance, formatFooterReset, formatFooterUsage, registerStatusline } from "../../src/statusline/footer.ts";
+import { decodeFooterUsageStatus, formatFooterBalance, formatFooterReset, formatFooterUsage, registerStatusline } from "../../src/statusline/footer.ts";
 import { captureHandlers } from "../helpers/pi.ts";
 import { fakeTheme } from "../helpers/theme.ts";
 
@@ -62,46 +62,7 @@ test("orders windows and removes resets on narrow footers", () => {
 	assert.equal(formatFooterUsage(usage, now, 0), "");
 });
 
-test("calculates assistant cost without trusting unrelated entries", () => {
-	assert.equal(calculateFooterCost([
-		{ type: "message", message: { role: "user", usage: { cost: { total: 99 } } } },
-		{ type: "message", message: { role: "assistant", usage: { cost: { total: 1.25 } } } },
-		{ type: "branch_summary", message: { role: "assistant", usage: { cost: { total: 50 } } } },
-	]), 1.25);
-});
-
-test("sums direct billable usage without counting nested calls or details twice", () => {
-	const nested = { usage: { cost: { total: 100 } } };
-	assert.equal(calculateFooterCost([
-		{ type: "message", message: { role: "assistant", usage: { cost: { total: 1 } } } },
-		{ type: "message", message: { role: "toolResult", usage: { cost: { total: 2 } }, nestedCalls: { calls: [nested] }, details: nested } },
-		{ type: "usage", usage: { cost: { total: 3 } } },
-		{ type: "compaction", usage: { cost: { total: 4 } } },
-		{ type: "branch_summary", usage: { cost: { total: 5 } } },
-		{ type: "message", message: { role: "toolResult", nestedCalls: { calls: [nested] }, details: nested } },
-		{ type: "compaction" },
-		{ type: "branch_summary" },
-		{ type: "custom", usage: { cost: { total: 100 } } },
-	]), 15);
-});
-
-test("ignores malformed and non-finite direct costs for every billable entry type", () => {
-	for (const usage of [undefined, null, "usage", {}, { cost: null }, { cost: "cost" },
-		...[undefined, null, "1", NaN, Infinity, -Infinity].map((total) => ({ cost: { total } }))]) {
-		assert.equal(calculateFooterCost([
-			{ type: "message", message: { role: "assistant", usage } },
-			{ type: "message", message: { role: "toolResult", usage } },
-			{ type: "usage", usage },
-			{ type: "compaction", usage },
-			{ type: "branch_summary", usage },
-			{ type: "message", message: null },
-			{ type: "message", message: "message" },
-			{ type: "usage", usage: { cost: { total: 0.25 } } },
-		]), 0.25);
-	}
-});
-
-test("refreshes footer leaf cache for persisted usage and keeps totals branch-local", () => {
+test("refreshes footer leaf cache for persisted usage and keeps cache hits branch-local", () => {
 	const directory = mkdtempSync(join(tmpdir(), "statusline-cost-"));
 	const sessionManager = SessionManager.create(directory, directory);
 	const usage = (total: number) => ({
@@ -131,31 +92,15 @@ test("refreshes footer leaf cache for persisted usage and keeps totals branch-lo
 		handlers.get("session_start")?.({}, context);
 		rendered = footer({ invalidate() {} }, fakeTheme(), { getExtensionStatuses: () => new Map() });
 		assert.match(rendered.render(120)[0], /c:75% {2,}deepseek $/);
-		assert.equal(calculateFooterCost(sessionManager.getBranch()), 1);
 		rendered.render(120);
 		assert.equal(branchReads, 1);
 		const warm = sessionManager.appendUsage("cache_warm", "deepseek", "model", { ...usage(2), input: 100, cacheRead: 0 });
 		assert.equal(sessionManager.getLeafId(), warm.id);
 		assert.equal(warm.parentId, assistantId);
 		assert.match(rendered.render(120)[0], /c:75% {2,}deepseek $/);
-		assert.equal(calculateFooterCost(sessionManager.getBranch()), 3);
 		assert.equal(branchReads, 2);
-		sessionManager.appendUsage("other", "deepseek", "model", usage(3));
-		assert.equal(calculateFooterCost(sessionManager.getBranch()), 6);
-		sessionManager.appendMessage({ role: "toolResult", toolCallId: "call", toolName: "tool", content: [], isError: false, timestamp: 0, usage: usage(4) });
-		assert.equal(calculateFooterCost(sessionManager.getBranch()), 10);
-		sessionManager.appendCompaction("summary", null, 100, undefined, false, usage(5));
-		assert.equal(calculateFooterCost(sessionManager.getBranch()), 15);
-		const summaryId = sessionManager.branchWithSummary(assistantId, "branch", undefined, false, usage(6));
+		sessionManager.branchWithSummary(assistantId, "branch", undefined, false, usage(6));
 		assert.match(rendered.render(120)[0], /c:75% {2,}deepseek $/);
-		assert.equal(calculateFooterCost(sessionManager.getBranch()), 7);
-		assert.equal(calculateFooterCost(sessionManager.getEntries()), 21);
-		sessionManager.appendCompaction("legacy", null, 100);
-		assert.equal(calculateFooterCost(sessionManager.getBranch()), 7);
-		sessionManager.branch(assistantId);
-		assert.equal(calculateFooterCost(sessionManager.getBranch()), 1);
-		sessionManager.branch(summaryId);
-		assert.equal(calculateFooterCost(sessionManager.getBranch()), 7);
 		sessionManager.resetLeaf();
 		assert.equal(rendered.render(120)[0], " model" + " ".repeat(105) + "deepseek ");
 	} finally {
@@ -165,9 +110,9 @@ test("refreshes footer leaf cache for persisted usage and keeps totals branch-lo
 });
 
 test("formats balances by currency", () => {
-	assert.equal(formatFooterBalance({ amount: 110, currency: "USD" }), "b:$110.00");
-	assert.equal(formatFooterBalance({ amount: 12.5, currency: "CNY" }), "b:¥12.50");
-	assert.equal(formatFooterBalance({ amount: 1, currency: "EUR" }), "b:EUR 1.00");
+	assert.equal(formatFooterBalance({ amount: 110, currency: "USD" }, fakeTheme()), "b:$110.00");
+	assert.equal(formatFooterBalance({ amount: 12.5, currency: "CNY" }, fakeTheme()), "b:¥12.50");
+	assert.equal(formatFooterBalance({ amount: 1, currency: "EUR" }, fakeTheme()), "b:EUR 1.00");
 });
 
 test("right-aligns balance beside DeepSeek", () => {

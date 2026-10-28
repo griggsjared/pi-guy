@@ -42,9 +42,7 @@ const formatRequestedUsage = (usage: UsageStatus | undefined, theme: Pick<Theme,
 	if (usage?.state !== "ready") return theme.fg("dim", "quota:?");
 	const parts = usage.windows.length > 0 ? [formatFooterUsage(usage, Date.now(), Infinity, theme)] : [];
 	if (usage.balance) {
-		const color = usage.balance.currency === "USD" && usage.balance.amount < 0.5 ? "error"
-			: usage.balance.currency === "USD" && usage.balance.amount < 1 ? "warning" : "dim";
-		parts.push(theme.fg(color, formatFooterBalance(usage.balance)));
+		parts.push(formatFooterBalance(usage.balance, theme));
 	}
 	return parts.length > 0 ? parts.join(" ") : theme.fg("dim", "no quota");
 };

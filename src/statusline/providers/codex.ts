@@ -16,7 +16,6 @@ function normalizeResetAt(value: number | undefined): number | undefined {
 
 type CodexUsageWindow = {
 	usedPercent: number;
-	remainingPercent: number;
 	windowSeconds?: number;
 	resetAt?: number;
 };
@@ -24,7 +23,6 @@ type CodexUsageWindow = {
 type CodexUsage = {
 	fiveHour?: CodexUsageWindow;
 	weekly?: CodexUsageWindow;
-	capturedAt: number;
 };
 
 function normalizeWindow(value: unknown): CodexUsageWindow | undefined {
@@ -42,7 +40,6 @@ function normalizeWindow(value: unknown): CodexUsageWindow | undefined {
 	const usedPercent = Math.max(0, Math.min(100, used));
 	return {
 		usedPercent,
-		remainingPercent: 100 - usedPercent,
 		...(windowSeconds !== undefined && windowSeconds > 0 ? { windowSeconds } : {}),
 		...(resetAt !== undefined ? { resetAt } : {}),
 	};
