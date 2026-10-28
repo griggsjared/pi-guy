@@ -219,17 +219,13 @@ function runGh(pi: ExtensionAPI, cwd: string, args: string[], signal?: AbortSign
 	return runCommand(pi, cwd, "gh", args, signal);
 }
 
-function parseJson(stdout: string): unknown {
-	return JSON.parse(stdout);
-}
-
 function parsePaginatedArray(stdout: string): unknown[] {
 	const trimmed = stdout.trim();
 	let parsed: unknown;
 	try {
-		parsed = parseJson(trimmed);
+		parsed = JSON.parse(trimmed);
 	} catch {
-		parsed = trimmed.split(/\r?\n/).map((line) => parseJson(line));
+		parsed = trimmed.split(/\r?\n/).map((line) => JSON.parse(line));
 		if (!(parsed as unknown[]).every(Array.isArray)) {
 			throw new Error("Invalid paginated array data.");
 		}
@@ -248,7 +244,7 @@ function parseRepositoryInfo(stdout: string): {
 	nameWithOwner?: string;
 	url?: string;
 } {
-	const parsed = parseJson(stdout) as { nameWithOwner?: unknown; url?: unknown };
+	const parsed = JSON.parse(stdout) as { nameWithOwner?: unknown; url?: unknown };
 	return {
 		nameWithOwner: typeof parsed.nameWithOwner === "string" ? parsed.nameWithOwner : undefined,
 		url: typeof parsed.url === "string" ? parsed.url : undefined,
@@ -402,7 +398,7 @@ async function getPullRequest(
 
 	let pullRequest: PullRequest;
 	try {
-		pullRequest = parseJson(result.stdout) as PullRequest;
+		pullRequest = JSON.parse(result.stdout) as PullRequest;
 		if (!Number.isSafeInteger(pullRequest?.number) || pullRequest.number <= 0 || typeof pullRequest.url !== "string") {
 			throw new Error("Invalid pull request data.");
 		}
@@ -428,14 +424,6 @@ function parsePullRequestUrl(url: string, capability: Extract<Capability, { avai
 	throw new Error("Pull request URLs must belong to the local GitHub repository.");
 }
 
-function parseIssueComments(result: CommandResult): IssueComment[] {
-	return parsePaginatedArray(result.stdout) as IssueComment[];
-}
-
-function parseReviews(result: CommandResult): Review[] {
-	return parsePaginatedArray(result.stdout) as Review[];
-}
-
 function validateCommentConnection(connection: CommentConnection | undefined): CommentConnection {
 	if (!connection || !Array.isArray(connection.nodes) || typeof connection.pageInfo?.hasNextPage !== "boolean" ||
 		connection.nodes.some((comment) => !comment || typeof comment.id !== "string")) {
@@ -451,7 +439,7 @@ async function parseReviewThreadPages(
 	stdout: string,
 	signal?: AbortSignal,
 ): Promise<ReviewThread[]> {
-	const parsed = parseJson(stdout);
+	const parsed: unknown = JSON.parse(stdout);
 	const pages = Array.isArray(parsed) ? parsed : [parsed];
 	const threads: ReviewThread[] = [];
 	const seen = new Set<string>();
@@ -480,7 +468,7 @@ async function parseReviewThreadPages(
 					"-f", `query=${THREAD_COMMENTS_QUERY}`, "-f", `id=${thread.id}`, "-f", `endCursor=${cursor}`,
 				], signal);
 				if (result.code !== 0) throw new Error(`Unable to load inline thread comments: ${resultText(result)}`);
-				const next = parseJson(result.stdout) as {
+				const next = JSON.parse(result.stdout) as {
 					errors?: unknown[];
 					data?: { node?: { comments?: CommentConnection } };
 				} | null;
@@ -620,7 +608,7 @@ async function getFeedback(
 
 	if (conversationResult.code === 0) {
 		try {
-			issueComments = parseIssueComments(conversationResult);
+			issueComments = parsePaginatedArray(conversationResult.stdout) as IssueComment[];
 		} catch {
 			errors.push("GitHub returned invalid conversation comment data.");
 		}
@@ -630,7 +618,7 @@ async function getFeedback(
 
 	if (reviewsResult.code === 0) {
 		try {
-			reviews = parseReviews(reviewsResult);
+			reviews = parsePaginatedArray(reviewsResult.stdout) as Review[];
 		} catch {
 			errors.push("GitHub returned invalid review data.");
 		}
@@ -672,7 +660,7 @@ async function getFeedback(
 }
 
 function parseChecks(stdout: string): { bucket: string; [key: string]: unknown }[] {
-	const parsed = parseJson(stdout);
+	const parsed: unknown = JSON.parse(stdout);
 	if (!Array.isArray(parsed) || parsed.some((check) => !check ||
 		!["pass", "fail", "pending", "skipping", "cancel"].includes(check.bucket))) {
 		throw new Error("Invalid check data.");
