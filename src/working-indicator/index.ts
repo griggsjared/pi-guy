@@ -1,6 +1,6 @@
-import { CustomEditor } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { formatDuration, formatTokens } from "../lib/format.ts";
+import { PromptEditor } from "./prompt-editor.ts";
 
 type Phase = "thinking" | "writing" | "tooling" | "waiting";
 
@@ -272,20 +272,6 @@ function styleWorkingText(
 	return characters.map((character, index) =>
 		colorize(patternColor(pattern, index, characters.length, offset, colors, intensityDirection), character),
 	).join("");
-}
-
-class PromptEditor extends CustomEditor {
-	setPaddingX(padding: number): void {
-		super.setPaddingX(Math.max(2, padding));
-	}
-
-	render(width: number): string[] {
-		const lines = super.render(width);
-		if (width >= 5 && lines[1]) {
-			lines[1] = this.borderColor("❯ ") + lines[1].slice(2);
-		}
-		return lines;
-	}
 }
 
 export default function (pi: ExtensionAPI) {
