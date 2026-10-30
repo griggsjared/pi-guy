@@ -9,6 +9,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import agentsLocal from "../src/agents-local/index.ts";
 import askUser from "../src/ask-user/index.ts";
 import btw from "../src/btw/index.ts";
+import context from "../src/context/index.ts";
 import githubPr from "../src/github-pr/index.ts";
 import header from "../src/header/index.ts";
 import entry from "../src/index.ts";
@@ -34,7 +35,7 @@ test("the package entry registers everything each factory registers", async (t) 
 	const fromEntry = recorder();
 	await entry(fromEntry.pi);
 	const fromFactories = recorder();
-	for (const factory of [agentsLocal, askUser, btw, githubPr, header, statusline, subagents, webSearch, workingIndicator]) {
+	for (const factory of [agentsLocal, askUser, btw, context, githubPr, header, statusline, subagents, webSearch, workingIndicator]) {
 		await factory(fromFactories.pi);
 	}
 
