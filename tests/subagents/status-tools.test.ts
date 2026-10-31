@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
 import { Check } from "typebox/value";
@@ -18,6 +18,7 @@ import {
   registerStatusCommands,
 } from "../../src/subagents/status-tools.ts";
 import { formatLocalTime } from "../../src/subagents/tail.ts";
+import { captureCommands } from "../helpers/pi.ts";
 import { fakeTheme, taggedTheme as createTaggedTheme } from "../helpers/theme.ts";
 import { sleep, waitFor } from "../helpers/wait.ts";
 import { responseEvent } from "./fake-child.ts";
@@ -1111,11 +1112,9 @@ test("/subagent-status shares the status formatter", async () => {
   const registry = createJobRegistry();
   const id = registry.add("scout", "running task");
   const notices: string[] = [];
-  const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
+  const { commands, registerCommand } = captureCommands();
   const pi = {
-    registerCommand(name: string, command: { handler: (args: string, ctx: unknown) => Promise<void> }) {
-      commands.set(name, command);
-    },
+    registerCommand,
   } as unknown as ExtensionAPI;
   registerStatusCommands(pi, { registry });
   const command = commands.get("subagent-status");
@@ -1123,7 +1122,7 @@ test("/subagent-status shares the status formatter", async () => {
   const ctx = {
     hasUI: true,
     ui: { notify: (text: string) => notices.push(text) },
-  };
+  } as unknown as ExtensionCommandContext;
 
   await command.handler("", ctx);
   assert.match(notices.at(-1) ?? "", new RegExp(`#${id} scout`));
@@ -1170,7 +1169,7 @@ test("/subagent-profile and its ctrl+shift+l shortcut preview, validate, and per
   const notices: Array<{ text: string; level: string }> = [];
   const agentNotes: string[] = [];
   let pickerOpens = 0;
-  const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
+  const { commands, registerCommand } = captureCommands();
   const shortcuts = new Map<string, { handler: (ctx: unknown) => Promise<void> | void }>();
   const pi = {
     appendEntry: (type: string, data: unknown) => entries.push([type, data]),
@@ -1179,8 +1178,7 @@ test("/subagent-profile and its ctrl+shift+l shortcut preview, validate, and per
       assert.equal(options, undefined);
       agentNotes.push(message.content);
     },
-    registerCommand: (name: string, command: { handler: (args: string, ctx: unknown) => Promise<void> }) =>
-      commands.set(name, command),
+    registerCommand,
     registerShortcut: (key: string, shortcut: { handler: (ctx: unknown) => Promise<void> | void }) =>
       shortcuts.set(key, shortcut),
   } as unknown as ExtensionAPI;
@@ -1277,7 +1275,7 @@ test("/subagent-profile and its ctrl+shift+l shortcut preview, validate, and per
         component.handleInput!("\r");
       }),
     },
-  };
+  } as unknown as ExtensionCommandContext;
 
   await command.handler("backup", ctx);
   assert.equal(activeProfile, "backup");
@@ -1352,12 +1350,11 @@ test("subagent-profile picker shows one usage line per distinct provider, reques
   const requests: string[] = [];
   const replies = new Map<string, (text: string | undefined) => void>();
   let renders = 0;
-  const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
+  const { commands, registerCommand } = captureCommands();
   registerStatusCommands(
     {
       appendEntry: () => {},
-      registerCommand: (name: string, command: { handler: (args: string, ctx: unknown) => Promise<void> }) =>
-        commands.set(name, command),
+      registerCommand,
       registerShortcut: () => {},
     } as unknown as ExtensionAPI,
     {
@@ -1410,7 +1407,7 @@ test("subagent-profile picker shows one usage line per distinct provider, reques
         },
       ),
     },
-  });
+  } as unknown as ExtensionCommandContext);
 });
 
 test("confirmSubagentProfile gates the first launch and persists the choice", async () => {
@@ -1539,10 +1536,9 @@ test("/subagent-tail opens a live overlay and follows new events", async (t) => 
   registry.recordStep(id, { phase: "start", id: "tool-1", kind: "tool", summary: "read src/auth.ts" });
   registry.recordStep(id, { phase: "start", id: "retry-1", kind: "retry", summary: "Retrying" });
   const notices: Array<{ text: string; level: string }> = [];
-  const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
+  const { commands, registerCommand } = captureCommands();
   const pi = {
-    registerCommand: (name: string, command: { handler: (args: string, ctx: unknown) => Promise<void> }) =>
-      commands.set(name, command),
+    registerCommand,
   } as unknown as ExtensionAPI;
   registerStatusCommands(pi, { registry });
   const command = commands.get("subagent-tail");
@@ -1581,7 +1577,7 @@ test("/subagent-tail opens a live overlay and follows new events", async (t) => 
     mode: "tui",
     hasUI: true,
     ui: { custom, notify: (text: string, level: string) => notices.push({ text, level }) },
-  };
+  } as unknown as ExtensionCommandContext;
 
   const pending = command.handler(String(id), ctx);
   assert.ok(component);
@@ -1640,14 +1636,13 @@ test("/subagent-cancel validates and targets numeric job IDs", async () => {
     reply: async () => {},
   });
   const notices: string[] = [];
-  const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
+  const { commands, registerCommand } = captureCommands();
   const pi = {
-    registerCommand: (name: string, command: { handler: (args: string, ctx: unknown) => Promise<void> }) =>
-      commands.set(name, command),
+    registerCommand,
   } as unknown as ExtensionAPI;
   registerStatusCommands(pi, { registry });
   const command = commands.get("subagent-cancel")!;
-  const ctx = { ui: { notify: (text: string) => notices.push(text) } };
+  const ctx = { ui: { notify: (text: string) => notices.push(text) } } as unknown as ExtensionCommandContext;
   await command.handler("abc", ctx);
   assert.match(notices.at(-1) ?? "", /Usage: \/subagent-cancel/);
   await command.handler("\\\\1", ctx);
@@ -1672,10 +1667,9 @@ test("/subagent-send parses steering and follow-up messages", async () => {
     reply: async () => {},
   });
   const notices: Array<{ text: string; level: string }> = [];
-  const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
+  const { commands, registerCommand } = captureCommands();
   const pi = {
-    registerCommand: (name: string, command: { handler: (args: string, ctx: unknown) => Promise<void> }) =>
-      commands.set(name, command),
+    registerCommand,
   } as unknown as ExtensionAPI;
   registerStatusCommands(pi, { registry });
   const command = commands.get("subagent-send");
@@ -1683,7 +1677,7 @@ test("/subagent-send parses steering and follow-up messages", async () => {
   const ctx = {
     hasUI: true,
     ui: { notify: (text: string, level: string) => notices.push({ text, level }) },
-  };
+  } as unknown as ExtensionCommandContext;
 
   await command.handler(`${id} steer Narrow the scope`, ctx);
   await command.handler(`${id} followup Queue a second pass`, ctx);
@@ -1721,12 +1715,11 @@ test("slash commands guide no-ID selections without implicit cancellation", asyn
     },
     reply: async () => {},
   });
-  const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
+  const { commands, registerCommand } = captureCommands();
   const selections: string[][] = [];
   const notices: Array<{ text: string; level: string }> = [];
   const pi = {
-    registerCommand: (name: string, command: { handler: (args: string, ctx: unknown) => Promise<void> }) =>
-      commands.set(name, command),
+    registerCommand,
   } as unknown as ExtensionAPI;
   registerStatusCommands(pi, { registry });
   const answers = [0, 0, 0, 0, 0];
@@ -1741,7 +1734,7 @@ test("slash commands guide no-ID selections without implicit cancellation", asyn
     notify: (text: string, level: string) => notices.push({ text, level }),
     custom: async () => {},
   };
-  const ctx = { mode: "tui", hasUI: true, ui };
+  const ctx = { mode: "tui", hasUI: true, ui } as unknown as ExtensionCommandContext;
 
   await commands.get("subagent-status")!.handler("", ctx);
   await commands.get("subagent-tail")!.handler("", ctx);
@@ -1758,10 +1751,9 @@ test("slash commands guide no-ID selections without implicit cancellation", asyn
 
   const emptyRegistry = createJobRegistry();
   const emptyNotices: Array<{ text: string; level: string }> = [];
-  const emptyCommands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
+  const { commands: emptyCommands, registerCommand: registerEmptyCommand } = captureCommands();
   const emptyPi = {
-    registerCommand: (name: string, command: { handler: (args: string, ctx: unknown) => Promise<void> }) =>
-      emptyCommands.set(name, command),
+    registerCommand: registerEmptyCommand,
   } as unknown as ExtensionAPI;
   registerStatusCommands(emptyPi, { registry: emptyRegistry });
   const emptyCtx = {
@@ -1772,7 +1764,7 @@ test("slash commands guide no-ID selections without implicit cancellation", asyn
       select: async () => undefined,
       custom: async () => {},
     },
-  };
+  } as unknown as ExtensionCommandContext;
   await emptyCommands.get("subagent-status")!.handler("", emptyCtx);
   await emptyCommands.get("subagent-tail")!.handler("", emptyCtx);
   await emptyCommands.get("subagent-send")!.handler("", emptyCtx);
@@ -1794,10 +1786,9 @@ test("slash picker rows fit the terminal and prefer titles over full tasks", asy
   const registry = createJobRegistry();
   registry.add("scout", "HIDDEN_TASK ".repeat(40), `${"Review 界 ".repeat(8)}TITLE_END`);
   registry.add("worker", "Fallback task 界 ".repeat(30));
-  const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
+  const { commands, registerCommand } = captureCommands();
   const pi = {
-    registerCommand: (name: string, command: { handler: (args: string, ctx: unknown) => Promise<void> }) =>
-      commands.set(name, command),
+    registerCommand,
   } as unknown as ExtensionAPI;
   registerStatusCommands(pi, { registry });
   const selections: string[][] = [];
@@ -1812,7 +1803,7 @@ test("slash picker rows fit the terminal and prefer titles over full tasks", asy
       },
       notify: (text: string) => notices.push(text),
     },
-  };
+  } as unknown as ExtensionCommandContext;
   for (const width of [40, 180]) {
     Object.defineProperty(process.stdout, "columns", { configurable: true, value: width });
     await commands.get("subagent-status")!.handler("", ctx);
@@ -1849,10 +1840,9 @@ test("slash picker dismissal at job, mode, and input stages is a no-op", async (
       },
       reply: async () => {},
     });
-    const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
+    const { commands, registerCommand } = captureCommands();
     const pi = {
-      registerCommand: (name: string, command: { handler: (args: string, ctx: unknown) => Promise<void> }) =>
-        commands.set(name, command),
+      registerCommand,
     } as unknown as ExtensionAPI;
     registerStatusCommands(pi, { registry });
     let selects = 0;
@@ -1868,7 +1858,7 @@ test("slash picker dismissal at job, mode, and input stages is a no-op", async (
         input: async () => (current.stage === "input" ? undefined : "message"),
         notify: () => {},
       },
-    };
+    } as unknown as ExtensionCommandContext;
     await commands.get(current.command)!.handler("", ctx);
     assert.equal(cancellations, 0, `${current.command} ${current.stage} dismissal must not cancel`);
     assert.equal(sends, 0, `${current.command} ${current.stage} dismissal must not send`);
@@ -1887,10 +1877,9 @@ test("/subagent-send reports rejected messages", async () => {
     reply: async () => {},
   });
   const notices: Array<{ text: string; level: string }> = [];
-  const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
+  const { commands, registerCommand } = captureCommands();
   const pi = {
-    registerCommand: (name: string, command: { handler: (args: string, ctx: unknown) => Promise<void> }) =>
-      commands.set(name, command),
+    registerCommand,
   } as unknown as ExtensionAPI;
   registerStatusCommands(pi, { registry });
   const command = commands.get("subagent-send");
@@ -1899,7 +1888,7 @@ test("/subagent-send reports rejected messages", async () => {
   await command.handler(`${id} steer This will fail`, {
     hasUI: true,
     ui: { notify: (text: string, level: string) => notices.push({ text, level }) },
-  });
+  } as unknown as ExtensionCommandContext);
   assert.deepEqual(notices, [{ text: "subagent send #1 scout · task: RPC prompt rejected", level: "error" }]);
 });
 

@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import os from "node:os";
 import { join } from "node:path";
@@ -17,17 +16,17 @@ import statusline from "../src/statusline/index.ts";
 import subagents from "../src/subagents/index.ts";
 import webSearch from "../src/web-search/index.ts";
 import workingIndicator from "../src/working-indicator/index.ts";
+import { tempDir } from "./helpers/fs.ts";
 
 test("the package entry registers everything each factory registers", async (t) => {
-  const home = await mkdtemp(join(os.tmpdir(), "pi-guy-entry-"));
   const dirname = Object.getOwnPropertyDescriptor(globalThis, "__dirname");
   t.after(async () => {
     t.mock.restoreAll();
     syncBuiltinESMExports();
     if (dirname) Object.defineProperty(globalThis, "__dirname", dirname);
     else Reflect.deleteProperty(globalThis, "__dirname");
-    await rm(home, { recursive: true, force: true });
   });
+  const home = await tempDir(t, "pi-guy-entry-");
   Object.defineProperty(globalThis, "__dirname", {
     configurable: true,
     value: join(import.meta.dirname, "..", "src", "subagents"),

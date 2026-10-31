@@ -1,27 +1,22 @@
 import assert from "node:assert/strict";
 import childProcess from "node:child_process";
-import { mkdtemp, writeFile, rm, mkdir } from "node:fs/promises";
+import { writeFile, mkdir } from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import type { ExtensionAPI, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import { OFF_PROFILE_NAME, parseSubagentSettings, SESSION_PROFILE_NAME } from "../../src/subagents/agents.ts";
 import { PROFILE_ENTRY_TYPE } from "../../src/subagents/constants.ts";
 import subagentsExtension from "../../src/subagents/index.ts";
 import type { createSubagentTool } from "../../src/subagents/tools.ts";
-import { captureHandlers } from "../helpers/pi.ts";
+import { tempDir } from "../helpers/fs.ts";
+import { captureCommands, captureHandlers } from "../helpers/pi.ts";
 import { waitFor } from "../helpers/wait.ts";
 import { FakeChild, fakeSpawnChildren, endEvent } from "./fake-child.ts";
 import { spy, customProfilePicker, renderText } from "./helpers.ts";
 
 test("extension selects profiles explicitly and uses the headless fallback", async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), "subagents-test-"));
-  const extensionDir = join(dir, "src", "subagents");
-  const agentsDir = join(dir, "resources", "subagents");
-  const settingsDir = join(dir, "agent-config");
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-  process.env.PI_CODING_AGENT_DIR = settingsDir;
   const dirname = Object.getOwnPropertyDescriptor(globalThis, "__dirname");
   t.after(async () => {
     t.mock.restoreAll();
@@ -30,8 +25,12 @@ test("extension selects profiles explicitly and uses the headless fallback", asy
     else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
     if (dirname) Object.defineProperty(globalThis, "__dirname", dirname);
     else Reflect.deleteProperty(globalThis, "__dirname");
-    await rm(dir, { recursive: true, force: true });
   });
+  const dir = await tempDir(t, "subagents-test-");
+  const extensionDir = join(dir, "src", "subagents");
+  const agentsDir = join(dir, "resources", "subagents");
+  const settingsDir = join(dir, "agent-config");
+  process.env.PI_CODING_AGENT_DIR = settingsDir;
   await mkdir(agentsDir, { recursive: true });
   await mkdir(settingsDir, { recursive: true });
   await writeFile(join(agentsDir, "scout.md"), "---\nname: scout\nthinkingLevel: high\n---\nYou are a scout.");
@@ -249,7 +248,7 @@ test("extension selects profiles explicitly and uses the headless fallback", asy
       t.mock.method(childProcess, "spawn", spawnFn);
       syncBuiltinESMExports();
       const tools = new Map<string, ReturnType<typeof createSubagentTool>>();
-      const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
+      const { commands, registerCommand } = captureCommands();
       const { handlers, on } = captureHandlers();
       const shortcuts = new Map<string, { handler: (ctx: unknown) => Promise<void> | void }>();
       const flags: Array<[string, string]> = [];
@@ -264,8 +263,7 @@ test("extension selects profiles explicitly and uses the headless fallback", asy
         registerFlag: (name: string, options: { type: string }) => flags.push([name, options.type]),
         getFlag: (name: string) => (name === "subagent-profile" ? entry.flag : undefined),
         registerTool: (tool: ReturnType<typeof createSubagentTool>) => tools.set(tool.name, tool),
-        registerCommand: (name: string, command: { handler: (args: string, ctx: unknown) => Promise<void> }) =>
-          commands.set(name, command),
+        registerCommand,
         registerShortcut: (key: string, shortcut: { handler: (ctx: unknown) => Promise<void> | void }) =>
           shortcuts.set(key, shortcut),
         registerEntryRenderer: () => {},
@@ -308,7 +306,7 @@ test("extension selects profiles explicitly and uses the headless fallback", asy
         await subagentsExtension(pi);
         assert.deepEqual(flags, [["subagent-profile", "string"]]);
         assert.deepEqual(statuses.calls, []);
-        await handlers.get("session_start")!({}, ctx);
+        await handlers.get("session_start")![0]!({}, ctx);
         const names = Object.keys(parseSubagentSettings({ profiles: entry.profiles }).profiles);
         const initialProfile =
           entry.flag ?? entry.initial ?? entry.restored ?? (names.length === 1 ? names[0]! : undefined);
@@ -325,14 +323,16 @@ test("extension selects profiles explicitly and uses the headless fallback", asy
           return;
         }
         if (entry.mode === "print" && names.length === 1) {
-          await commands.get("subagent-profile")!.handler("", { ...ctx, hasUI: true });
+          await commands
+            .get("subagent-profile")!
+            .handler("", { ...ctx, hasUI: true } as unknown as ExtensionCommandContext);
           assert.deepEqual(notices, ["Active subagent profile: session. Available: session, off"]);
         }
         const result = await tool.execute("launch", { agent: "scout", task: "t" }, undefined, undefined, ctx);
         if (entry.profile === "off") {
           assert.equal(result.details.status, "failed");
           assert.match((result.content[0] as { text: string }).text, /turned subagents off/);
-          await handlers.get("model_select")!({ source: "set" }, ctx);
+          await handlers.get("model_select")![0]!({ source: "set" }, ctx);
           assert.deepEqual(statuses.calls.at(-1), ["subagent-profile", "off"]);
           assert.equal(calls.length, 0);
           return;
@@ -353,8 +353,8 @@ test("extension selects profiles explicitly and uses the headless fallback", asy
         if (after) {
           const beforeTitles = [...titles];
           const beforeModelSelect = [...statuses.calls];
-          await handlers.get("model_select")!({ source: "set" }, ctx);
-          await handlers.get("model_select")!({ source: "set" }, ctx);
+          await handlers.get("model_select")![0]!({ source: "set" }, ctx);
+          await handlers.get("model_select")![0]!({ source: "set" }, ctx);
           assert.deepEqual(
             statuses.calls,
             after.picker ? [...beforeModelSelect, [PROFILE_ENTRY_TYPE, undefined]] : beforeModelSelect,
@@ -410,7 +410,7 @@ test("extension selects profiles explicitly and uses the headless fallback", asy
               }),
             },
           };
-          await commands.get("subagent-profile")!.handler("", manualCtx);
+          await commands.get("subagent-profile")!.handler("", manualCtx as unknown as ExtensionCommandContext);
           await shortcuts.get("ctrl+shift+l")!.handler(manualCtx);
           assert.equal(pickerOpens, 2);
           assert.deepEqual(
@@ -423,15 +423,15 @@ test("extension selects profiles explicitly and uses the headless fallback", asy
         }
         if (entry.live) {
           const command = commands.get("subagent-profile")!;
-          await command.handler("backup", ctx);
+          await command.handler("backup", ctx as unknown as ExtensionCommandContext);
           assert.deepEqual(statuses.calls.at(-1), [PROFILE_ENTRY_TYPE, "backup"]);
           assert.deepEqual(profileNotes, [
             "The user switched the subagent profile to backup. Subagents are available.",
           ]);
           const beforeInvalid = [...statuses.calls];
-          await command.handler("missing", ctx);
+          await command.handler("missing", ctx as unknown as ExtensionCommandContext);
           assert.deepEqual(statuses.calls, beforeInvalid);
-          await command.handler("", ctx);
+          await command.handler("", ctx as unknown as ExtensionCommandContext);
           assert.deepEqual(statuses.calls.at(-1), [PROFILE_ENTRY_TYPE, "primary"]);
           await shortcuts.get("ctrl+shift+l")!.handler({
             ...ctx,
@@ -447,7 +447,7 @@ test("extension selects profiles explicitly and uses the headless fallback", asy
 
           const resetStatuses = spy();
           const resetCtx = { ...ctx, ui: { ...ctx.ui, setStatus: resetStatuses.fn } };
-          await handlers.get("session_start")!({}, resetCtx);
+          await handlers.get("session_start")![0]!({}, resetCtx);
           latestStatuses = resetStatuses;
           assert.deepEqual(resetStatuses.calls, [[PROFILE_ENTRY_TYPE, undefined]]);
           const beforeReset = [...statuses.calls];
@@ -458,11 +458,11 @@ test("extension selects profiles explicitly and uses the headless fallback", asy
               },
             });
           }
-          await command.handler("backup", resetCtx);
+          await command.handler("backup", resetCtx as unknown as ExtensionCommandContext);
           assert.deepEqual(resetStatuses.calls.at(-1), [PROFILE_ENTRY_TYPE, "backup"]);
           assert.deepEqual(statuses.calls, beforeReset);
 
-          await handlers.get("model_select")!({ source: "set" }, resetCtx);
+          await handlers.get("model_select")![0]!({ source: "set" }, resetCtx);
           const launchesBeforeOff = calls.length;
           const notesBeforeOff = profileNotes.length;
           const offCtx = {
@@ -482,7 +482,7 @@ test("extension selects profiles explicitly and uses the headless fallback", asy
           assert.match((blocked.content[0] as { text: string }).text, /turned subagents off/);
           assert.deepEqual(entries.calls.at(-1), [PROFILE_ENTRY_TYPE, { name: OFF_PROFILE_NAME }]);
           assert.deepEqual(resetStatuses.calls.at(-1), [PROFILE_ENTRY_TYPE, OFF_PROFILE_NAME]);
-          await handlers.get("model_select")!({ source: "set" }, resetCtx);
+          await handlers.get("model_select")![0]!({ source: "set" }, resetCtx);
           assert.deepEqual(resetStatuses.calls.at(-1), [PROFILE_ENTRY_TYPE, OFF_PROFILE_NAME]);
           const stillBlocked = await tool.execute(
             "off-again",
@@ -496,7 +496,7 @@ test("extension selects profiles explicitly and uses the headless fallback", asy
           assert.equal(profileNotes.length, notesBeforeOff);
         }
       } finally {
-        await handlers.get("session_shutdown")?.({}, ctx);
+        await handlers.get("session_shutdown")?.[0]?.({}, ctx);
         assert.deepEqual(latestStatuses.calls.slice(-1), entry.mode === "tui" ? [[PROFILE_ENTRY_TYPE, undefined]] : []);
         t.mock.restoreAll();
         syncBuiltinESMExports();

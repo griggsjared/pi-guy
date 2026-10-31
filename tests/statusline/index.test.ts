@@ -9,7 +9,7 @@ import { fakeTheme } from "../helpers/theme.ts";
 import { flush } from "../helpers/wait.ts";
 
 test("entry wiring registers the footer and publishes provider status", async () => {
-  const handlers = new Map<string, Array<(event: any, context: any) => void>>();
+  const { handlers, on } = captureHandlers();
   providerUsage({
     events: {
       on() {
@@ -17,9 +17,7 @@ test("entry wiring registers the footer and publishes provider status", async ()
       },
       emit() {},
     },
-    on(event: string, handler: (event: any, context: any) => void) {
-      handlers.set(event, [...(handlers.get(event) ?? []), handler]);
-    },
+    on,
   } as unknown as ExtensionAPI);
   let footerSet = false;
   const statuses: Array<string | undefined> = [];
@@ -90,7 +88,8 @@ test("fetches DeepSeek balance from the fixed endpoint with an auth header", asy
     },
   };
   try {
-    handlers.get("session_start")?.({}, context);
+    // providerUsage registers the footer's handlers first, so these tests drive the entry's own handler last.
+    handlers.get("session_start")?.at(-1)?.({}, context);
     await flush();
     assert.equal(url, "https://api.deepseek.com/user/balance");
     assert.equal(request?.redirect, "error");
@@ -104,7 +103,7 @@ test("fetches DeepSeek balance from the fixed endpoint with an auth header", asy
       balance: { amount: 42.5, currency: "USD" },
     });
   } finally {
-    handlers.get("session_shutdown")?.({}, context);
+    handlers.get("session_shutdown")?.at(-1)?.({}, context);
     globalThis.fetch = originalFetch;
   }
 });
@@ -147,7 +146,7 @@ test("answers provider usage requests for non-active providers without touching 
       request?.({ provider, theme: fakeTheme(), reply: resolve });
     });
   try {
-    handlers.get("session_start")?.({}, context);
+    handlers.get("session_start")?.at(-1)?.({}, context);
     await flush();
     const footerUpdates = statuses.length;
     assert.equal(await ask("google"), undefined);
@@ -157,11 +156,11 @@ test("answers provider usage requests for non-active providers without touching 
     assert.equal(statuses.length, footerUpdates);
 
     // A new session drops the cache, so the next request refetches and the failure has no stale value.
-    handlers.get("session_start")?.({}, context);
+    handlers.get("session_start")?.at(-1)?.({}, context);
     assert.equal(await ask("deepseek"), "quota:?");
     assert.equal(calls, 2);
   } finally {
-    handlers.get("session_shutdown")?.({}, context);
+    handlers.get("session_shutdown")?.at(-1)?.({}, context);
     globalThis.fetch = originalFetch;
   }
 });
@@ -204,12 +203,12 @@ test("rejects DeepSeek balance fetches to non-official endpoints", async () => {
       },
     };
     try {
-      handlers.get("session_start")?.({}, context);
+      handlers.get("session_start")?.at(-1)?.({}, context);
       await flush();
       assert.equal(fetched, false, baseUrl);
       assert.equal(JSON.parse(statuses.at(-1)!).state, "unknown", baseUrl);
     } finally {
-      handlers.get("session_shutdown")?.({}, context);
+      handlers.get("session_shutdown")?.at(-1)?.({}, context);
     }
   }
   globalThis.fetch = originalFetch;
@@ -248,12 +247,12 @@ test("does not fetch DeepSeek balance without an API key", async () => {
       },
     };
     try {
-      handlers.get("session_start")?.({}, context);
+      handlers.get("session_start")?.at(-1)?.({}, context);
       await flush();
       assert.equal(fetched, false);
       assert.equal(JSON.parse(statuses.at(-1)!).state, "unknown");
     } finally {
-      handlers.get("session_shutdown")?.({}, context);
+      handlers.get("session_shutdown")?.at(-1)?.({}, context);
     }
   }
   globalThis.fetch = originalFetch;
@@ -291,16 +290,16 @@ test("bounds DeepSeek auth resolution so a later refresh can still run", async (
     ui: { setStatus() {} },
   };
   try {
-    handlers.get("session_start")?.({}, context);
+    handlers.get("session_start")?.at(-1)?.({}, context);
     await flush();
     assert.equal(fetchCalls, 0);
     t.mock.timers.tick(10_000);
     await flush();
-    handlers.get("turn_end")?.({}, context);
+    handlers.get("turn_end")?.at(-1)?.({}, context);
     await flush();
     assert.equal(fetchCalls, 1);
   } finally {
-    handlers.get("session_shutdown")?.({}, context);
+    handlers.get("session_shutdown")?.at(-1)?.({}, context);
     globalThis.fetch = originalFetch;
     t.mock.timers.reset();
   }
@@ -341,17 +340,17 @@ test("preserves a cached DeepSeek balance when a refresh fails", async () => {
   };
   try {
     Date.now = () => now;
-    handlers.get("session_start")?.({}, context);
+    handlers.get("session_start")?.at(-1)?.({}, context);
     await flush();
     now += 10 * 60_000;
-    handlers.get("turn_end")?.({}, context);
+    handlers.get("turn_end")?.at(-1)?.({}, context);
     await flush();
     assert.equal(calls, 2);
     const last = JSON.parse(statuses.at(-1)!);
     assert.equal(last.state, "ready");
     assert.equal(last.balance.amount, 42.5);
   } finally {
-    handlers.get("session_shutdown")?.({}, context);
+    handlers.get("session_shutdown")?.at(-1)?.({}, context);
     Date.now = originalNow;
     globalThis.fetch = originalFetch;
   }
@@ -393,7 +392,7 @@ test("fetches Anthropic plan usage from the OAuth usage endpoint", async () => {
     },
   };
   const start = async () => {
-    handlers.get("session_start")?.({}, context);
+    handlers.get("session_start")?.at(-1)?.({}, context);
     await flush();
     return JSON.parse(statuses.at(-1)!) as { state: string; windows: unknown[] };
   };
@@ -416,7 +415,7 @@ test("fetches Anthropic plan usage from the OAuth usage endpoint", async () => {
     assert.equal(keyUsage.state, "ready");
     assert.deepEqual(keyUsage.windows, []);
   } finally {
-    handlers.get("session_shutdown")?.({}, context);
+    handlers.get("session_shutdown")?.at(-1)?.({}, context);
     globalThis.fetch = originalFetch;
   }
 });
@@ -452,32 +451,32 @@ test("publishes Anthropic usage from response headers", async () => {
   };
   const last = () => JSON.parse(statuses.at(-1)!) as { state: string; windows: Array<{ usedPercent: number }> };
   try {
-    handlers.get("session_start")?.({}, context);
-    handlers.get("turn_end")?.({}, context);
+    handlers.get("session_start")?.at(-1)?.({}, context);
+    handlers.get("turn_end")?.at(-1)?.({}, context);
     await flush();
     assert.equal(last().state, "unknown");
 
     // API-key replies carry no plan headers, so the footer shows no quota placeholder.
-    handlers.get("after_provider_response")?.({ status: 200, headers: {} }, context);
+    handlers.get("after_provider_response")?.at(-1)?.({ status: 200, headers: {} }, context);
     assert.equal(last().state, "ready");
     assert.deepEqual(last().windows, []);
 
-    handlers.get("after_provider_response")?.(
+    handlers.get("after_provider_response")?.at(-1)?.(
       { status: 200, headers: { "anthropic-ratelimit-unified-5h-utilization": "0.25" } },
       context,
     );
     assert.equal(last().windows[0]?.usedPercent, 25);
-    handlers.get("after_provider_response")?.({ status: 500, headers: {} }, context);
+    handlers.get("after_provider_response")?.at(-1)?.({ status: 500, headers: {} }, context);
     assert.equal(last().windows[0]?.usedPercent, 25);
 
     // Header data counts as a fresh fetch, so the next turn does not hit the usage endpoint.
     const loadsBefore = loads;
-    handlers.get("turn_end")?.({}, context);
+    handlers.get("turn_end")?.at(-1)?.({}, context);
     await flush();
     assert.equal(loads, loadsBefore);
     assert.equal(last().windows[0]?.usedPercent, 25);
   } finally {
-    handlers.get("session_shutdown")?.({}, context);
+    handlers.get("session_shutdown")?.at(-1)?.({}, context);
   }
 });
 
@@ -510,14 +509,14 @@ test("does not expose OpenCode credentials through status or errors", async () =
     },
   };
   try {
-    handlers.get("session_start")?.({ type: "session_start" }, context);
+    handlers.get("session_start")?.at(-1)?.({ type: "session_start" }, context);
     await flush();
     assert.equal(
       statuses.some((status) => status?.includes(secret)),
       false,
     );
   } finally {
-    handlers.get("session_shutdown")?.({ type: "session_shutdown" }, context);
+    handlers.get("session_shutdown")?.at(-1)?.({ type: "session_shutdown" }, context);
     globalThis.fetch = originalFetch;
     if (originalWorkspace === undefined) delete process.env.OPENCODE_GO_WORKSPACE_ID;
     else process.env.OPENCODE_GO_WORKSPACE_ID = originalWorkspace;
@@ -561,15 +560,15 @@ test("preserves cached usage when a refresh fails", async () => {
   let now = originalNow();
   try {
     Date.now = () => now;
-    handlers.get("session_start")?.({}, context);
+    handlers.get("session_start")?.at(-1)?.({}, context);
     await flush();
     now += 10 * 60_000;
-    handlers.get("turn_end")?.({}, context);
+    handlers.get("turn_end")?.at(-1)?.({}, context);
     await flush();
     assert.equal(calls, 2);
     assert.equal(JSON.parse(statuses.at(-1)!).state, "ready");
   } finally {
-    handlers.get("session_shutdown")?.({}, context);
+    handlers.get("session_shutdown")?.at(-1)?.({}, context);
     Date.now = originalNow;
     globalThis.fetch = originalFetch;
     if (originalWorkspace === undefined) delete process.env.OPENCODE_GO_WORKSPACE_ID;
@@ -609,13 +608,13 @@ test("Codex requests use the fixed endpoint, redirect policy, and auth headers",
     ui: { setStatus() {} },
   };
   try {
-    handlers.get("session_start")?.({}, context);
+    handlers.get("session_start")?.at(-1)?.({}, context);
     await flush();
     assert.equal(request?.redirect, "error");
     assert.equal((request?.headers as Record<string, string>)["ChatGPT-Account-Id"], account);
     assert.equal((request?.headers as Record<string, string>).Authorization, `Bearer ${token}`);
   } finally {
-    handlers.get("session_shutdown")?.({}, context);
+    handlers.get("session_shutdown")?.at(-1)?.({}, context);
     globalThis.fetch = originalFetch;
   }
 });
@@ -648,12 +647,12 @@ test("same-provider selection aborts the old request", async () => {
   process.env.OPENCODE_GO_WORKSPACE_ID = "workspace";
   process.env.OPENCODE_GO_AUTH_COOKIE = "secret";
   try {
-    handlers.get("session_start")?.({}, context);
-    handlers.get("model_select")?.({ model: context.model }, context);
+    handlers.get("session_start")?.at(-1)?.({}, context);
+    handlers.get("model_select")?.at(-1)?.({ model: context.model }, context);
     await flush();
     assert.equal(aborted, true);
   } finally {
-    handlers.get("session_shutdown")?.({}, context);
+    handlers.get("session_shutdown")?.at(-1)?.({}, context);
     globalThis.fetch = originalFetch;
     delete process.env.OPENCODE_GO_WORKSPACE_ID;
     delete process.env.OPENCODE_GO_AUTH_COOKIE;
@@ -694,14 +693,14 @@ test("ignores a stale OpenCode response after switching providers", async () => 
     },
   };
   try {
-    handlers.get("session_start")?.({ type: "session_start" }, context);
+    handlers.get("session_start")?.at(-1)?.({ type: "session_start" }, context);
     context.model = { provider: "google" };
-    handlers.get("model_select")?.({ model: context.model }, context);
+    handlers.get("model_select")?.at(-1)?.({ model: context.model }, context);
     resolveFetch?.(new Response(`rollingUsage:{usagePercent:10,resetInSec:30}`));
     await flush();
     assert.equal(statuses.at(-1), undefined);
   } finally {
-    handlers.get("session_shutdown")?.({ type: "session_shutdown" }, context);
+    handlers.get("session_shutdown")?.at(-1)?.({ type: "session_shutdown" }, context);
     globalThis.fetch = originalFetch;
     if (originalWorkspace === undefined) delete process.env.OPENCODE_GO_WORKSPACE_ID;
     else process.env.OPENCODE_GO_WORKSPACE_ID = originalWorkspace;
@@ -717,12 +716,12 @@ test("Claude response headers update bridge usage and renew the CLI cache until 
   const { handlers, context, statuses } = entryContext();
   try {
     Date.now = () => now;
-    handlers.get("session_start")?.({}, context);
+    handlers.get("session_start")?.at(-1)?.({}, context);
     await flush();
     assert.equal(JSON.parse(statuses.at(-1)!).windows[0].usedPercent, 10);
 
     now += CLAUDE_CACHE_TTL_MS - 1;
-    handlers.get("after_provider_response")?.(
+    handlers.get("after_provider_response")?.at(-1)?.(
       {
         status: 200,
         headers: {
@@ -746,7 +745,7 @@ test("Claude response headers update bridge usage and renew the CLI cache until 
     });
 
     now += CLAUDE_CACHE_TTL_MS - 1;
-    handlers.get("after_provider_response")?.(
+    handlers.get("after_provider_response")?.at(-1)?.(
       {
         status: 200,
         headers: {
@@ -766,22 +765,22 @@ test("Claude response headers update bridge usage and renew the CLI cache until 
       ],
     });
     for (const headers of [{}, { "anthropic-ratelimit-unified-status": "allowed" }]) {
-      handlers.get("after_provider_response")?.({ status: 200, headers }, context);
+      handlers.get("after_provider_response")?.at(-1)?.({ status: 200, headers }, context);
       assert.deepEqual(JSON.parse(statuses.at(-1)!), updated);
     }
 
     now += CLAUDE_CACHE_TTL_MS - 1;
-    handlers.get("turn_end")?.({}, context);
+    handlers.get("turn_end")?.at(-1)?.({}, context);
     await flush();
     assert.equal(calls.length, 1);
     assert.deepEqual(JSON.parse(statuses.at(-1)!), updated);
     now++;
-    handlers.get("turn_end")?.({}, context);
+    handlers.get("turn_end")?.at(-1)?.({}, context);
     await flush();
     assert.equal(calls.length, 2);
     assert.equal(JSON.parse(statuses.at(-1)!).windows[0].usedPercent, 10);
   } finally {
-    handlers.get("session_shutdown")?.({}, context);
+    handlers.get("session_shutdown")?.at(-1)?.({}, context);
     Date.now = originalNow;
   }
 });
@@ -790,17 +789,17 @@ test("Claude replies without usable usage headers keep unknown quota when CLI us
   mockCli(t, (call) => call.complete(new Error("CLI unavailable"), ""));
   const { handlers, context, statuses } = entryContext();
   try {
-    handlers.get("session_start")?.({}, context);
+    handlers.get("session_start")?.at(-1)?.({}, context);
     await flush();
     const unknown = JSON.parse(statuses.at(-1)!);
     assert.equal(unknown.provider, "claude-bridge");
     assert.equal(unknown.state, "unknown");
     for (const headers of [{}, { "anthropic-ratelimit-unified-status": "allowed" }]) {
-      handlers.get("after_provider_response")?.({ status: 200, headers }, context);
+      handlers.get("after_provider_response")?.at(-1)?.({ status: 200, headers }, context);
       assert.deepEqual(JSON.parse(statuses.at(-1)!), unknown);
     }
   } finally {
-    handlers.get("session_shutdown")?.({}, context);
+    handlers.get("session_shutdown")?.at(-1)?.({}, context);
   }
 });
 
@@ -817,26 +816,26 @@ test("Claude wiring caches quotas for five minutes and retries failed refreshes 
   const { handlers, context, statuses } = entryContext();
   try {
     Date.now = () => now;
-    handlers.get("session_start")?.({}, context);
+    handlers.get("session_start")?.at(-1)?.({}, context);
     assert.equal(JSON.parse(statuses.at(-1)!).state, "unknown");
     await flush();
     const ready = JSON.parse(statuses.at(-1)!);
     assert.equal(ready.provider, "claude-bridge");
     assert.equal(ready.state, "ready");
     now += CLAUDE_CACHE_TTL_MS - 1;
-    handlers.get("turn_end")?.({}, context);
+    handlers.get("turn_end")?.at(-1)?.({}, context);
     await flush();
     assert.equal(reads, 1);
     now++;
-    handlers.get("turn_end")?.({}, context);
+    handlers.get("turn_end")?.at(-1)?.({}, context);
     await flush();
     assert.equal(reads, 2);
     assert.deepEqual(JSON.parse(statuses.at(-1)!), ready);
-    handlers.get("turn_end")?.({}, context);
+    handlers.get("turn_end")?.at(-1)?.({}, context);
     await flush();
     assert.equal(reads, 3);
     assert.deepEqual(JSON.parse(statuses.at(-1)!), ready);
-    handlers.get("turn_end")?.({}, context);
+    handlers.get("turn_end")?.at(-1)?.({}, context);
     await flush();
     assert.equal(reads, 4);
     assert.equal(JSON.parse(statuses.at(-1)!).windows[0].usedPercent, 20);
@@ -845,7 +844,7 @@ test("Claude wiring caches quotas for five minutes and retries failed refreshes 
       false,
     );
   } finally {
-    handlers.get("session_shutdown")?.({}, context);
+    handlers.get("session_shutdown")?.at(-1)?.({}, context);
     Date.now = originalNow;
   }
 });
@@ -858,19 +857,19 @@ test("index timeout cancels a hung Claude CLI request and permits a later refres
   });
   const { handlers, context, statuses } = entryContext();
   try {
-    handlers.get("session_start")?.({}, context);
+    handlers.get("session_start")?.at(-1)?.({}, context);
     await flush();
     assert.equal(reads, 1);
     t.mock.timers.tick(10_000);
     await flush();
     assert.equal(calls[0]?.options.signal.aborted, true);
     assert.equal(JSON.parse(statuses.at(-1)!).state, "unknown");
-    handlers.get("turn_end")?.({}, context);
+    handlers.get("turn_end")?.at(-1)?.({}, context);
     await flush();
     assert.equal(reads, 2);
     assert.equal(JSON.parse(statuses.at(-1)!).state, "ready");
   } finally {
-    handlers.get("session_shutdown")?.({}, context);
+    handlers.get("session_shutdown")?.at(-1)?.({}, context);
     t.mock.timers.reset();
   }
 });
@@ -881,9 +880,9 @@ test("does not publish stale Claude results after selection, reload, or shutdown
       const calls = mockCli(t, () => {});
       const { handlers, context, statuses } = entryContext();
       try {
-        handlers.get("session_start")?.({}, context);
+        handlers.get("session_start")?.at(-1)?.({}, context);
         await flush();
-        handlers.get(event)?.({ model: context.model }, context);
+        handlers.get(event)?.at(-1)?.({ model: context.model }, context);
         await flush();
         assert.equal(calls[0]?.options.signal.aborted, true);
         calls[0]?.complete(null, claudeOutput);
@@ -898,7 +897,7 @@ test("does not publish stale Claude results after selection, reload, or shutdown
           assert.equal(JSON.parse(statuses.at(-1)!).state, "ready");
         } else assert.equal(statuses.at(-1), undefined);
       } finally {
-        handlers.get("session_shutdown")?.({}, context);
+        handlers.get("session_shutdown")?.at(-1)?.({}, context);
       }
     });
   }

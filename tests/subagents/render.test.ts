@@ -1,14 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Box, visibleWidth } from "@earendil-works/pi-tui";
 import { EMPTY_USAGE, ENTRY_TYPE, QUESTION_ENTRY_TYPE } from "../../src/subagents/constants.ts";
 import { createJobRegistry } from "../../src/subagents/registry.ts";
-import { refreshUi, registerRenderers } from "../../src/subagents/render.ts";
+import { refreshUi } from "../../src/subagents/render.ts";
 import { createSendTool } from "../../src/subagents/status-tools.ts";
 import { fakeTheme, taggedTheme as createTaggedTheme } from "../helpers/theme.ts";
 import { flush } from "../helpers/wait.ts";
-import { complete, makeTool, renderable, renderAtWidth, renderText } from "./helpers.ts";
+import { captureRenderers, complete, makeTool, renderable, renderAtWidth, renderText } from "./helpers.ts";
 
 test("refreshUi: keeps one widget component and requests in-place renders", () => {
   const registry = createJobRegistry();
@@ -270,20 +269,10 @@ test("installed widget shows at least 1s for running and finished jobs under a s
 });
 
 test("message and entry renderers render results and parent questions", () => {
-  const renderers = new Map<string, (message: unknown, options: unknown, theme: unknown) => unknown>();
-  const entryRenderers = new Map<string, (entry: unknown, options: unknown, theme: unknown) => unknown>();
-  const pi = {
-    registerMessageRenderer: (type: string, fn: unknown) => {
-      renderers.set(type, fn as never);
-    },
-    registerEntryRenderer: (type: string, fn: unknown) => {
-      entryRenderers.set(type, fn as never);
-    },
-  } as unknown as ExtensionAPI;
-  registerRenderers(pi);
-  const captured = renderers.get(ENTRY_TYPE);
-  const entryRenderer = entryRenderers.get(ENTRY_TYPE);
-  const questionRenderer = renderers.get(QUESTION_ENTRY_TYPE);
+  const { messages, entries } = captureRenderers();
+  const captured = messages.get(ENTRY_TYPE);
+  const entryRenderer = entries.get(ENTRY_TYPE);
+  const questionRenderer = messages.get(QUESTION_ENTRY_TYPE);
   assert.ok(captured, "result message renderer registered");
   assert.ok(entryRenderer, "result entry renderer registered");
   assert.ok(questionRenderer, "question renderer registered");
@@ -517,13 +506,7 @@ test("message and entry renderers render results and parent questions", () => {
 });
 
 test("renderers preserve card backgrounds through ellipsis and padding", () => {
-  const renderers = new Map<string, (message: unknown, options: unknown, theme: unknown) => unknown>();
-  const entryRenderers = new Map<string, (entry: unknown, options: unknown, theme: unknown) => unknown>();
-  const pi = {
-    registerMessageRenderer: (type: string, fn: unknown) => renderers.set(type, fn as never),
-    registerEntryRenderer: (type: string, fn: unknown) => entryRenderers.set(type, fn as never),
-  } as unknown as ExtensionAPI;
-  registerRenderers(pi);
+  const { messages, entries } = captureRenderers();
 
   const ansiTheme = {
     fg: (color: string, text: string) => {
@@ -543,7 +526,7 @@ test("renderers preserve card backgrounds through ellipsis and padding", () => {
     bold: (text: string) => `\x1b[1m${text}\x1b[22m`,
   };
 
-  const completionMessage = renderers.get(ENTRY_TYPE)!(
+  const completionMessage = messages.get(ENTRY_TYPE)!(
     {
       content: "completion output",
       details: {
@@ -558,7 +541,7 @@ test("renderers preserve card backgrounds through ellipsis and padding", () => {
     { expanded: false, outputPad: 1 },
     ansiTheme,
   );
-  const completionCard = entryRenderers.get(ENTRY_TYPE)!(
+  const completionCard = entries.get(ENTRY_TYPE)!(
     {
       data: {
         content: "completion output",
@@ -575,7 +558,7 @@ test("renderers preserve card backgrounds through ellipsis and padding", () => {
     { expanded: false },
     ansiTheme,
   );
-  const question = renderers.get(QUESTION_ENTRY_TYPE)!(
+  const question = messages.get(QUESTION_ENTRY_TYPE)!(
     {
       content: "model-facing question",
       details: {

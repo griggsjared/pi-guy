@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import type { spawn } from "node:child_process";
+import type { TestContext } from "node:test";
 import type { ExtensionAPI, ExtensionContext, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import type { Component } from "@earendil-works/pi-tui";
 import type { AgentConfig, SubagentSettings } from "../../src/subagents/agents.ts";
 import { createJobRegistry } from "../../src/subagents/registry.ts";
+import { registerRenderers } from "../../src/subagents/render.ts";
 import { createSubagentTool } from "../../src/subagents/tools.ts";
 import { captureHandlers } from "../helpers/pi.ts";
 import { fakeTheme } from "../helpers/theme.ts";
@@ -34,12 +36,19 @@ export function complete(registry: ReturnType<typeof createJobRegistry>, id: num
   });
 }
 
-export function makeTool(
-  spawnOverride?: { spawnFn: typeof spawn },
-  settings: SubagentSettings = { profiles: {}, extensions: [] },
-  activeProfile: string | undefined = undefined,
-  confirmProfile: (ctx: ExtensionContext, onPause?: (message: string) => void) => Promise<boolean> = async () => true,
-) {
+interface MakeToolOptions {
+  spawnFn?: typeof spawn;
+  settings?: SubagentSettings;
+  activeProfile?: string;
+  confirmProfile?: (ctx: ExtensionContext, onPause?: (message: string) => void) => Promise<boolean>;
+}
+
+export function makeTool({
+  spawnFn,
+  settings = { profiles: {}, extensions: [] },
+  activeProfile,
+  confirmProfile = async () => true,
+}: MakeToolOptions = {}) {
   const registry = createJobRegistry();
   const sendMessage = spy();
   const sendUserMessage = spy();
@@ -66,7 +75,7 @@ export function makeTool(
     bridgeExtensionPath: "/extensions/child-bridge.ts",
     onUiContext: () => {},
     refresh: () => {},
-    spawnFn: spawnOverride?.spawnFn ?? fakeSpawn(child),
+    spawnFn: spawnFn ?? fakeSpawn(child),
   });
   const ctx = {
     cwd: "/tmp",
@@ -91,6 +100,17 @@ export function makeTool(
   };
 }
 
+export function cleanupChildren(
+  t: TestContext,
+  children: FakeChild[],
+  activeTickers: Set<ReturnType<typeof setInterval>>,
+) {
+  t.after(() => {
+    for (const child of children) child.finish(0);
+    for (const ticker of activeTickers) clearInterval(ticker);
+  });
+}
+
 export function customProfilePicker(
   interact: (component: Component) => void | Promise<void>,
   requestRender = () => {},
@@ -107,6 +127,19 @@ export function customProfilePicker(
       const component = factory({ requestRender }, fakeTheme(), {}, resolve);
       Promise.resolve(interact(component)).catch(reject);
     });
+}
+
+type CapturedRenderer = (value: unknown, options: unknown, theme: unknown) => unknown;
+
+export function captureRenderers() {
+  const messages = new Map<string, CapturedRenderer>();
+  const entries = new Map<string, CapturedRenderer>();
+  const pi = {
+    registerMessageRenderer: (type: string, renderer: CapturedRenderer) => messages.set(type, renderer),
+    registerEntryRenderer: (type: string, renderer: CapturedRenderer) => entries.set(type, renderer),
+  } as unknown as ExtensionAPI;
+  registerRenderers(pi);
+  return { messages, entries };
 }
 
 export function renderable(value: unknown): boolean {

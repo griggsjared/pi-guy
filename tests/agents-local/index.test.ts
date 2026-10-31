@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import {
@@ -20,6 +19,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import agentsLocal from "../../src/agents-local/index.ts";
+import { tempDir } from "../helpers/fs.ts";
 
 test("reports complete parent-first local paths at startup, clearing removals and propagating read errors", async (t) => {
   const events: ExtensionAPI["events"] = createEventBus();
@@ -36,8 +36,7 @@ test("reports complete parent-first local paths at startup, clearing removals an
   } as ExtensionAPI);
   assert.ok(handler);
 
-  const root = await mkdtemp(join(tmpdir(), "pi-agents-local-startup-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
+  const root = await tempDir(t, "pi-agents-local-startup-");
   const child = join(root, "child");
   await mkdir(child);
   const event = { type: "session_start", reason: "startup" };
@@ -88,8 +87,7 @@ test("loads and keeps a session snapshot of local instructions alongside shared 
   assert.ok(start);
   assert.ok(handler);
 
-  const root = await mkdtemp(join(tmpdir(), "pi-agents-local-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
+  const root = await tempDir(t, "pi-agents-local-");
   const child = join(root, "child");
   await mkdir(child);
   const parentFile = join(root, "AGENTS.local.md");
@@ -132,8 +130,7 @@ test("loads and keeps a session snapshot of local instructions alongside shared 
 });
 
 test("keeps the session snapshot in custom-message turns and their tool continuations", async (t) => {
-  const root = await mkdtemp(join(tmpdir(), "pi-agents-local-runtime-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
+  const root = await tempDir(t, "pi-agents-local-runtime-");
   const agentDir = join(root, "agent");
   const cwd = join(root, "child");
   await mkdir(agentDir);

@@ -50,8 +50,13 @@ function createContext() {
   };
 }
 
-function emit(handlers: Map<string, Handler>, name: string, context: TestContext, event: Record<string, unknown> = {}) {
-  handlers.get(name)?.(event, context);
+function emit(
+  handlers: Map<string, Handler[]>,
+  name: string,
+  context: TestContext,
+  event: Record<string, unknown> = {},
+) {
+  handlers.get(name)?.[0]?.(event, context);
 }
 
 function assistantMessage(content: unknown[] = [], output = 0) {
@@ -66,7 +71,7 @@ function latestTokens(calls: Calls): string {
   return match[1]!;
 }
 
-function cleanup(handlers: Map<string, Handler>, ctx: TestContext) {
+function cleanup(handlers: Map<string, Handler[]>, ctx: TestContext) {
   emit(handlers, "agent_settled", ctx);
 }
 

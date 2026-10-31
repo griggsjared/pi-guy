@@ -93,49 +93,45 @@ export function fakeSpawnChildren(children: FakeChild[]): { spawnFn: typeof spaw
   return { spawnFn, calls };
 }
 
+export function jsonEvent(event: Record<string, unknown>): string {
+  return `${JSON.stringify(event)}\n`;
+}
+
 export function endEvent(text: string, extra: Record<string, unknown> = {}): string {
-  return (
-    JSON.stringify({
-      type: "message_end",
-      message: {
-        role: "assistant",
-        content: text,
-        usage: { input: 5, output: 3, totalTokens: 8, cost: 0.0001 },
-        ...extra,
-      },
-    }) + "\n"
-  );
+  return jsonEvent({
+    type: "message_end",
+    message: {
+      role: "assistant",
+      content: text,
+      usage: { input: 5, output: 3, totalTokens: 8, cost: 0.0001 },
+      ...extra,
+    },
+  });
 }
 
 export function updateEvent(text: string): string {
-  return (
-    JSON.stringify({
-      type: "message_update",
-      assistantMessageEvent: { type: "text_delta", delta: text },
-    }) + "\n"
-  );
+  return jsonEvent({
+    type: "message_update",
+    assistantMessageEvent: { type: "text_delta", delta: text },
+  });
 }
 
 export function responseEvent(command: Record<string, unknown>, success = true, error?: string): string {
-  return (
-    JSON.stringify({
-      id: command.id,
-      type: "response",
-      command: command.type,
-      success,
-      ...(error ? { error } : {}),
-    }) + "\n"
-  );
+  return jsonEvent({
+    id: command.id,
+    type: "response",
+    command: command.type,
+    success,
+    ...(error ? { error } : {}),
+  });
 }
 
 export function questionEvent(id: string, question: string, context?: string): string {
-  return (
-    JSON.stringify({
-      type: "extension_ui_request",
-      id,
-      method: "input",
-      title: `subagents:ask-parent:${question}`,
-      ...(context ? { placeholder: context } : {}),
-    }) + "\n"
-  );
+  return jsonEvent({
+    type: "extension_ui_request",
+    id,
+    method: "input",
+    title: `subagents:ask-parent:${question}`,
+    ...(context ? { placeholder: context } : {}),
+  });
 }

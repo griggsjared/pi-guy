@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile, rm, mkdir } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import {
@@ -12,6 +11,7 @@ import {
   resolveExtensionPaths,
   SESSION_PROFILE_NAME,
 } from "../../src/subagents/agents.ts";
+import { tempDir } from "../helpers/fs.ts";
 
 test("parseFrontmatter extracts meta and body", () => {
   const { meta, body } = parseFrontmatter("---\nname: scout\ndescription: Fast\n---\n\nBody text");
@@ -30,8 +30,8 @@ test("parseFrontmatter skips lines without a colon", () => {
   assert.deepEqual(meta, { name: "x" });
 });
 
-test("discovery parses agent metadata", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "subagents-test-"));
+test("discovery parses agent metadata", async (t) => {
+  const dir = await tempDir(t, "subagents-test-");
   const file = join(dir, "worker.md");
   await writeFile(
     file,
@@ -47,73 +47,57 @@ test("discovery parses agent metadata", async () => {
       "You are a worker.",
     ].join("\n"),
   );
-  try {
-    const [agent] = await discoverAgents(dir);
-    assert.equal(agent?.name, "worker");
-    assert.equal(agent?.description, "Implements things");
-    assert.equal(agent?.model, "opencode-go/deepseek-v4-pro");
-    assert.equal(agent?.thinkingLevel, "high");
-    assert.deepEqual(agent?.tools, ["read", "grep", "bash", "edit"]);
-    assert.equal(agent?.inactivityTimeoutMs, 300000);
-    assert.equal(agent?.systemPrompt, "You are a worker.");
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
+  const [agent] = await discoverAgents(dir);
+  assert.equal(agent?.name, "worker");
+  assert.equal(agent?.description, "Implements things");
+  assert.equal(agent?.model, "opencode-go/deepseek-v4-pro");
+  assert.equal(agent?.thinkingLevel, "high");
+  assert.deepEqual(agent?.tools, ["read", "grep", "bash", "edit"]);
+  assert.equal(agent?.inactivityTimeoutMs, 300000);
+  assert.equal(agent?.systemPrompt, "You are a worker.");
 });
 
-test("discovery falls back to filename and validates inactivityTimeoutMs strictly", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "subagents-test-"));
+test("discovery falls back to filename and validates inactivityTimeoutMs strictly", async (t) => {
+  const dir = await tempDir(t, "subagents-test-");
   const file = join(dir, "fallback.md");
-  try {
-    for (const [value, expected] of [
-      ["0", 0],
-      ["2147483647", 2147483647],
-      ["banana", undefined],
-      ["", undefined],
-      ["10ms", undefined],
-      ["1.5", undefined],
-      ["1e3", undefined],
-      ["-1", undefined],
-      ["2147483648", undefined],
-    ] as const) {
-      await writeFile(file, `---\ndescription: no name\ninactivityTimeoutMs: ${value}\n---\nbody`);
-      const [agent] = await discoverAgents(dir);
-      assert.equal(agent?.name, "fallback");
-      assert.equal(agent?.inactivityTimeoutMs, expected, value);
-      assert.equal(agent?.description, "no name");
-      assert.equal(agent?.systemPrompt, "body");
-    }
-  } finally {
-    await rm(dir, { recursive: true, force: true });
+  for (const [value, expected] of [
+    ["0", 0],
+    ["2147483647", 2147483647],
+    ["banana", undefined],
+    ["", undefined],
+    ["10ms", undefined],
+    ["1.5", undefined],
+    ["1e3", undefined],
+    ["-1", undefined],
+    ["2147483648", undefined],
+  ] as const) {
+    await writeFile(file, `---\ndescription: no name\ninactivityTimeoutMs: ${value}\n---\nbody`);
+    const [agent] = await discoverAgents(dir);
+    assert.equal(agent?.name, "fallback");
+    assert.equal(agent?.inactivityTimeoutMs, expected, value);
+    assert.equal(agent?.description, "no name");
+    assert.equal(agent?.systemPrompt, "body");
   }
 });
 
-test("discoverAgents loads only readable .md files, in name order", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "subagents-test-"));
+test("discoverAgents loads only readable .md files, in name order", async (t) => {
+  const dir = await tempDir(t, "subagents-test-");
   const agentsDir = join(dir, "agents");
   await mkdir(agentsDir);
-  try {
-    await writeFile(join(agentsDir, "a.md"), "---\nname: alpha\n---\nprompt");
-    await writeFile(join(agentsDir, "b.md"), "---\ndescription: no name\n---\nprompt");
-    await writeFile(join(agentsDir, "ignore.txt"), "not an agent");
-    await mkdir(join(agentsDir, "0-unreadable.md"));
-    const agents = await discoverAgents(agentsDir);
-    assert.deepEqual(
-      agents.map((a) => a.name),
-      ["alpha", "b"],
-    );
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
+  await writeFile(join(agentsDir, "a.md"), "---\nname: alpha\n---\nprompt");
+  await writeFile(join(agentsDir, "b.md"), "---\ndescription: no name\n---\nprompt");
+  await writeFile(join(agentsDir, "ignore.txt"), "not an agent");
+  await mkdir(join(agentsDir, "0-unreadable.md"));
+  const agents = await discoverAgents(agentsDir);
+  assert.deepEqual(
+    agents.map((a) => a.name),
+    ["alpha", "b"],
+  );
 });
 
-test("discoverAgents tolerates a missing agents dir", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "subagents-test-"));
-  try {
-    assert.deepEqual(await discoverAgents(join(dir, "agents")), []);
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
+test("discoverAgents tolerates a missing agents dir", async (t) => {
+  const dir = await tempDir(t, "subagents-test-");
+  assert.deepEqual(await discoverAgents(join(dir, "agents")), []);
 });
 
 test("parseSubagentSettings maps legacy settings to default and validates overrides", () => {
@@ -143,27 +127,23 @@ test("parseSubagentSettings preserves timeout-only overrides and validates inact
   }
 });
 
-test("loadSubagentSettings uses session for missing or malformed configuration", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "subagents-test-"));
+test("loadSubagentSettings uses session for missing or malformed configuration", async (t) => {
+  const dir = await tempDir(t, "subagents-test-");
   const file = join(dir, "subagents.json");
   const fallback = join(dir, "settings.json");
   const empty = { profiles: { session: { defaults: {}, agents: {} } }, extensions: [] };
-  try {
-    assert.deepEqual(await loadSubagentSettings(file, fallback), empty);
+  assert.deepEqual(await loadSubagentSettings(file, fallback), empty);
 
-    await writeFile(fallback, "{");
-    assert.deepEqual(await loadSubagentSettings(file, fallback), empty);
+  await writeFile(fallback, "{");
+  assert.deepEqual(await loadSubagentSettings(file, fallback), empty);
 
-    await writeFile(fallback, JSON.stringify({ subagents: { profiles: { saved: {} } } }));
-    await writeFile(file, "{");
-    assert.deepEqual(await loadSubagentSettings(file, fallback), empty);
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
+  await writeFile(fallback, JSON.stringify({ subagents: { profiles: { saved: {} } } }));
+  await writeFile(file, "{");
+  assert.deepEqual(await loadSubagentSettings(file, fallback), empty);
 });
 
-test("loadSubagentSettings uses the configured agent directory and prefers subagents.json over settings.json", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "subagents-test-"));
+test("loadSubagentSettings uses the configured agent directory and prefers subagents.json over settings.json", async (t) => {
+  const dir = await tempDir(t, "subagents-test-");
   const previous = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = dir;
   const file = join(dir, "subagents.json");
@@ -177,24 +157,19 @@ test("loadSubagentSettings uses the configured agent directory and prefers subag
   } finally {
     if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
     else process.env.PI_CODING_AGENT_DIR = previous;
-    await rm(dir, { recursive: true, force: true });
   }
 });
 
-test("loadSubagentSettings rejects reserved session profiles in dedicated and fallback configuration", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "subagents-test-"));
+test("loadSubagentSettings rejects reserved session profiles in dedicated and fallback configuration", async (t) => {
+  const dir = await tempDir(t, "subagents-test-");
   const file = join(dir, "subagents.json");
   const fallback = join(dir, "settings.json");
-  try {
-    await writeFile(fallback, JSON.stringify({ subagents: { profiles: { session: { enabled: false } } } }));
-    await assert.rejects(loadSubagentSettings(file, fallback), /profile name "session" is reserved/);
+  await writeFile(fallback, JSON.stringify({ subagents: { profiles: { session: { enabled: false } } } }));
+  await assert.rejects(loadSubagentSettings(file, fallback), /profile name "session" is reserved/);
 
-    await writeFile(fallback, JSON.stringify({ subagents: { profiles: { valid: {} } } }));
-    await writeFile(file, JSON.stringify({ profiles: { session: {} } }));
-    await assert.rejects(loadSubagentSettings(file, fallback), /profile name "session" is reserved/);
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
+  await writeFile(fallback, JSON.stringify({ subagents: { profiles: { valid: {} } } }));
+  await writeFile(file, JSON.stringify({ profiles: { session: {} } }));
+  await assert.rejects(loadSubagentSettings(file, fallback), /profile name "session" is reserved/);
 });
 
 test("parseSubagentSettings keeps only well-formed npm package specs", () => {
@@ -219,8 +194,8 @@ test("parseSubagentSettings keeps extensions when no profiles are defined", () =
   assert.deepEqual(settings.profiles, { session: { defaults: {}, agents: {} } });
 });
 
-test("resolveExtensionPaths reads manifests in the configured agent npm directory and honors PI_PACKAGE_DIR", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "subagents-test-"));
+test("resolveExtensionPaths reads manifests in the configured agent npm directory and honors PI_PACKAGE_DIR", async (t) => {
+  const dir = await tempDir(t, "subagents-test-");
   const previousAgent = process.env.PI_CODING_AGENT_DIR;
   const previousPackage = process.env.PI_PACKAGE_DIR;
   process.env.PI_CODING_AGENT_DIR = dir;
@@ -247,7 +222,6 @@ test("resolveExtensionPaths reads manifests in the configured agent npm director
     else process.env.PI_CODING_AGENT_DIR = previousAgent;
     if (previousPackage === undefined) delete process.env.PI_PACKAGE_DIR;
     else process.env.PI_PACKAGE_DIR = previousPackage;
-    await rm(dir, { recursive: true, force: true });
   }
 });
 
@@ -379,8 +353,8 @@ test("parseSubagentSettings does not privilege a profile named default or a form
   assert.equal(resolveAgentSettings(agent, settings, "disabled").model, undefined);
 });
 
-test("loadSubagentSettings leaves disabled profile configuration in the file", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "subagents-test-"));
+test("loadSubagentSettings leaves disabled profile configuration in the file", async (t) => {
+  const dir = await tempDir(t, "subagents-test-");
   const file = join(dir, "subagents.json");
   const config = {
     profiles: {
@@ -393,20 +367,16 @@ test("loadSubagentSettings leaves disabled profile configuration in the file", a
     },
   };
   const text = JSON.stringify(config);
-  try {
-    await writeFile(file, text);
-    assert.deepEqual(Object.keys((await loadSubagentSettings(file)).profiles), ["session", "active"]);
-    assert.equal(await readFile(file, "utf8"), text);
+  await writeFile(file, text);
+  assert.deepEqual(Object.keys((await loadSubagentSettings(file)).profiles), ["session", "active"]);
+  assert.equal(await readFile(file, "utf8"), text);
 
-    config.profiles.disabled.enabled = true;
-    const restored = parseSubagentSettings(config);
-    assert.deepEqual(restored.profiles.disabled, {
-      defaults: { model: "saved/model", thinkingLevel: "low" },
-      agents: { scout: { thinkingLevel: "high" } },
-    });
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
+  config.profiles.disabled.enabled = true;
+  const restored = parseSubagentSettings(config);
+  assert.deepEqual(restored.profiles.disabled, {
+    defaults: { model: "saved/model", thinkingLevel: "low" },
+    agents: { scout: { thinkingLevel: "high" } },
+  });
 });
 
 test("parseSubagentSettings uses session when every configured profile is disabled", () => {

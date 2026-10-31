@@ -10,6 +10,7 @@ import {
   fakeSpawn,
   fakeSpawnChildren,
   endEvent,
+  jsonEvent,
   questionEvent,
   responseEvent,
   updateEvent,
@@ -139,14 +140,14 @@ test("runSubagent: correlates steering and preserves a racing follow-up", async 
     message: "Now run the focused tests",
     streamingBehavior: "followUp",
   });
-  child.stdout.emit("data", Buffer.from(`${JSON.stringify({ type: "agent_settled" })}\n`));
+  child.stdout.emit("data", Buffer.from(jsonEvent({ type: "agent_settled" })));
   assert.equal(child.stdin.ended, false, "an unacknowledged continuation keeps RPC open");
   respondToCommand(child, 2);
   await followUp;
   assert.equal(child.stdin.ended, false, "an accepted continuation waits for its next settle");
 
-  child.stdout.emit("data", Buffer.from(`${JSON.stringify({ type: "agent_start" })}\n`));
-  child.stdout.emit("data", Buffer.from(`${JSON.stringify({ type: "agent_settled" })}\n`));
+  child.stdout.emit("data", Buffer.from(jsonEvent({ type: "agent_start" })));
+  child.stdout.emit("data", Buffer.from(jsonEvent({ type: "agent_settled" })));
   assert.equal(child.stdin.ended, true);
   await assert.rejects(launched.send("too late", "steer"), /no longer accepting messages/);
   child.finish(0);
@@ -173,7 +174,7 @@ test("runSubagent: forwards parent questions and writes the matching reply", asy
   });
   await assert.rejects(launched.reply("question-1", "again"), /Unknown or answered/);
 
-  child.stdout.emit("data", Buffer.from(`${JSON.stringify({ type: "agent_settled" })}\n`));
+  child.stdout.emit("data", Buffer.from(jsonEvent({ type: "agent_settled" })));
   assert.equal(child.stdin.ended, true);
   child.finish(0);
   await launched.result;
@@ -270,7 +271,7 @@ test("runSubagent: cancels the shutdown watchdog when the child closes", async (
     shutdownGraceMs: 20,
   });
   respondToCommand(child);
-  child.stdout.emit("data", Buffer.from(`${JSON.stringify({ type: "agent_settled" })}\n`));
+  child.stdout.emit("data", Buffer.from(jsonEvent({ type: "agent_settled" })));
   child.finish(0);
   assert.equal((await result).exitCode, 0);
   await sleep(40);
@@ -290,7 +291,7 @@ test("runSubagent: terminates a child that stays open after agent_settled withou
   });
   respondToCommand(child);
   child.stdout.emit("data", Buffer.from(endEvent("final answer")));
-  child.stdout.emit("data", Buffer.from(`${JSON.stringify({ type: "agent_settled" })}\n`));
+  child.stdout.emit("data", Buffer.from(jsonEvent({ type: "agent_settled" })));
   t.mock.timers.tick(20);
 
   const r = await result;
@@ -776,7 +777,7 @@ test("runSubagent: emits ordered semantic events without deltas or tool bodies",
     spawnFn: fakeSpawn(child),
     onEvent: (event) => events.push(event),
   });
-  const emit = (event: Record<string, unknown>) => child.stdout.emit("data", Buffer.from(`${JSON.stringify(event)}\n`));
+  const emit = (event: Record<string, unknown>) => child.stdout.emit("data", Buffer.from(jsonEvent(event)));
 
   emit({ type: "agent_start" });
   emit({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "partial" } });
@@ -844,7 +845,7 @@ test("runSubagent: steps time assistant attempts without restarting on deltas or
     onStep: (step) => timeline.push({ at: Date.now(), step }),
     onEvent: (event) => timeline.push({ at: Date.now(), event }),
   });
-  const emit = (event: Record<string, unknown>) => child.stdout.emit("data", Buffer.from(`${JSON.stringify(event)}\n`));
+  const emit = (event: Record<string, unknown>) => child.stdout.emit("data", Buffer.from(jsonEvent(event)));
   emit({ type: "turn_start" });
   emit({ type: "message_start", message: { role: "user" } });
   t.mock.timers.tick(20);
@@ -894,7 +895,7 @@ test("runSubagent: steps pair concurrent same-name tools by call ID and sanitize
     onStep: (step) => timeline.push(step),
     onEvent: (event) => timeline.push(event),
   });
-  const emit = (event: Record<string, unknown>) => child.stdout.emit("data", Buffer.from(`${JSON.stringify(event)}\n`));
+  const emit = (event: Record<string, unknown>) => child.stdout.emit("data", Buffer.from(jsonEvent(event)));
   for (const id of ["a", "b"]) {
     emit({
       type: "tool_execution_start",
@@ -980,7 +981,7 @@ test("runSubagent: retry steps close on retry end or the next attempt and use un
     onStep: (step) => timeline.push(step),
     onEvent: (event) => timeline.push(event),
   });
-  const emit = (event: Record<string, unknown>) => child.stdout.emit("data", Buffer.from(`${JSON.stringify(event)}\n`));
+  const emit = (event: Record<string, unknown>) => child.stdout.emit("data", Buffer.from(jsonEvent(event)));
   for (let index = 0; index < 2; index += 1) {
     emit({ type: "turn_start" });
     emit({ type: "auto_retry_start", attempt: 1, errorMessage: "private provider error" });

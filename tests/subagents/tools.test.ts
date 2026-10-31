@@ -7,9 +7,9 @@ import { createPeekTool, createReplyTool } from "../../src/subagents/status-tool
 import { resolveMode } from "../../src/subagents/tools.ts";
 import { fakeTheme } from "../helpers/theme.ts";
 import { flush, sleep, waitFor } from "../helpers/wait.ts";
-import { FakeChild, fakeSpawnChildren, endEvent, questionEvent, responseEvent } from "./fake-child.ts";
+import { FakeChild, fakeSpawnChildren, endEvent, jsonEvent, questionEvent, responseEvent } from "./fake-child.ts";
 import type { SpawnCall } from "./fake-child.ts";
-import { makeTool, renderable, renderText } from "./helpers.ts";
+import { cleanupChildren, makeTool, renderable, renderText } from "./helpers.ts";
 
 test("resolveMode: single, batch, and validation", () => {
   assert.deepEqual(resolveMode({ agent: "a", task: "t", title: "x" }), {
@@ -28,10 +28,7 @@ test("overlapping tool launches deliver independently and clear only their own j
   const children = [new FakeChild(), new FakeChild(), new FakeChild()];
   const { spawnFn } = fakeSpawnChildren(children);
   const { tool, registry, sendMessage, activeTickers, ctx } = makeTool({ spawnFn });
-  t.after(() => {
-    children.forEach((child) => child.finish(0));
-    for (const ticker of activeTickers) clearInterval(ticker);
-  });
+  cleanupChildren(t, children, activeTickers);
   await tool.execute(
     "first",
     {
@@ -76,10 +73,7 @@ test("overlapping tool launches deliver independently and clear only their own j
 
 test("failed inactivity delivery leaves the child running", async (t) => {
   const { tool, pi, registry, activeTickers, child, ctx } = makeTool();
-  t.after(() => {
-    child.finish(0);
-    for (const ticker of activeTickers) clearInterval(ticker);
-  });
+  cleanupChildren(t, [child], activeTickers);
   const errors = t.mock.method(console, "error", () => {});
   const delivery = t.mock.method(pi, "sendMessage", () => {
     throw new Error("parent unavailable");
@@ -102,10 +96,7 @@ test("inactivity does not deliver for completed or removed registry jobs", async
   const children = [new FakeChild(), new FakeChild()];
   const { spawnFn } = fakeSpawnChildren(children);
   const { tool, registry, sendMessage, appendEntry, activeTickers, ctx } = makeTool({ spawnFn });
-  t.after(() => {
-    children.forEach((child) => child.finish(0));
-    for (const ticker of activeTickers) clearInterval(ticker);
-  });
+  cleanupChildren(t, children, activeTickers);
   t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1000 });
   await tool.execute(
     "launch",
@@ -208,14 +199,13 @@ test("launch failures and cancellations keep status while avoiding a repeated ta
 
 test("execute: profile confirmation surfaces a paused progress update", async (t) => {
   const updates: Array<{ content: unknown; details: unknown }> = [];
-  const { tool, activeTickers, child, ctx } = makeTool(undefined, undefined, undefined, async (_ctx, onPause) => {
-    onPause?.("Paused: waiting for subagent profile selection");
-    return true;
+  const { tool, activeTickers, child, ctx } = makeTool({
+    confirmProfile: async (_ctx, onPause) => {
+      onPause?.("Paused: waiting for subagent profile selection");
+      return true;
+    },
   });
-  t.after(() => {
-    child.finish(0);
-    for (const ticker of activeTickers) clearInterval(ticker);
-  });
+  cleanupChildren(t, [child], activeTickers);
   await tool.execute("call1", { agent: "scout", task: "t" }, undefined, (partial) => updates.push(partial), ctx);
   assert.deepEqual(updates, [
     {
@@ -233,9 +223,12 @@ test("execute: cancelling profile confirmation returns a cancelled result", asyn
     return child;
   }) as unknown as typeof spawn;
   let confirmations = 0;
-  const { tool, ctx } = makeTool({ spawnFn }, undefined, undefined, async () => {
-    confirmations += 1;
-    return false;
+  const { tool, ctx } = makeTool({
+    spawnFn,
+    confirmProfile: async () => {
+      confirmations += 1;
+      return false;
+    },
   });
   const result = await tool.execute("call1", { agent: "scout", task: "t" }, undefined, undefined, ctx);
   assert.equal(result.details?.status, "cancelled");
@@ -251,9 +244,9 @@ test("execute: local settings set child model and thinking level", async () => {
     calls.push({ cmd, args, options: options ?? {} });
     return child;
   }) as unknown as typeof spawn;
-  const { tool, activeTickers, ctx } = makeTool(
-    { spawnFn },
-    {
+  const { tool, activeTickers, ctx } = makeTool({
+    spawnFn,
+    settings: {
       profiles: {
         default: {
           defaults: { model: "default-model", thinkingLevel: "low" },
@@ -262,8 +255,8 @@ test("execute: local settings set child model and thinking level", async () => {
       },
       extensions: [],
     },
-    "default",
-  );
+    activeProfile: "default",
+  });
   await tool.execute("call1", { agent: "scout", task: "t" }, undefined, undefined, ctx);
 
   await waitFor(() => child.stdin.writes.length > 0);
@@ -283,14 +276,14 @@ test("execute: selected profile defaults set child model and thinking level", as
     calls.push({ cmd, args, options: options ?? {} });
     return child;
   }) as unknown as typeof spawn;
-  const { tool, activeTickers, ctx } = makeTool(
-    { spawnFn },
-    {
+  const { tool, activeTickers, ctx } = makeTool({
+    spawnFn,
+    settings: {
       profiles: { default: { defaults: { model: "default-model", thinkingLevel: "low" }, agents: {} } },
       extensions: [],
     },
-    "default",
-  );
+    activeProfile: "default",
+  });
   await tool.execute("call1", { agent: "scout", task: "t" }, undefined, undefined, ctx);
 
   await waitFor(() => child.stdin.writes.length > 0);
@@ -317,7 +310,7 @@ test("execute: selected profile controls new jobs and completion metadata", asyn
     calls.push({ cmd, args, options: options ?? {} });
     return child;
   }) as unknown as typeof spawn;
-  const { tool, registry, sendMessage, ctx } = makeTool({ spawnFn }, settings, "backup");
+  const { tool, registry, sendMessage, ctx } = makeTool({ spawnFn, settings, activeProfile: "backup" });
   const launch = await tool.execute("call1", { agent: "scout", task: "t" }, undefined, undefined, ctx);
 
   assert.equal(launch.details.profile, "backup");
@@ -448,9 +441,9 @@ test("execute: active parent holds results until agent_settled", async () => {
 
   assert.equal(appendEntry.calls.length, 1);
   assert.equal(sendMessage.calls.length, 0);
-  handlers.get("agent_settled")!({}, { isIdle: () => false });
+  handlers.get("agent_settled")![0]!({}, { isIdle: () => false });
   assert.equal(sendMessage.calls.length, 0);
-  handlers.get("agent_settled")!({}, { isIdle: () => true });
+  handlers.get("agent_settled")![0]!({}, { isIdle: () => true });
   assert.equal(sendMessage.calls.length, 1);
   assert.deepEqual(sendMessage.calls[0]![1], { triggerTurn: true, deliverAs: "steer" });
 });
@@ -459,22 +452,19 @@ test("execute: inactivity steers a busy parent once per idle stretch without sto
   const now = Date.now();
   t.mock.timers.enable({ apis: ["Date", "setTimeout"], now });
   const { tool, registry, sendMessage, appendEntry, activeTickers, child, ctx } = makeTool();
-  t.after(() => {
-    child.finish(0);
-    for (const ticker of activeTickers) clearInterval(ticker);
-  });
+  cleanupChildren(t, [child], activeTickers);
   (ctx as unknown as { isIdle: () => boolean }).isIdle = () => false;
   await tool.execute("launch", { agent: "scout", task: "Inspect the slow tool" }, undefined, undefined, ctx);
   while (child.stdin.commands().length === 0) await flush();
   child.stdout.emit(
     "data",
     Buffer.from(
-      `${JSON.stringify({
+      jsonEvent({
         type: "tool_execution_start",
         toolCallId: "read-1",
         toolName: "read",
         args: { path: "src/auth.ts" },
-      })}\n`,
+      }),
     ),
   );
   assert.equal(registry.get(1)?.steps.filter((step) => step.endedAt === undefined).length, 1);
@@ -512,13 +502,13 @@ test("execute: inactivity steers a busy parent once per idle stretch without sto
   child.stdout.emit(
     "data",
     Buffer.from(
-      `${JSON.stringify({
+      jsonEvent({
         type: "tool_execution_end",
         toolCallId: "read-1",
         toolName: "read",
         isError: false,
         result: "ok",
-      })}\n`,
+      }),
     ),
   );
   assert.equal(registry.get(1)?.steps.find((step) => step.kind === "tool")?.endedAt, now + 900000);
@@ -533,7 +523,7 @@ test("execute: child semantic events are available through peek", async () => {
   await tool.execute("call1", { agent: "scout", task: "t" }, undefined, undefined, ctx);
   await waitFor(() => child.stdin.writes.length > 0);
   const emit = (event: Record<string, unknown>) => {
-    child.stdout.emit("data", Buffer.from(`${JSON.stringify(event)}\n`));
+    child.stdout.emit("data", Buffer.from(jsonEvent(event)));
   };
   emit({ type: "agent_start" });
   emit({ type: "tool_execution_start", toolName: "read", args: { path: "src/auth.ts" } });
@@ -622,10 +612,7 @@ test("stale UI context does not duplicate cancellation completion", async () => 
 
 test("cancelling a child waiting on the parent invalidates its question and suppresses check-ins", async (t) => {
   const { tool, registry, sendMessage, activeTickers, child, ctx } = makeTool();
-  t.after(() => {
-    child.finish(0);
-    for (const ticker of activeTickers) clearInterval(ticker);
-  });
+  cleanupChildren(t, [child], activeTickers);
   t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: Date.now() });
   await tool.execute("call1", { agent: "scout", task: "t" }, undefined, undefined, ctx);
   while (child.stdin.commands().length === 0) await flush();
@@ -875,9 +862,7 @@ test("execute: every parallel launch failure reports its own job and clears the 
     throw new Error("spawn failed");
   }) as typeof spawn;
   const { tool, registry, sendMessage, activeTickers, ctx } = makeTool({ spawnFn });
-  t.after(() => {
-    for (const ticker of activeTickers) clearInterval(ticker);
-  });
+  cleanupChildren(t, [], activeTickers);
 
   await tool.execute(
     "launch",

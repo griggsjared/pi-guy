@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -15,13 +15,13 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import agentsLocal from "../../src/agents-local/index.ts";
 import header from "../../src/header/index.ts";
+import { tempDir } from "../helpers/fs.ts";
 import { captureHandlers } from "../helpers/pi.ts";
 import { fakeTheme } from "../helpers/theme.ts";
 import { sleep } from "../helpers/wait.ts";
 
 test("header shows final context files regardless of extension order and resets each session", async (t) => {
-  const root = await mkdtemp(join(tmpdir(), "pi-header-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
+  const root = await tempDir(t, "pi-header-");
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = root;
   t.after(() => {
@@ -33,15 +33,8 @@ test("header shows final context files regardless of extension order and resets 
   await writeFile(sharedFile, "shared");
   await writeFile(localFile, "local");
   const initialContextFiles = loadProjectContextFiles({ cwd: root, agentDir: root });
-  const handlers = new Map<string, Array<(event: any, ctx: any) => unknown>>();
-  const pi = {
-    events: createEventBus(),
-    on(event: string, handler: (event: any, ctx: any) => unknown) {
-      const registered = handlers.get(event) ?? [];
-      registered.push(handler);
-      handlers.set(event, registered);
-    },
-  } as unknown as ExtensionAPI;
+  const { handlers, on } = captureHandlers();
+  const pi = { events: createEventBus(), on } as unknown as ExtensionAPI;
   let rendered: { render(width: number): string[] } | undefined;
   let renderRequests = 0;
   const ctx = {
@@ -64,7 +57,7 @@ test("header shows final context files regardless of extension order and resets 
   header(pi);
   agentsLocal(pi);
   let extraPath: string | undefined = join(homedir(), "extra-上下.md");
-  pi.on("before_agent_start", (event) => {
+  on("before_agent_start", (event) => {
     if (extraPath) {
       event.systemPromptOptions.contextFiles = [
         ...event.systemPromptOptions.contextFiles,
@@ -146,8 +139,7 @@ test("header shows final context files regardless of extension order and resets 
 });
 
 test("header shows startup reports from multiple sources and clears updated reports", async (t) => {
-  const root = await mkdtemp(join(tmpdir(), "pi-header-reports-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
+  const root = await tempDir(t, "pi-header-reports-");
   const { handlers, on } = captureHandlers();
   const events = createEventBus();
   header({ events, on } as unknown as ExtensionAPI);
@@ -174,19 +166,19 @@ test("header shows startup reports from multiple sources and clears updated repo
   const teamPath = "/virtual/team.instructions.md";
   events.emit("context:files", { source: "private", paths: [privatePath] });
   events.emit("context:files", { source: "team", paths: [teamPath] });
-  await handlers.get("session_start")!({}, ctx);
+  await handlers.get("session_start")![0]!({}, ctx);
   assert.ok(rendered);
   assert.ok(rendered.render(500).join("\n").includes(privatePath));
   assert.ok(rendered.render(500).join("\n").includes(teamPath));
-  await handlers.get("before_agent_start")!(
+  await handlers.get("before_agent_start")![0]!(
     { systemPromptOptions: { contextFiles: [{ path: privatePath, content: "private" }] } },
     ctx,
   );
-  await handlers.get("agent_start")!({}, ctx);
+  await handlers.get("agent_start")![0]!({}, ctx);
   assert.equal(rendered.render(500).join("\n").split(privatePath).length - 1, 1);
   events.emit("context:files", { source: "private", paths: [] });
-  await handlers.get("before_agent_start")!({ systemPromptOptions: { contextFiles: [] } }, ctx);
-  await handlers.get("agent_start")!({}, ctx);
+  await handlers.get("before_agent_start")![0]!({ systemPromptOptions: { contextFiles: [] } }, ctx);
+  await handlers.get("agent_start")![0]!({}, ctx);
   assert.ok(!rendered.render(500).join("\n").includes(privatePath));
   assert.ok(rendered.render(500).join("\n").includes(teamPath));
   assert.ok(renderRequests > 0);
@@ -224,7 +216,7 @@ test("shutdown aborts the version probe and ignores its late result", async (t) 
   const probe = await startHeaderProbe();
   const signal = probe.calls[0]![2]!.signal!;
   assert.equal(signal.aborted, false);
-  await probe.handlers.get("session_shutdown")!({}, {});
+  await probe.handlers.get("session_shutdown")![0]!({}, {});
   assert.equal(signal.aborted, true);
   probe.result.resolve({ stdout: `${VERSION} (Pi-Bolt 1.0.1)\n`, stderr: "", code: 0, killed: false });
   await probe.result.promise;
@@ -252,8 +244,7 @@ test("header leaves out the pi-bolt version when its probe fails", async (t) => 
 });
 
 test("header lists configured extensions by short name, without pi-guy or untrusted project extensions", async (t) => {
-  const root = await mkdtemp(join(tmpdir(), "pi-header-extensions-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
+  const root = await tempDir(t, "pi-header-extensions-");
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
   const agentDir = join(root, "agent");
   const project = join(root, "project");
@@ -290,7 +281,7 @@ test("header lists configured extensions by short name, without pi-guy or untrus
     header({ events: createEventBus(), on } as unknown as ExtensionAPI);
     let rendered: { render(width: number): string[] } | undefined;
     let resolved = false;
-    await handlers.get("session_start")!(
+    await handlers.get("session_start")![0]!(
       {},
       {
         mode: "tui",
@@ -333,9 +324,9 @@ test("header does not install or request terminal rendering in noninteractive mo
         },
       },
     };
-    await handlers.get("session_start")!({}, ctx);
-    await handlers.get("before_agent_start")!({ systemPromptOptions: { contextFiles: [] } }, ctx);
-    await handlers.get("agent_start")!({}, ctx);
+    await handlers.get("session_start")![0]!({}, ctx);
+    await handlers.get("before_agent_start")![0]!({ systemPromptOptions: { contextFiles: [] } }, ctx);
+    await handlers.get("agent_start")![0]!({}, ctx);
   }
 });
 
@@ -397,7 +388,7 @@ test("shutdown ignores a late Git version result", async () => {
     return result.promise;
   });
   const before = probe.render();
-  await probe.handlers.get("session_shutdown")!({}, {});
+  await probe.handlers.get("session_shutdown")![0]!({}, {});
   assert.equal(signal?.aborted, true);
   result.resolve({
     stdout: `${fileURLToPath(new URL("../../", import.meta.url))}\n843cbb0\n`,
@@ -426,7 +417,7 @@ async function startHeaderProbe(
   } as unknown as ExtensionAPI);
   let rendered: { render(width: number): string[] } | undefined;
   let renderRequests = 0;
-  await handlers.get("session_start")!(
+  await handlers.get("session_start")![0]!(
     {},
     {
       mode: "tui",

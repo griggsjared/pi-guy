@@ -1,7 +1,4 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { test } from "node:test";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
@@ -12,6 +9,7 @@ import {
   formatFooterUsage,
   registerStatusline,
 } from "../../src/statusline/footer.ts";
+import { tempDir } from "../helpers/fs.ts";
 import { captureHandlers } from "../helpers/pi.ts";
 import { fakeTheme } from "../helpers/theme.ts";
 
@@ -76,8 +74,8 @@ test("orders windows and removes resets on narrow footers", () => {
   assert.equal(formatFooterUsage(usage, now, 0), "");
 });
 
-test("refreshes footer leaf cache for persisted usage and keeps cache hits branch-local", () => {
-  const directory = mkdtempSync(join(tmpdir(), "statusline-cost-"));
+test("refreshes footer leaf cache for persisted usage and keeps cache hits branch-local", async (t) => {
+  const directory = await tempDir(t, "statusline-cost-");
   const sessionManager = SessionManager.create(directory, directory);
   const usage = (total: number) => ({
     input: 25,
@@ -121,7 +119,7 @@ test("refreshes footer leaf cache for persisted usage and keeps cache hits branc
       stopReason: "stop",
       timestamp: 0,
     });
-    handlers.get("session_start")?.({}, context);
+    handlers.get("session_start")?.[0]?.({}, context);
     rendered = footer({ invalidate() {} }, fakeTheme(), { getExtensionStatuses: () => new Map() });
     assert.match(rendered.render(120)[0], /c:75% {2,}deepseek $/);
     rendered.render(120);
@@ -157,7 +155,6 @@ test("refreshes footer leaf cache for persisted usage and keeps cache hits branc
     assert.equal(rendered.render(120)[0], " model" + " ".repeat(105) + "deepseek ");
   } finally {
     rendered?.dispose();
-    rmSync(directory, { recursive: true, force: true });
   }
 });
 
@@ -199,7 +196,7 @@ test("right-aligns balance beside DeepSeek", () => {
     },
   };
   try {
-    handlers.get("session_start")?.({}, context);
+    handlers.get("session_start")?.[0]?.({}, context);
     rendered = footer?.({ invalidate() {} }, fakeTheme(), { getExtensionStatuses: () => statuses });
     const line = rendered.render(120)[0];
     assert.match(line, /^ DeepSeek V4\.1 Flash {2,}b:\$42\.50 deepseek $/);
@@ -235,7 +232,7 @@ test("right-aligns nonquota providers without a balance", () => {
     },
   };
   try {
-    handlers.get("session_start")?.({}, context);
+    handlers.get("session_start")?.[0]?.({}, context);
     rendered = footer?.({ invalidate() {} }, fakeTheme(), { getExtensionStatuses: () => statuses });
     for (const provider of ["deepseek", "google"]) {
       context.model.provider = provider;
@@ -282,7 +279,7 @@ test("right-aligns quota windows and the pending marker beside the provider with
     },
   };
   try {
-    handlers.get("session_start")?.({}, context);
+    handlers.get("session_start")?.[0]?.({}, context);
     rendered = footer?.({ invalidate() {} }, fakeTheme(), { getExtensionStatuses: () => statuses });
     const left = "GPT-5.6 Luna high s:review 1k/200k c:75%";
     const pending = "quota:? openai-codex";
@@ -355,7 +352,7 @@ test("renders Claude unknown quota then 5h and 7d usage resets beside claude-bri
     },
   };
   try {
-    handlers.get("session_start")?.({}, context);
+    handlers.get("session_start")?.[0]?.({}, context);
     rendered = footer({ invalidate() {} }, fakeTheme(), { getExtensionStatuses: () => statuses });
     assert.match(rendered.render(120)[0], /quota:\? claude-bridge $/);
     statuses.set(
@@ -394,7 +391,7 @@ test("colors each quota window at usage thresholds across footer widths", () => 
     },
   };
   try {
-    handlers.get("session_start")?.({}, context);
+    handlers.get("session_start")?.[0]?.({}, context);
     const ansi = (color: string, value: string) => {
       const codes: Record<string, number> = { error: 31, warning: 33, dim: 2, muted: 90 };
       return `\x1b[${codes[color] ?? 37}m${value}\x1b[0m`;
@@ -469,7 +466,7 @@ test("colors dollar balances below one dollar and fifty cents", () => {
     },
   };
   try {
-    handlers.get("session_start")?.({}, context);
+    handlers.get("session_start")?.[0]?.({}, context);
     const ansi = (color: string, value: string) => {
       const codes: Record<string, number> = { error: 31, warning: 33, dim: 2, muted: 90 };
       return `\x1b[${codes[color] ?? 37}m${value}\x1b[0m`;
@@ -551,7 +548,7 @@ test("never clips balance mid-number on narrow footers", () => {
     },
   };
   try {
-    handlers.get("session_start")?.({}, context);
+    handlers.get("session_start")?.[0]?.({}, context);
     rendered = footer?.({ invalidate() {} }, fakeTheme(), { getExtensionStatuses: () => statuses });
     const wide = rendered.render(120)[0];
     assert.match(wide, /^ DeepSeek V4\.1 Flash {2,}b:\$123456\.78 deepseek $/);
@@ -591,7 +588,7 @@ test("renders the subagent profile inline and reflects updates without duplicati
     },
   };
   try {
-    handlers.get("session_start")?.({}, context);
+    handlers.get("session_start")?.[0]?.({}, context);
     rendered = footer({ invalidate() {} }, fakeTheme(), { getExtensionStatuses: () => statuses });
     const absent = rendered.render(120);
     assert.match(absent[0], /^ \[p\] model high 1k\/200k/);
@@ -655,7 +652,7 @@ test("renders ANSI-themed footer within a narrow width and disposes its timer", 
     },
   };
   try {
-    handlers.get("session_start")?.({}, context);
+    handlers.get("session_start")?.[0]?.({}, context);
     const ansi = (color: string, value: string) => {
       const codes: Record<string, number | string> = {
         accent: "38;2;230;151;92",
