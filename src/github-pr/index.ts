@@ -30,6 +30,9 @@ const PULL_REQUEST_FIELDS = [
   "mergeStateStatus",
 ].join(",");
 
+const CHECKS_EXIT_FAILING = 1;
+const CHECKS_EXIT_PENDING = 8;
+
 interface GithubPrDetails {
   action: string;
   available: boolean;
@@ -273,7 +276,7 @@ async function getChecks(
     "name,state,bucket,workflow,link,description,event,startedAt,completedAt",
   ];
   const result = await runGh(pi, cwd, args, signal);
-  if (![0, 1, 8].includes(result.code)) {
+  if (![0, CHECKS_EXIT_FAILING, CHECKS_EXIT_PENDING].includes(result.code)) {
     throw new Error(`Unable to load pull request checks: ${resultText(result)}`);
   }
   let checks: ReturnType<typeof parseChecks>;
@@ -285,7 +288,7 @@ async function getChecks(
   }
   const pending = checks.some((check) => check.bucket === "pending");
   const failed = checks.some((check) => check.bucket === "fail" || check.bucket === "cancel");
-  if ((result.code === 1 && !failed) || (result.code === 8 && !pending)) {
+  if ((result.code === CHECKS_EXIT_FAILING && !failed) || (result.code === CHECKS_EXIT_PENDING && !pending)) {
     throw new Error(`Unable to load pull request checks: ${resultText(result)}`);
   }
   return { checks, pending };

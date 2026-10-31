@@ -2,11 +2,13 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { pullRequestSummary, resultText, runGh } from "./gh.ts";
 import type { Capability, PullRequest } from "./types.ts";
 
+const GRAPHQL_PAGE_SIZE = 100;
+
 const REVIEW_THREADS_QUERY = `
 query($owner: String!, $repo: String!, $number: Int!, $endCursor: String) {
   repository(owner: $owner, name: $repo) {
     pullRequest(number: $number) {
-      reviewThreads(first: 100, after: $endCursor) {
+      reviewThreads(first: ${GRAPHQL_PAGE_SIZE}, after: $endCursor) {
         nodes {
           id
           isResolved
@@ -18,7 +20,7 @@ query($owner: String!, $repo: String!, $number: Int!, $endCursor: String) {
           originalStartLine
           diffSide
           startDiffSide
-          comments(first: 100) {
+          comments(first: ${GRAPHQL_PAGE_SIZE}) {
             nodes {
               id
               body
@@ -47,7 +49,7 @@ const THREAD_COMMENTS_QUERY = `
 query($id: ID!, $endCursor: String) {
   node(id: $id) {
     ... on PullRequestReviewThread {
-      comments(first: 100, after: $endCursor) {
+      comments(first: ${GRAPHQL_PAGE_SIZE}, after: $endCursor) {
         nodes { id body author { login } createdAt url }
         pageInfo { hasNextPage endCursor }
       }

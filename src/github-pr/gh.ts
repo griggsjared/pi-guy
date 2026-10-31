@@ -1,7 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { Capability, PullRequest } from "./types.ts";
 
-const COMMAND_TIMEOUT = 15_000;
+const COMMAND_TIMEOUT_MS = 15_000;
 
 interface CommandResult {
   code: number;
@@ -24,7 +24,7 @@ export async function runCommand(
   try {
     const result = await pi.exec(command, args, {
       cwd,
-      timeout: COMMAND_TIMEOUT,
+      timeout: COMMAND_TIMEOUT_MS,
       signal,
     });
     return {
