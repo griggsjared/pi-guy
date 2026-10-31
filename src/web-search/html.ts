@@ -9,6 +9,10 @@ export type SearchResult = {
 
 export const MAX_TEXT_CHARS = 4000;
 
+const MIN_READABLE_TEXT_CHARS = 40;
+const BOILERPLATE_LINE_MAX_CHARS = 45;
+const BOILERPLATE_MIN_LINE_COUNT = 5;
+
 const NAMED_ENTITIES: Record<string, string> = {
   amp: "&",
   lt: "<",
@@ -124,10 +128,10 @@ function extractRegion(stripped: string): string {
 function stripBoilerplatePrefix(text: string): string {
   const lines = text.split("\n");
   let skip = 0;
-  while (skip < lines.length && (lines[skip] ?? "").length < 45) skip++;
-  if (skip < 5) return text;
+  while (skip < lines.length && (lines[skip] ?? "").length < BOILERPLATE_LINE_MAX_CHARS) skip++;
+  if (skip < BOILERPLATE_MIN_LINE_COUNT) return text;
   const remaining = lines.slice(skip).join("\n").trim();
-  return remaining.length < 40 ? text : remaining;
+  return remaining.length < MIN_READABLE_TEXT_CHARS ? text : remaining;
 }
 
 // Zero-dependency readability extraction: prefers <article>/<main>, falls back
@@ -182,7 +186,7 @@ export function extractReadableContent(html: string): {
 }
 
 export function isWeakContent(html: string, text: string): boolean {
-  if (text.length < 40) return true;
+  if (text.length < MIN_READABLE_TEXT_CHARS) return true;
   const lower = html.toLowerCase();
   const jsShell = lower.includes("<script") && /id=["'](root|app|__next|__nuxt)["']/.test(lower);
   return (

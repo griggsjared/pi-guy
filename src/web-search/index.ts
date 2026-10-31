@@ -10,6 +10,13 @@ const TAVILY_ENDPOINT = "https://api.tavily.com/search";
 const TAVILY_MAX_RESULTS = 10;
 const TAVILY_TIMEOUT_MS = 15_000;
 const FETCH_TIMEOUT_MS = 15_000;
+const SEARCH_TIMEOUT_MS = 15_000;
+const SEARCH_MAX_ATTEMPTS = 2;
+const SEARCH_RETRY_DELAY_MS = 1_500;
+const HTTP_STATUS_FORBIDDEN = 403;
+const HTTP_STATUS_TOO_MANY_REQUESTS = 429;
+const BINARY_SAMPLE_BYTES = 8_192;
+const BINARY_CONTROL_BYTE_RATIO = 0.02;
 
 const WebSearchParams = Type.Object({
   query: Type.String({ description: "Search query." }),
@@ -83,7 +90,8 @@ function looksLikeErrorPage(body: string): boolean {
 }
 
 function classifySearchFailure(status: number, body: string): string {
-  const blocked = status === 403 || status === 429 || looksLikeErrorPage(body);
+  const blocked =
+    status === HTTP_STATUS_FORBIDDEN || status === HTTP_STATUS_TOO_MANY_REQUESTS || looksLikeErrorPage(body);
   if (blocked) {
     return "DuckDuckGo blocked or rate-limited the request. Try again shortly or rephrase the query.";
   }
@@ -93,10 +101,10 @@ function classifySearchFailure(status: number, body: string): string {
 
 function classifyTavilyFailure(status: number, body: string): string {
   const text = body.toLowerCase();
-  if (status === 401 || status === 403 || text.includes("api key")) {
+  if (status === 401 || status === HTTP_STATUS_FORBIDDEN || text.includes("api key")) {
     return "Tavily rejected the API key. Check TAVILY_API_KEY.";
   }
-  if (status === 429 || text.includes("rate limit") || text.includes("credit")) {
+  if (status === HTTP_STATUS_TOO_MANY_REQUESTS || text.includes("rate limit") || text.includes("credit")) {
     return "Tavily rate limit or credit limit reached.";
   }
   if (status >= 400) return `Tavily request failed with HTTP ${status}.`;
@@ -109,9 +117,9 @@ function wait(ms: number): Promise<void> {
 
 async function searchDuckDuckGo(query: string, signal?: AbortSignal): Promise<SearchResult[]> {
   const endpoint = `https://lite.duckduckgo.com/lite/?${new URLSearchParams({ q: query }).toString()}`;
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < SEARCH_MAX_ATTEMPTS; attempt++) {
     if (signal?.aborted) throw new Error("Search cancelled.");
-    const timeoutSignal = AbortSignal.timeout(15000);
+    const timeoutSignal = AbortSignal.timeout(SEARCH_TIMEOUT_MS);
     const combined = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
     let response: Response;
     let body: string;
@@ -124,15 +132,18 @@ async function searchDuckDuckGo(query: string, signal?: AbortSignal): Promise<Se
     } catch (error) {
       if (signal?.aborted) throw new Error("Search cancelled.");
       if (attempt === 0) {
-        await wait(1500);
+        await wait(SEARCH_RETRY_DELAY_MS);
         continue;
       }
       throw new Error(`DuckDuckGo request failed: ${error instanceof Error ? error.message : String(error)}`);
     }
     if (!response.ok || looksLikeErrorPage(body)) {
-      const retriable = response.status === 403 || response.status === 429 || response.status === 503;
+      const retriable =
+        response.status === HTTP_STATUS_FORBIDDEN ||
+        response.status === HTTP_STATUS_TOO_MANY_REQUESTS ||
+        response.status === 503;
       if (retriable && attempt === 0) {
-        await wait(1500);
+        await wait(SEARCH_RETRY_DELAY_MS);
         continue;
       }
       throw new Error(classifySearchFailure(response.status, body));
@@ -251,7 +262,7 @@ function isClearlyBinaryContentType(contentType: string): boolean {
 }
 
 function looksLikeBinaryContent(bytes: Uint8Array): boolean {
-  const sample = bytes.subarray(0, Math.min(bytes.length, 8192));
+  const sample = bytes.subarray(0, Math.min(bytes.length, BINARY_SAMPLE_BYTES));
   if (sample.length === 0) return false;
   if ((sample[0] === 0xff && sample[1] === 0xfe) || (sample[0] === 0xfe && sample[1] === 0xff)) return false;
   let controlBytes = 0;
@@ -259,7 +270,7 @@ function looksLikeBinaryContent(bytes: Uint8Array): boolean {
     if (byte === 0) return true;
     if (byte < 8 || (byte > 13 && byte < 32) || byte === 127) controlBytes++;
   }
-  return controlBytes / sample.length > 0.02;
+  return controlBytes / sample.length > BINARY_CONTROL_BYTE_RATIO;
 }
 
 async function fetchPage(url: string, signal?: AbortSignal): Promise<FetchedPage> {
@@ -292,7 +303,7 @@ async function fetchPage(url: string, signal?: AbortSignal): Promise<FetchedPage
     throw new Error(`Fetch failed: ${error instanceof Error ? error.message : String(error)}`);
   }
   if (!response.ok) {
-    const blocked = response.status === 403 || response.status === 429;
+    const blocked = response.status === HTTP_STATUS_FORBIDDEN || response.status === HTTP_STATUS_TOO_MANY_REQUESTS;
     throw new Error(
       blocked
         ? `Fetch blocked or rate-limited (HTTP ${response.status}). Try the page later or rely on web_search snippets.`
