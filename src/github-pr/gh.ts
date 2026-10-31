@@ -3,12 +3,12 @@ import type { Capability, PullRequest } from "./types.ts";
 
 const COMMAND_TIMEOUT = 15_000;
 
-type CommandResult = {
+interface CommandResult {
   code: number;
   stdout: string;
   stderr: string;
   killed?: boolean;
-};
+}
 
 export function resultText(result: CommandResult): string {
   return result.stderr.trim() || result.stdout.trim() || `exit code ${result.code}`;

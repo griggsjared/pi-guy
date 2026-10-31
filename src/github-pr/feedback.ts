@@ -55,16 +55,16 @@ query($id: ID!, $endCursor: String) {
   }
 }`;
 
-type IssueComment = {
+interface IssueComment {
   id: number;
   author?: string;
   body?: string;
   createdAt?: string;
   updatedAt?: string;
   url?: string;
-};
+}
 
-type Review = {
+interface Review {
   id: number;
   author?: string;
   body?: string;
@@ -72,17 +72,17 @@ type Review = {
   submittedAt?: string;
   commitId?: string;
   url?: string;
-};
+}
 
-type ReviewComment = {
+interface ReviewComment {
   id: string;
   body?: string;
   author?: { login?: string };
   createdAt?: string;
   url?: string;
-};
+}
 
-type ReviewThread = {
+interface ReviewThread {
   id: string;
   isResolved: boolean;
   isOutdated: boolean;
@@ -101,12 +101,12 @@ type ReviewThread = {
     url?: string;
   }[];
   commentsPageTruncated?: boolean;
-};
+}
 
-type CommentConnection = {
+interface CommentConnection {
   nodes: ReviewComment[];
   pageInfo: { hasNextPage: boolean; endCursor?: string | null };
-};
+}
 
 type RawReviewThread = Omit<ReviewThread, "comments"> & {
   comments: Omit<CommentConnection, "pageInfo"> & { commentsPageInfo: CommentConnection["pageInfo"] };

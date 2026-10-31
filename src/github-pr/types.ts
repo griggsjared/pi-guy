@@ -11,7 +11,7 @@ export type Capability =
       reason: string;
     };
 
-export type PullRequest = {
+export interface PullRequest {
   number: number;
   title?: string;
   body?: string;
@@ -29,4 +29,4 @@ export type PullRequest = {
   changedFiles?: number;
   mergeable?: string;
   mergeStateStatus?: string;
-};
+}
