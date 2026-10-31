@@ -12,6 +12,9 @@ One Pi package with one extension. `package.json` points Pi at `src/index.ts`, w
 ## Style
 
 - Use `!` for index access to values known to be present.
+- Write top-level helpers as `function` declarations. Arrow functions are fine inside other functions and as callbacks.
+- Name values that carry meaning as `UPPER_SNAKE` constants with the unit in the name, such as `FETCH_TIMEOUT_MS` or `MAX_RESPONSE_BYTES`, and keep them with the file's other constants, near the top of the file that owns them. This covers timeouts, intervals, cache lifetimes, limits, sizes, retry counts, and keys or names that more than one place must agree on.
+- Leave inline `0`, `1`, `-1`, indexes, layout arithmetic such as `width - 2`, single unit factors such as `ms / 1000`, user-facing text, error messages, and theme keys. Write large time factors as products, such as `24 * 60 * 60`, not `86400`, and other large numbers with separators, such as `1_000_000`.
 - In tests, write literal characters such as `π` and `·`, not `\u` escapes.
 - Tests use the literal event channel names, not the constants from `src/lib/events.ts`, so a renamed channel fails a test.
 
