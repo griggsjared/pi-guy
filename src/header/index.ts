@@ -1,6 +1,3 @@
-/**
- * Installer-style Pi startup header.
- */
 import { readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, parse } from "node:path";
