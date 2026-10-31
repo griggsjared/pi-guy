@@ -417,6 +417,13 @@ for (const [code, buckets, pending] of [[0, ["pending", "pass"], true], [8, ["pe
 	});
 }
 
+test("checks preserve the CLI diagnostic when exit 1 has no JSON output", async (t) => {
+	const h = harness(t);
+	const diagnostic = "HTTP 403: Resource not accessible by integration";
+	h.state.override = ({ args }) => args[0] === "pr" && args[1] === "checks" ? { ...failed, stderr: diagnostic } : undefined;
+	await assert.rejects(h.execute({ action: "checks", pr: "42" }), { message: `Unable to load pull request checks: ${diagnostic}` });
+});
+
 for (const [code, buckets] of [[1, ["pass"]], [8, ["pass"]]] as const) {
 	test(`checks reject inconsistent exit ${code} rather than reporting successful data`, async (t) => {
 		const h = harness(t);

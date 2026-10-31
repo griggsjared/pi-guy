@@ -216,6 +216,7 @@ async function getChecks(
 	try {
 		checks = parseChecks(result.stdout);
 	} catch {
+		if (result.code !== 0) throw new Error(`Unable to load pull request checks: ${resultText(result)}`);
 		throw new Error("The GitHub CLI returned invalid check data.");
 	}
 	const pending = checks.some((check) => check.bucket === "pending");
