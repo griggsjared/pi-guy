@@ -9,13 +9,15 @@ import {
   UserMessageComponent,
 } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Key, matchesKey } from "@earendil-works/pi-tui";
+import { Key, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
 import { boxed } from "../lib/box.ts";
 
 const SYSTEM_PROMPT =
   "You are answering a side question about the current conversation. Answer the question directly and concisely. Do not continue the main task, call tools, or propose changes unless the question explicitly asks for them.";
 const OVERLAY_MARGIN = 1;
 const OVERLAY_BORDER_ROWS = 2;
+// Provider error bodies can run to several KB; the notice keeps one readable line.
+const MAX_ERROR_NOTICE_COLUMNS = 200;
 
 interface Operation {
   controller: AbortController;
@@ -299,7 +301,10 @@ export default function (pi: ExtensionAPI) {
           },
         );
 
-        if (result === null && error) ctx.ui.notify("btw request failed", "error");
+        if (result === null && error !== undefined) {
+          const message = (error instanceof Error ? error.message : String(error)).split("\n")[0]!;
+          ctx.ui.notify(`btw request failed: ${truncateToWidth(message, MAX_ERROR_NOTICE_COLUMNS, "…")}`, "error");
+        }
         if (result !== null) {
           pi.sendUserMessage(result, { deliverAs: "followUp" });
           ctx.ui.notify("Side conversation sent to the agent", "info");

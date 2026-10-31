@@ -318,17 +318,21 @@ for (const failure of ["aborted", "error", "rejection"]) {
   test(`registry ${failure} closes the modal and releases the active operation`, async () => {
     const h = harness();
     const running = h.start("question");
-    if (failure === "rejection") h.requests[0]!.reject(new Error("registry failure"));
+    const message = 'registry failure\n{"error":{"message":"rate limited"}}';
+    if (failure === "rejection") h.requests[0]!.reject(new Error(message));
     else
       h.requests[0]!.resolve({
         ...answer("discard"),
         stopReason: failure as "aborted" | "error",
-        errorMessage: "registry failure",
+        errorMessage: message,
       });
     await running;
     assert.equal(h.requests[0]!.options.signal.aborted, true);
     assert.equal(h.completions, 1);
-    assert.deepEqual(h.notifications, failure === "aborted" ? [] : [{ text: "btw request failed", level: "error" }]);
+    assert.deepEqual(
+      h.notifications,
+      failure === "aborted" ? [] : [{ text: "btw request failed: registry failure", level: "error" }],
+    );
     assert.deepEqual(h.sent.slice(), []);
     const next = h.start("");
     assert.equal(h.requests.length, 1, "empty modal must not request a model");
