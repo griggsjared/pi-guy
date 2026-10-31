@@ -11,7 +11,7 @@ const USAGE_PROVIDERS = {
 export type UsageProvider = keyof typeof USAGE_PROVIDERS;
 export type UsageWindowKind = "rolling" | "weekly" | "monthly";
 
-export type UsageWindow = {
+export interface UsageWindow {
   kind: UsageWindowKind;
   label: string;
   usedPercent: number;
@@ -19,20 +19,20 @@ export type UsageWindow = {
   usedAmount?: number;
   limitAmount?: number;
   unit?: "usd";
-};
+}
 
-export type UsageBalance = {
+export interface UsageBalance {
   amount: number;
   currency: string;
-};
+}
 
-export type UsageStatus = {
+export interface UsageStatus {
   provider: UsageProvider;
   state: "ready" | "unknown";
   windows: UsageWindow[];
   capturedAtMs: number;
   balance?: UsageBalance;
-};
+}
 
 const providers = new Set<string>(Object.keys(USAGE_PROVIDERS));
 const quotaProviders = new Set<string>(

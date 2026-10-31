@@ -1,9 +1,3 @@
-/**
- * Custom footer that mimics the Claude Code statusline format.
- *
- * Shows mode, model name, thinking level, context usage, provider balance or
- * rate limits, and provider — all in a compact Claude-style layout.
- */
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { formatTokens } from "../lib/format.ts";
@@ -13,6 +7,7 @@ import {
   USAGE_STATUS_KEY,
 } from "./usage-status.ts";
 import type { UsageBalance, UsageStatus } from "./usage-status.ts";
+
 const WINDOW_ORDER = ["rolling", "weekly", "monthly"] as const;
 const CURRENCY_SYMBOLS: Record<string, string> = { USD: "$", CNY: "¥" };
 
@@ -80,6 +75,8 @@ function calculateFooterCacheHit(entries: ReadonlyArray<{ type: string; message?
   return cacheInput > 0 ? cacheRead / cacheInput * 100 : undefined;
 }
 
+// Closely follows Claude Code's statusline: one main line with terse markers
+// such as c: and b:, and provider usage on the right.
 export function registerStatusline(pi: ExtensionAPI) {
   let cacheHitVersion = 0;
   let cacheHitCache: { version: number; leafId: string | null; cacheHit?: number } | undefined;
@@ -99,14 +96,14 @@ export function registerStatusline(pi: ExtensionAPI) {
         render(width: number): string[] {
           const margin = width >= 3 ? 1 : 0;
           width -= margin * 2;
-          //Extension statuses
+          // Extension statuses
           const statuses = footerData.getExtensionStatuses();
           const rawMode = statuses.get("modes") ?? "";
           const modeStatus = rawMode
             ? theme.fg(rawMode === "build" ? "error" : rawMode === "plan" ? "borderAccent" : "accent", `[${rawMode[0]}]`)
             : "";
 
-          //Model name
+          // Model name
           const model = ctx.model;
           const modelName = model?.name || model?.id || "no-model";
           let line = theme.fg("customMessageLabel", modelName);
@@ -114,7 +111,7 @@ export function registerStatusline(pi: ExtensionAPI) {
             line = `${modeStatus} ${line}`;
           }
 
-          //Thinking level / effort
+          // Thinking level / effort
           if (ctx.thinkingLevel && ctx.thinkingLevel !== "off") {
             line += theme.fg("success", ` ${ctx.thinkingLevel}`);
           }
@@ -124,7 +121,7 @@ export function registerStatusline(pi: ExtensionAPI) {
             line += theme.fg("accent", ` s:${profile}`);
           }
 
-          //Context usage
+          // Context usage
           const contextUsage = ctx.getContextUsage();
           if (contextUsage && contextUsage.tokens !== null && contextUsage.contextWindow > 0) {
             const used = formatTokens(contextUsage.tokens);
@@ -150,7 +147,6 @@ export function registerStatusline(pi: ExtensionAPI) {
           const providerText = model?.provider ?? "";
           const reserved = providerText ? visibleWidth(providerText) + 3 : 0;
 
-          // ── Provider (right-aligned) ──
           let right = "";
           if (usageReady && usage.windows.length > 0) {
             const usageWidth = Math.max(0, width - visibleWidth(line) - reserved);
@@ -173,7 +169,6 @@ export function registerStatusline(pi: ExtensionAPI) {
             ? line + " ".repeat(gap) + right
             : truncateToWidth(line, Math.max(0, width - visibleWidth("...")), "...");
 
-          // ── Show remaining extension statuses on subsequent lines ──
           const rest = Array.from(statuses.entries())
             .filter(([key]) => key !== "modes" && key !== "subagent-profile" && key !== USAGE_STATUS_KEY)
             .sort(([a], [b]) => a.localeCompare(b))

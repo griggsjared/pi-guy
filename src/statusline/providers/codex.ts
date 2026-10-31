@@ -14,16 +14,16 @@ function normalizeResetAt(value: number | undefined): number | undefined {
   return value > 10_000_000_000 ? Math.round(value / 1000) : Math.round(value);
 }
 
-type CodexUsageWindow = {
+interface CodexUsageWindow {
   usedPercent: number;
   windowSeconds?: number;
   resetAt?: number;
-};
+}
 
-type CodexUsage = {
+interface CodexUsage {
   fiveHour?: CodexUsageWindow;
   weekly?: CodexUsageWindow;
-};
+}
 
 function normalizeWindow(value: unknown): CodexUsageWindow | undefined {
   const object = asObject(value);

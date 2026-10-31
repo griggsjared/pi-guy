@@ -1,12 +1,12 @@
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { PROVIDER_USAGE_REQUEST_EVENT } from "../lib/events.ts";
 import type { ProviderUsageRequest } from "../lib/events.ts";
+import { formatFooterBalance, formatFooterUsage, registerStatusline } from "./footer.ts";
+import { REQUEST_TIMEOUT_MS } from "./http.ts";
 import { ANTHROPIC_CACHE_TTL_MS, ANTHROPIC_PROVIDER, fetchAnthropicUsage, normalizeAnthropicHeaders } from "./providers/anthropic.ts";
 import { CLAUDE_CACHE_TTL_MS, CLAUDE_PROVIDER, fetchClaudeUsage } from "./providers/claude.ts";
 import { CODEX_CACHE_TTL_MS, CODEX_PROVIDER, fetchCodexUsage } from "./providers/codex.ts";
 import { DEEPSEEK_CACHE_TTL_MS, DEEPSEEK_PROVIDER, fetchDeepseekUsage } from "./providers/deepseek.ts";
-import { formatFooterBalance, formatFooterUsage, registerStatusline } from "./footer.ts";
-import { REQUEST_TIMEOUT_MS } from "./http.ts";
 import { OPENCODE_CACHE_TTL_MS, OPENCODE_PROVIDER, fetchOpencodeUsage } from "./providers/opencode.ts";
 import {
   encodeUsageStatus,
@@ -17,10 +17,10 @@ import type { UsageProvider, UsageStatus } from "./usage-status.ts";
 
 const REFRESH_INTERVAL_MS = 60_000;
 
-type UsageAdapter = {
+interface UsageAdapter {
   cacheTtlMs: number;
   load(ctx: ExtensionContext, signal: AbortSignal): Promise<UsageStatus>;
-};
+}
 
 const USAGE_ADAPTERS: Record<UsageProvider, UsageAdapter> = {
   [ANTHROPIC_PROVIDER]: { cacheTtlMs: ANTHROPIC_CACHE_TTL_MS, load: fetchAnthropicUsage },
@@ -30,24 +30,24 @@ const USAGE_ADAPTERS: Record<UsageProvider, UsageAdapter> = {
   [DEEPSEEK_PROVIDER]: { cacheTtlMs: DEEPSEEK_CACHE_TTL_MS, load: fetchDeepseekUsage },
 };
 
-const isProviderUsageRequest = (value: unknown): value is ProviderUsageRequest => {
+function isProviderUsageRequest(value: unknown): value is ProviderUsageRequest {
   if (!value || typeof value !== "object") return false;
   const { provider, theme, reply } = value as Record<string, unknown>;
   return typeof provider === "string" && typeof reply === "function" &&
     !!theme && typeof theme === "object" && typeof (theme as { fg?: unknown }).fg === "function";
-};
+}
 
 // Mirrors the footer's right-hand usage text, without width limits.
-const formatRequestedUsage = (usage: UsageStatus | undefined, theme: Pick<Theme, "fg">): string => {
+function formatRequestedUsage(usage: UsageStatus | undefined, theme: Pick<Theme, "fg">): string {
   if (usage?.state !== "ready") return theme.fg("dim", "quota:?");
   const parts = usage.windows.length > 0 ? [formatFooterUsage(usage, Date.now(), Infinity, theme)] : [];
   if (usage.balance) {
     parts.push(formatFooterBalance(usage.balance, theme));
   }
   return parts.length > 0 ? parts.join(" ") : theme.fg("dim", "no quota");
-};
+}
 
-export default function providerUsage(pi: ExtensionAPI): void {
+export default function (pi: ExtensionAPI) {
   registerStatusline(pi);
   let activeContext: ExtensionContext | undefined;
   let activeProvider: string | undefined;

@@ -11,7 +11,10 @@ const MAX_HYDRATION_CANDIDATES = 256;
 const MAX_HYDRATION_SCAN_CHARS = 16 * 1024;
 const MAX_HYDRATION_SCAN_TOTAL = 256 * 1024;
 
-type HydrationBudget = { candidates: number; scanned: number };
+interface HydrationBudget {
+  candidates: number;
+  scanned: number;
+}
 
 function findObjectAfter(html: string, start: number, budget: HydrationBudget): string | undefined {
   if (budget.candidates >= MAX_HYDRATION_CANDIDATES || budget.scanned >= MAX_HYDRATION_SCAN_TOTAL) return undefined;
@@ -79,7 +82,12 @@ function hydrationWindow(html: string, name: string, budget: HydrationBudget): {
   return undefined;
 }
 
-type ParsedHtmlWindow = { kind: UsageWindow["kind"]; label: string; usedPercent: number; resetInSec: number };
+interface ParsedHtmlWindow {
+  kind: UsageWindow["kind"];
+  label: string;
+  usedPercent: number;
+  resetInSec: number;
+}
 
 function balancedElementContent(html: string, tag: string, contentStart: number): { content: string; end: number } | undefined {
   const tagPattern = new RegExp(`<\\/?${tag}\\b[^>]*>`, "gi");
