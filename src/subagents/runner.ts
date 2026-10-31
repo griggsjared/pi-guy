@@ -7,7 +7,7 @@ import { StringDecoder } from "node:string_decoder";
 import type { AgentConfig } from "./agents.ts";
 import { ASK_PARENT_TOOL_NAME, CANCELLED_EXIT_CODE } from "./constants.ts";
 import { normalizeTitle, toolCallLabel } from "./format.ts";
-import { accumulateEvent, createStreamState, extractFinalText, parseParentQuestion } from "./jsonl.ts";
+import { accumulateEvent, createStreamState, extractFinalText, parseJsonLine, parseParentQuestion } from "./jsonl.ts";
 import { createTimeline } from "./timeline.ts";
 import type {
   CancellationReason,
@@ -396,17 +396,11 @@ export async function runSubagent(
       return true;
     };
     const handleLine = (line: string) => {
-      let event: Record<string, unknown> | undefined;
-      try {
-        const parsed = JSON.parse(line) as unknown;
-        if (parsed && typeof parsed === "object") event = parsed as Record<string, unknown>;
-      } catch {
-        /* accumulateEvent ignores malformed lines */
-      }
+      const event = parseJsonLine(line);
       if (event && handleResponse(event)) return;
 
       if (!settled && accepting) {
-        const question = parseParentQuestion(line);
+        const question = parseParentQuestion(event);
         if (question && !questions.has(question.id)) {
           questions.set(question.id, question);
           clearInactivity();
@@ -414,7 +408,7 @@ export async function runSubagent(
         }
       }
 
-      accumulateEvent(state, line);
+      accumulateEvent(state, event);
       maybeStream();
       if (!event || settled) return;
       switch (event.type) {

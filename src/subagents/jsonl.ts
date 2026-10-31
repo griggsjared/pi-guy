@@ -50,14 +50,22 @@ export function createStreamState(model: string): StreamState {
   };
 }
 
-export function parseEventLine(line: string): StreamEvent | undefined {
-  if (!line.trim()) return undefined;
-  let event: unknown;
+/** Parse one JSONL line. Blank, malformed, and non-object lines yield undefined. */
+export function parseJsonLine(line: string): Record<string, unknown> | undefined {
+  const trimmed = line.trim();
+  if (!trimmed) return undefined;
+  let parsed: unknown;
   try {
-    event = JSON.parse(line);
+    parsed = JSON.parse(trimmed);
   } catch {
     return undefined;
   }
+  if (!parsed || typeof parsed !== "object") return undefined;
+  return parsed as Record<string, unknown>;
+}
+
+/** Narrow a parsed line to the events the stream state consumes. */
+export function selectEvent(event: unknown): StreamEvent | undefined {
   if (!event || typeof event !== "object") return undefined;
   const parsed = event as StreamEvent;
   if (parsed.type === "message_update" && parsed.assistantMessageEvent) return parsed;
@@ -65,13 +73,7 @@ export function parseEventLine(line: string): StreamEvent | undefined {
   return parsed;
 }
 
-export function parseParentQuestion(line: string): SubagentQuestion | undefined {
-  let event: unknown;
-  try {
-    event = JSON.parse(line);
-  } catch {
-    return undefined;
-  }
+export function parseParentQuestion(event: unknown): SubagentQuestion | undefined {
   if (!event || typeof event !== "object") return undefined;
   const request = event as {
     type?: unknown;
@@ -167,14 +169,14 @@ export function truncateStrings(value: unknown, max = 120): unknown {
   return value;
 }
 
-/** Fold one JSONL line into the stream state. Malformed and non-assistant lines are ignored. */
-export function accumulateEvent(state: StreamState, line: string): void {
-  const event = parseEventLine(line);
-  if (!event) return;
-  const message = event.message;
+/** Fold one parsed JSONL event into the stream state. Values that are not assistant events are ignored. */
+export function accumulateEvent(state: StreamState, event: unknown): void {
+  const parsed = selectEvent(event);
+  if (!parsed) return;
+  const message = parsed.message;
   const content = message?.content;
 
-  if (event.type === "message_end" && message) {
+  if (parsed.type === "message_end" && message) {
     const text = assistantText(content);
     if (text) state.finalText = text;
     const thinking = thinkingText(content);
@@ -204,8 +206,8 @@ export function accumulateEvent(state: StreamState, line: string): void {
         state.toolCalls.splice(0, state.toolCalls.length - MAX_TOOL_CALLS);
       }
     }
-  } else if (event.type === "message_update") {
-    const delta = event.assistantMessageEvent;
+  } else if (parsed.type === "message_update") {
+    const delta = parsed.assistantMessageEvent;
     if (delta?.type === "text_delta" && typeof delta.delta === "string") {
       state.streamedText += delta.delta;
     } else if (delta?.type === "thinking_delta" && typeof delta.delta === "string") {
@@ -220,6 +222,6 @@ export function accumulateEvent(state: StreamState, line: string): void {
 /** Last-resort text extraction from a child's capped stdout buffer. */
 export function extractFinalText(output: string): string {
   const state = createStreamState("");
-  for (const line of output.split("\n")) accumulateEvent(state, line);
+  for (const line of output.split("\n")) accumulateEvent(state, parseJsonLine(line));
   return state.finalText || state.streamedText || state.finalThinking || "";
 }

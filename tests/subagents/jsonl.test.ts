@@ -6,41 +6,54 @@ import {
   createStreamState,
   extractFinalText,
   normalizeToolArgs,
-  parseEventLine,
+  parseJsonLine,
   parseParentQuestion,
   sanitizeToolCallArgs,
+  selectEvent,
   truncateStrings,
 } from "../../src/subagents/jsonl.ts";
 
-const end = (content: unknown, extra: Record<string, unknown> = {}) =>
-  JSON.stringify({ type: "message_end", message: { role: "assistant", content, ...extra } });
+const end = (content: unknown, extra: Record<string, unknown> = {}) => ({
+  type: "message_end",
+  message: { role: "assistant", content, ...extra },
+});
 
-const update = (content: unknown) =>
-  JSON.stringify({ type: "message_update", message: { role: "assistant", content } });
+const update = (content: unknown) => ({ type: "message_update", message: { role: "assistant", content } });
 
-const rpcDelta = (type: "text_delta" | "thinking_delta", delta: string) =>
-  JSON.stringify({ type: "message_update", assistantMessageEvent: { type, delta } });
+const rpcDelta = (type: "text_delta" | "thinking_delta", delta: string) => ({
+  type: "message_update",
+  assistantMessageEvent: { type, delta },
+});
 
-test("parseEventLine", () => {
-  assert.ok(parseEventLine('{"type":"message_end","message":{"role":"assistant","content":"x"}}'));
-  assert.equal(parseEventLine(""), undefined);
-  assert.equal(parseEventLine("not json"), undefined);
-  assert.equal(parseEventLine('{"type":"message_end","message":{"role":"user"}}'), undefined);
-  assert.equal(parseEventLine('{"type":"message_end"}'), undefined);
-  assert.ok(parseEventLine(rpcDelta("text_delta", "x")));
+test("parseJsonLine parses objects and ignores blank, malformed, and non-object lines", () => {
+  assert.deepEqual(parseJsonLine('{"type":"turn_start"}'), { type: "turn_start" });
+  assert.deepEqual(parseJsonLine('  {"id":"q1"}\n'), { id: "q1" });
+  assert.equal(parseJsonLine(""), undefined);
+  assert.equal(parseJsonLine("  \n"), undefined);
+  assert.equal(parseJsonLine("not json"), undefined);
+  assert.equal(parseJsonLine("42"), undefined);
+  assert.equal(parseJsonLine("null"), undefined);
+});
+
+test("selectEvent keeps assistant messages and streaming updates", () => {
+  assert.ok(selectEvent(end("x")));
+  assert.ok(selectEvent(rpcDelta("text_delta", "x")));
+  assert.ok(selectEvent(update("x")));
+  assert.equal(selectEvent({ type: "message_end", message: { role: "user" } }), undefined);
+  assert.equal(selectEvent({ type: "message_end" }), undefined);
+  assert.equal(selectEvent({ type: "turn_start" }), undefined);
+  assert.equal(selectEvent(undefined), undefined);
 });
 
 test("parseParentQuestion recognizes only marked input requests", () => {
   assert.deepEqual(
-    parseParentQuestion(
-      JSON.stringify({
-        type: "extension_ui_request",
-        id: "question-1",
-        method: "input",
-        title: "subagents:ask-parent: Which API? ",
-        placeholder: " Existing or new. ",
-      }),
-    ),
+    parseParentQuestion({
+      type: "extension_ui_request",
+      id: "question-1",
+      method: "input",
+      title: "subagents:ask-parent: Which API? ",
+      placeholder: " Existing or new. ",
+    }),
     {
       id: "question-1",
       question: "Which API?",
@@ -48,48 +61,40 @@ test("parseParentQuestion recognizes only marked input requests", () => {
     },
   );
   assert.deepEqual(
-    parseParentQuestion(
-      JSON.stringify({
-        type: "extension_ui_request",
-        id: "question-2",
-        method: "input",
-        title: "subagents:ask-parent:Continue?",
-      }),
-    ),
+    parseParentQuestion({
+      type: "extension_ui_request",
+      id: "question-2",
+      method: "input",
+      title: "subagents:ask-parent:Continue?",
+    }),
     { id: "question-2", question: "Continue?", context: undefined },
   );
-  assert.equal(parseParentQuestion("not json"), undefined);
+  assert.equal(parseParentQuestion(undefined), undefined);
   assert.equal(
-    parseParentQuestion(
-      JSON.stringify({
-        type: "extension_ui_request",
-        id: "",
-        method: "input",
-        title: "subagents:ask-parent:Missing ID",
-      }),
-    ),
+    parseParentQuestion({
+      type: "extension_ui_request",
+      id: "",
+      method: "input",
+      title: "subagents:ask-parent:Missing ID",
+    }),
     undefined,
   );
   assert.equal(
-    parseParentQuestion(
-      JSON.stringify({
-        type: "extension_ui_request",
-        id: "question-3",
-        method: "editor",
-        title: "subagents:ask-parent:Wrong method",
-      }),
-    ),
+    parseParentQuestion({
+      type: "extension_ui_request",
+      id: "question-3",
+      method: "editor",
+      title: "subagents:ask-parent:Wrong method",
+    }),
     undefined,
   );
   assert.equal(
-    parseParentQuestion(
-      JSON.stringify({
-        type: "extension_ui_request",
-        id: "question-4",
-        method: "input",
-        title: "Ordinary extension input",
-      }),
-    ),
+    parseParentQuestion({
+      type: "extension_ui_request",
+      id: "question-4",
+      method: "input",
+      title: "Ordinary extension input",
+    }),
     undefined,
   );
 });
@@ -187,21 +192,25 @@ test("accumulateEvent: assembles RPC text and thinking deltas", () => {
   assert.equal(state.finalThinking, "checking");
 });
 
-test("accumulateEvent: ignores non-assistant and malformed lines", () => {
+test("accumulateEvent: ignores non-assistant and unparsed events", () => {
   const state = createStreamState("m");
-  accumulateEvent(state, JSON.stringify({ type: "message_end", message: { role: "user", content: "hi" } }));
-  accumulateEvent(state, "garbage");
+  accumulateEvent(state, { type: "message_end", message: { role: "user", content: "hi" } });
+  accumulateEvent(state, undefined);
+  accumulateEvent(state, { type: "turn_start" });
   assert.equal(state.usage.turns, 0);
   assert.equal(state.finalText, "");
 });
 
 test("extractFinalText: full stream, thinking fallback, and truncated tail", () => {
-  const stream = [update("partial"), end("final"), "garbage"].join("\n");
+  const stream = [JSON.stringify(update("partial")), JSON.stringify(end("final")), "garbage"].join("\n");
   assert.equal(extractFinalText(stream), "final");
-  assert.equal(extractFinalText(end("")), "");
-  assert.equal(extractFinalText(end([{ type: "thinking", thinking: "only thinking" }])), "only thinking");
+  assert.equal(extractFinalText(JSON.stringify(end(""))), "");
+  assert.equal(
+    extractFinalText(JSON.stringify(end([{ type: "thinking", thinking: "only thinking" }]))),
+    "only thinking",
+  );
   // No trailing newline: last line must still be seen.
-  assert.equal(extractFinalText(`garbage\n${end("last")}`), "last");
+  assert.equal(extractFinalText(`garbage\n${JSON.stringify(end("last"))}`), "last");
   assert.equal(extractFinalText(""), "");
 });
 
