@@ -9,25 +9,49 @@ const CACHE_TTL_MS = 30_000;
 const TAVILY_ENDPOINT = "https://api.tavily.com/search";
 const TAVILY_MAX_RESULTS = 10;
 const TAVILY_TIMEOUT_MS = 15_000;
+const FETCH_TIMEOUT_MS = 15_000;
 
 const WebSearchParams = Type.Object({
   query: Type.String({ description: "Search query." }),
+});
+
+const WebSearchOutput = Type.Object({
+  backend: Type.Union([Type.Literal("duckduckgo-lite"), Type.Literal("tavily")]),
+  query: Type.String(),
+  results: Type.Array(Type.Object({
+    title: Type.String(),
+    url: Type.String(),
+    snippet: Type.String(),
+  })),
 });
 
 const WebFetchParams = Type.Object({
   url: Type.String({ description: "URL of the page to fetch and read." }),
 });
 
+const WebFetchOutput = Type.Object({
+  backend: Type.Literal("http"),
+  url: Type.String(),
+  title: Type.String(),
+  description: Type.String(),
+  text: Type.String(),
+  charCount: Type.Integer({ minimum: 0 }),
+  truncated: Type.Boolean(),
+});
+
 type SearchBackend = "duckduckgo-lite" | "tavily";
-type SearchResponse = { backend: SearchBackend; results: SearchResult[] };
-type FetchedPage = {
+interface SearchResponse {
+  backend: SearchBackend;
+  results: SearchResult[];
+}
+interface FetchedPage {
   url: string;
   title: string;
   description: string;
   text: string;
   charCount: number;
   truncated: boolean;
-};
+}
 
 function parseTavilyResponse(body: unknown): SearchResult[] | undefined {
   if (!body || typeof body !== "object") return undefined;
@@ -77,7 +101,9 @@ function classifyTavilyFailure(status: number, body: string): string {
   return "Tavily returned an unreadable response.";
 }
 
-const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 async function searchDuckDuckGo(query: string, signal?: AbortSignal): Promise<SearchResult[]> {
   const endpoint = `https://lite.duckduckgo.com/lite/?${new URLSearchParams({ q: query }).toString()}`;
@@ -138,9 +164,10 @@ async function searchTavily(query: string, signal?: AbortSignal): Promise<Search
     });
   } catch (error) {
     if (signal?.aborted) throw new Error("Search cancelled.");
-    const err = error as Error;
-    if (err.name === "TimeoutError") throw new Error(`Tavily request timed out after ${TAVILY_TIMEOUT_MS / 1000} seconds.`);
-    throw new Error(`Tavily request failed: ${err.message}`);
+    if (error instanceof Error && error.name === "TimeoutError") {
+      throw new Error(`Tavily request timed out after ${TAVILY_TIMEOUT_MS / 1000} seconds.`);
+    }
+    throw new Error(`Tavily request failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 
   let body: string;
@@ -148,7 +175,7 @@ async function searchTavily(query: string, signal?: AbortSignal): Promise<Search
     body = await response.text();
   } catch (error) {
     if (signal?.aborted) throw new Error("Search cancelled.");
-    if (timeoutSignal.aborted || (error as Error | null | undefined)?.name === "TimeoutError") {
+    if (timeoutSignal.aborted || (error instanceof Error && error.name === "TimeoutError")) {
       throw new Error(`Tavily request timed out after ${TAVILY_TIMEOUT_MS / 1000} seconds.`);
     }
     throw error;
@@ -246,7 +273,7 @@ async function fetchPage(url: string, signal?: AbortSignal): Promise<FetchedPage
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error(`Unsupported protocol ${parsed.protocol} — only http and https can be fetched.`);
   }
-  const timeoutSignal = AbortSignal.timeout(15000);
+  const timeoutSignal = AbortSignal.timeout(FETCH_TIMEOUT_MS);
   const combined = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
   let response: Response;
   try {
@@ -260,9 +287,10 @@ async function fetchPage(url: string, signal?: AbortSignal): Promise<FetchedPage
     });
   } catch (error) {
     if (signal?.aborted) throw new Error("Fetch cancelled.");
-    const err = error as Error;
-    if (err.name === "TimeoutError") throw new Error(`Fetch timed out after 15 seconds: ${url}`);
-    throw new Error(`Fetch failed: ${err.message}`);
+    if (error instanceof Error && error.name === "TimeoutError") {
+      throw new Error(`Fetch timed out after ${FETCH_TIMEOUT_MS / 1000} seconds: ${url}`);
+    }
+    throw new Error(`Fetch failed: ${error instanceof Error ? error.message : String(error)}`);
   }
   if (!response.ok) {
     const blocked = response.status === 403 || response.status === 429;
@@ -365,15 +393,7 @@ export default function (pi: ExtensionAPI) {
       "Prefer web_search and web_fetch over shell/network commands (curl, Invoke-WebRequest, npm view/search/pack, direct HTTP URLs) for web research.",
     ],
     parameters: WebSearchParams,
-    outputSchema: Type.Object({
-      backend: Type.Union([Type.Literal("duckduckgo-lite"), Type.Literal("tavily")]),
-      query: Type.String(),
-      results: Type.Array(Type.Object({
-        title: Type.String(),
-        url: Type.String(),
-        snippet: Type.String(),
-      })),
-    }),
+    outputSchema: WebSearchOutput,
     async execute(_toolCallId, params, signal) {
       const query = params.query.trim();
       if (!query) throw new Error("Query must not be empty.");
@@ -398,15 +418,7 @@ export default function (pi: ExtensionAPI) {
       "Use web_fetch to read a specific page when its full content matters; combine with web_search to discover pages first.",
     ],
     parameters: WebFetchParams,
-    outputSchema: Type.Object({
-      backend: Type.Literal("http"),
-      url: Type.String(),
-      title: Type.String(),
-      description: Type.String(),
-      text: Type.String(),
-      charCount: Type.Integer({ minimum: 0 }),
-      truncated: Type.Boolean(),
-    }),
+    outputSchema: WebFetchOutput,
     async execute(_toolCallId, params, signal) {
       const url = params.url.trim();
       if (!url) throw new Error("URL must not be empty.");

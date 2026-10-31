@@ -1,4 +1,8 @@
+// Stays a type alias: interfaces lack the implicit index signature that makes
+// these objects assignable to the tool result's JsonValue payloads.
 export type SearchResult = { title: string; url: string; snippet: string };
+
+export const MAX_TEXT_CHARS = 4000;
 
 const NAMED_ENTITIES: Record<string, string> = {
   amp: "&",
@@ -83,7 +87,6 @@ export function parseDuckDuckGoLite(html: string): SearchResult[] {
 
 const BLOCK_END_TAGS =
   /<\/(p|h1|h2|h3|h4|h5|h6|li|tr|td|th|dt|dd|blockquote|pre|ul|ol|dl|nav|header|footer|section|aside)>/gi;
-export const MAX_TEXT_CHARS = 4000;
 
 // Longest <tag>...</tag> region wins: pages nest <article> inside <main>, and
 // both may appear multiple times (widgets, comments) — the biggest is the content.
