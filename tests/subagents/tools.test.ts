@@ -368,7 +368,7 @@ test("subagent tool runs sequentially so parallel calls cannot double-open the p
 });
 
 test("execute: legacy sync input cannot make a single job block", async () => {
-  const { tool, registry, sendMessage, activeTickers, activeProcs, child, ctx } = makeTool();
+  const { tool, registry, sendMessage, activeTickers, child, ctx } = makeTool();
   const result = await tool.execute(
     "call1",
     { agent: "scout", task: "t", execution: "sync" } as never,
@@ -398,7 +398,6 @@ test("execute: legacy sync input cannot make a single job block", async () => {
   assert.equal(sendMessage.calls.length, 1, "completion sends one hidden parent message");
   assert.equal(registry.running().length, 0);
   assert.equal(activeTickers.size, 0);
-  assert.equal(activeProcs.size, 0);
 });
 
 test("execute: single returns launched, then displays and delivers its result", async () => {
@@ -827,7 +826,7 @@ test("execute: jobs outlive the tool-call abort signal", async () => {
 test("execute: parallel batch displays and delivers each result", async () => {
   const children = [new FakeChild(), new FakeChild()];
   const { spawnFn, calls } = fakeSpawnChildren(children);
-  const { tool, registry, sendMessage, sendUserMessage, activeTickers, activeProcs, ctx } = makeTool({ spawnFn });
+  const { tool, registry, sendMessage, sendUserMessage, activeTickers, ctx } = makeTool({ spawnFn });
   const result = await tool.execute(
     "call1",
     {
@@ -869,7 +868,48 @@ test("execute: parallel batch displays and delivers each result", async () => {
   assert.equal(sendUserMessage.calls.length, 0);
   assert.equal((sendMessage.calls[1]?.[0] as { display: boolean }).display, false);
   assert.equal(activeTickers.size, 0, "ticker stopped via finally");
-  assert.equal(activeProcs.size, 0);
+});
+
+test("execute: every parallel launch failure reports its own job and clears the batch", async (t) => {
+  const spawnFn = (() => {
+    throw new Error("spawn failed");
+  }) as typeof spawn;
+  const { tool, registry, sendMessage, activeTickers, ctx } = makeTool({ spawnFn });
+  t.after(() => {
+    for (const ticker of activeTickers) clearInterval(ticker);
+  });
+
+  await tool.execute(
+    "launch",
+    {
+      tasks: [
+        { agent: "scout", task: "one" },
+        { agent: "scout", task: "two" },
+      ],
+    },
+    undefined,
+    undefined,
+    ctx,
+  );
+  await waitFor(() => activeTickers.size === 0);
+
+  assert.equal(registry.get(1)?.status, "failed");
+  assert.equal(registry.get(2)?.status, "failed");
+  const messages = sendMessage.calls
+    .map((call) => call[0] as { content: string; details: { jobId: number; status: string } })
+    .sort((a, b) => a.details.jobId - b.details.jobId);
+  assert.deepEqual(
+    messages.map((message) => [message.details.jobId, message.details.status]),
+    [
+      [1, "failed"],
+      [2, "failed"],
+    ],
+  );
+  assert.deepEqual(
+    messages.map((message) => message.content),
+    ["subagent launch scout · one: spawn failed", "subagent launch scout · two: spawn failed"],
+  );
+  assert.deepEqual(registry.pendingCompleted(), []);
 });
 
 test("execute: validation errors reject", async () => {
@@ -878,17 +918,28 @@ test("execute: validation errors reject", async () => {
   await assert.rejects(tool.execute("call1", { agent: "scout" }, undefined, undefined, ctx), /exactly one mode/);
 });
 
-test("renderResult: tolerates missing details (error results omit it)", () => {
+test("renderResult: renders plain text when details are missing or partial", () => {
   const { tool } = makeTool();
   const theme = fakeTheme() as never;
+  const render = (result: unknown, context: unknown) =>
+    tool.renderResult!(result as never, {} as never, theme, context as never);
+
   // SDK runtime omits `details` on validation-failure/abort results.
-  const out = tool.renderResult!(
-    { content: [{ type: "text", text: "boom" }], details: undefined } as never,
-    {} as never,
-    theme,
-    {} as never,
+  const missing = render({ content: [{ type: "text", text: "boom" }], details: undefined }, {});
+  assert.ok(renderable(missing), "renderer must not throw on missing details");
+  assert.match(renderText(missing), /boom/);
+
+  const partial = render({ content: [{ type: "text", text: "" }], details: { targets: [{ agent: "scout" }] } }, {});
+  assert.ok(renderable(partial), "renderer must not throw on partial details");
+  assert.match(renderText(partial), /scout/);
+  assert.match(renderText(partial), /no output/);
+
+  const malformed = render(
+    { content: [{ type: "text", text: "bad args" }], details: { status: "running", targets: "nope" } },
+    { args: { tasks: "nope" } },
   );
-  assert.ok(renderable(out), "renderer must not throw on missing details");
+  assert.ok(renderable(malformed), "renderer must not throw on malformed targets or args");
+  assert.match(renderText(malformed), /bad args/);
 });
 
 test("renderResult: renders launched/failed/completed summaries", () => {

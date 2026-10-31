@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import type { ChildProcess } from "node:child_process";
 import type { spawn } from "node:child_process";
 import type { ExtensionAPI, ExtensionContext, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import type { Component } from "@earendil-works/pi-tui";
@@ -53,7 +52,6 @@ export function makeTool(
     on,
   } as unknown as ExtensionAPI;
   const activeTickers = new Set<ReturnType<typeof setInterval>>();
-  const activeProcs = new Set<ChildProcess>();
   const child = new FakeChild();
   const tool = createSubagentTool({
     pi,
@@ -63,7 +61,6 @@ export function makeTool(
     confirmProfile,
     discover: async () => [AGENT],
     registry,
-    activeProcs,
     activeTickers,
     extensionPaths: [],
     bridgeExtensionPath: "/extensions/child-bridge.ts",
@@ -89,7 +86,6 @@ export function makeTool(
     appendEntry,
     handlers,
     activeTickers,
-    activeProcs,
     child,
     ctx,
   };

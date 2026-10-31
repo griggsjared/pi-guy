@@ -1,5 +1,4 @@
 import type { spawn } from "node:child_process";
-import type { ChildProcess } from "node:child_process";
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Container, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
@@ -16,7 +15,7 @@ import {
 } from "./constants.ts";
 import { capOutput, formatResultOutput, normalizeTitle, shortLabel } from "./format.ts";
 import type { Job, JobRegistry } from "./registry.ts";
-import { TruncatedText } from "./render.ts";
+import { renderFallbackResult, TruncatedText } from "./render.ts";
 import { formatModel, runSubagent, runWithConcurrencyLimit } from "./runner.ts";
 import { formatEventSummary, formatLocalTime, formatStepTiming } from "./tail.ts";
 import type {
@@ -117,6 +116,26 @@ function requestedLabel(targets: SubagentToolTarget[]): string {
         `${target.agent} · ${shortLabel(normalizeTitle(target.title), normalizeTitle(target.task), Infinity)}`,
     )
     .join(", ");
+}
+
+// Launch results carry only the display fields the SDK preserved; both
+// derivations below tolerate missing or malformed entries so a partial result
+// still renders plain text.
+function launchTargets(value: unknown): SubagentToolTarget[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const targets = value.filter(
+    (target): target is SubagentToolTarget =>
+      !!target && typeof target === "object" && typeof (target as SubagentToolTarget).agent === "string",
+  );
+  return targets.length > 0 ? targets : undefined;
+}
+
+function argsTargets(args: SubagentParamsType | undefined): SubagentToolTarget[] | undefined {
+  if (!args) return undefined;
+  if (typeof args.agent === "string" && typeof args.task === "string") {
+    return [{ agent: args.agent, task: args.task, ...(typeof args.title === "string" ? { title: args.title } : {}) }];
+  }
+  return launchTargets(args.tasks);
 }
 
 export function resolveMode(params: SubagentParamsType): Mode {
@@ -399,7 +418,8 @@ class Batch {
       profile: metadata?.profile,
     };
     const target = `${agent} · ${shortLabel(normalizeTitle(title), normalizeTitle(task), Infinity)}`;
-    this.deps.mailbox.deliver({ content: `subagent launch ${target}: Error: ${String(err)}`, details });
+    const message = err instanceof Error ? err.message : String(err);
+    this.deps.mailbox.deliver({ content: `subagent launch ${target}: ${message}`, details });
     this.deps.mailbox.flush(this.deps.isIdle);
   }
 
@@ -425,7 +445,6 @@ export interface SubagentToolDeps {
   /** Re-discovered on every execute so agent file edits take effect immediately. */
   discover: () => Promise<AgentConfig[]>;
   registry: JobRegistry;
-  activeProcs?: Set<ChildProcess>; // retained for dependency compatibility; cancellation is registry-scoped
   activeTickers: Set<ReturnType<typeof setInterval>>;
   onUiContext: (ctx: ExtensionContext) => void;
   refresh: (ctx: ExtensionContext) => void;
@@ -524,6 +543,16 @@ export function createSubagentTool(deps: SubagentToolDeps): ToolDefinition<typeo
           /* session torn down mid-run */
         }
       };
+      const finishJob = (jobId: number, result: SubagentResult, notify = true): SubagentResult => {
+        registry.complete(jobId, result);
+        // Cancellation may race the child's final close/update. The registry
+        // reason is authoritative for every downstream representation.
+        const finished = normalizeCancellation(result, registry.get(jobId));
+        batch.recordCompletion(jobId);
+        refresh();
+        if (notify) notifyTerminal(jobId, finished.agent, finished.task, finished.title, finished);
+        return finished;
+      };
 
       // Launch one job: stream updates into the registry, then complete it.
       // Failures are returned as failed results, except spawn-level failures
@@ -539,11 +568,7 @@ export function createSubagentTool(deps: SubagentToolDeps): ToolDefinition<typeo
           // not spawn it just to discover the cancellation after launch.
           const cancellationReason = registry.get(jobId)?.cancellationReason;
           if (cancellationReason) {
-            const result = cancelledResult(agent.name, task, title, cancellationReason, agent);
-            registry.complete(jobId, result);
-            batch.recordCompletion(jobId);
-            notifyTerminal(jobId, agent.name, task, title, result);
-            return result;
+            return finishJob(jobId, cancelledResult(agent.name, task, title, cancellationReason, agent));
           }
           const launched = await runSubagent(agent, task, ctx.cwd, defaultModel, {
             thinkingLevel: agent.thinkingLevel,
@@ -579,30 +604,15 @@ export function createSubagentTool(deps: SubagentToolDeps): ToolDefinition<typeo
             },
           });
           registry.registerControl(jobId, launched);
-          let subagentResult: SubagentResult = { ...(await launched.result), profile: agent.profile };
-          registry.complete(jobId, subagentResult);
-          subagentResult = normalizeCancellation(subagentResult, registry.jobs.get(jobId));
-          // Cancellation may race the child's final close/update. The registry
-          // reason is authoritative for every downstream representation.
-          refresh();
-          notifyTerminal(jobId, agent.name, task, title, subagentResult);
-          batch.recordCompletion(jobId);
-          return subagentResult;
+          return finishJob(jobId, { ...(await launched.result), profile: agent.profile });
         } catch (err) {
+          // Callers' catch handlers rely on this: finishJob completes the job synchronously, and
+          // registry.cancel ignores finished jobs, so a rejection from here is never a cancellation.
           const cancellationReason = registry.get(jobId)?.cancellationReason;
           if (cancellationReason) {
-            const result = cancelledResult(agent.name, task, title, cancellationReason, agent);
-            registry.complete(jobId, result);
-            batch.recordCompletion(jobId);
-            refresh();
-            notifyTerminal(jobId, agent.name, task, title, result);
-            return result;
+            return finishJob(jobId, cancelledResult(agent.name, task, title, cancellationReason, agent));
           }
-          const result = failedResult(agent.name, task, title, err, agent);
-          registry.complete(jobId, result);
-          batch.recordCompletion(jobId);
-          refresh();
-          notifyTerminal(jobId, agent.name, task, title, result);
+          finishJob(jobId, failedResult(agent.name, task, title, err, agent));
           throw err;
         }
       };
@@ -626,15 +636,7 @@ export function createSubagentTool(deps: SubagentToolDeps): ToolDefinition<typeo
           })
           .catch((err) => {
             stopTicker();
-            const cancellationReason = registry.get(jobId)?.cancellationReason;
-            if (cancellationReason) {
-              const result = cancelledResult(agent.name, single.task, single.title, cancellationReason, agent);
-              registry.complete(jobId, result);
-              batch.recordCompletion(jobId);
-              batch.deliverResult(jobId, result);
-            } else {
-              batch.sendError(agent.name, single.task, single.title, err, agent, jobId);
-            }
+            batch.sendError(agent.name, single.task, single.title, err, agent, jobId);
             batch.finishOne();
           });
 
@@ -688,10 +690,7 @@ export function createSubagentTool(deps: SubagentToolDeps): ToolDefinition<typeo
                 `Unknown agent "${task.agent}". Available: ${available}`,
                 { profile },
               );
-          registry.complete(jobId, result);
-          batch.recordCompletion(jobId);
-          refresh();
-          batch.deliverResult(jobId, result);
+          batch.deliverResult(jobId, finishJob(jobId, result, false));
           batch.finishOne();
           return;
         }
@@ -700,17 +699,7 @@ export function createSubagentTool(deps: SubagentToolDeps): ToolDefinition<typeo
           batch.deliverResult(jobId, result);
           batch.finishOne();
         } catch (err) {
-          const cancellationReason = registry.get(jobId)?.cancellationReason;
-          const result = cancellationReason
-            ? cancelledResult(task.agent, task.task, task.title, cancellationReason, agent)
-            : failedResult(task.agent, task.task, task.title, err, agent);
-          if (cancellationReason) {
-            registry.complete(jobId, result);
-            batch.recordCompletion(jobId);
-            batch.deliverResult(jobId, result);
-          } else {
-            batch.sendError(task.agent, task.task, task.title, err, agent, jobId);
-          }
+          batch.sendError(task.agent, task.task, task.title, err, agent, jobId);
           batch.finishOne();
         }
       };
@@ -780,28 +769,38 @@ export function createSubagentTool(deps: SubagentToolDeps): ToolDefinition<typeo
     },
 
     renderResult(result, _options, theme, context) {
-      const rawSummary = result.content[0]?.type === "text" ? result.content[0].text : "(no output)";
+      const rawSummary = result.content[0]?.type === "text" ? result.content[0].text : "";
       const details = result.details;
-      const args = context.args ?? {};
       const status = details?.status;
-      if (status === "launched" || details?.jobIds?.length) return new Text("", 0, 0);
-      const target = details?.targets?.length
-        ? requestedLabel(details.targets)
-        : details?.agent
+      if (details && (status === "launched" || details.jobIds?.length)) return new Text("", 0, 0);
+      const argTargets = argsTargets(context.args);
+      const targetInCall = argTargets ? requestedLabel(argTargets) : undefined;
+      const detailTargets = launchTargets(details?.targets);
+      const targetLabel =
+        (detailTargets ? requestedLabel(detailTargets) : undefined) ??
+        (typeof details?.agent === "string"
           ? `${details.agent} · ${shortLabel(normalizeTitle(details.title), normalizeTitle(details.task), Infinity)}`
-          : requestedLabel(requestedTargets(args));
-      const prefix = `subagent launch ${target}: `;
+          : (targetInCall ?? requestedLabel([])));
+      const showTarget = targetInCall === undefined || targetInCall !== targetLabel;
+      if (context.isError || !details || typeof status !== "string") {
+        return renderFallbackResult("subagent launch", targetLabel, rawSummary, "(no output)", showTarget, theme);
+      }
+      const prefix = `subagent launch ${targetLabel}: `;
       const normalizedSummary = normalizeTitle(rawSummary) ?? "(no output)";
       const summary = normalizedSummary.startsWith(prefix) ? normalizedSummary.slice(prefix.length) : normalizedSummary;
-      const failed = status === "failed" || context.isError || !status;
+      const failed = status === "failed";
       const cancelled = status === "cancelled";
       const running = status === "running";
       const icon = running ? "⊙" : cancelled ? "⊘" : failed ? "✗" : "✓";
       const color = running ? "accent" : cancelled ? "warning" : failed ? "error" : "success";
       const box = new Container();
-      if (!context.args || requestedLabel(requestedTargets(args)) !== target) {
+      if (showTarget) {
         box.addChild(
-          new TruncatedText(theme.fg("toolTitle", theme.bold("subagent launch ")) + theme.fg("accent", target), 0, 0),
+          new TruncatedText(
+            theme.fg("toolTitle", theme.bold("subagent launch ")) + theme.fg("accent", targetLabel),
+            0,
+            0,
+          ),
         );
       }
       box.addChild(new TruncatedText(theme.fg(color, `${icon} ${summary}`), 2, 0));

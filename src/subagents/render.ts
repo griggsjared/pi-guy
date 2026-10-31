@@ -2,6 +2,7 @@ import { getMarkdownTheme } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionContext, Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import {
   Box,
+  Container,
   Markdown,
   Spacer,
   Text,
@@ -23,6 +24,22 @@ export class TruncatedText extends TuiTruncatedText {
     // Pi's full truncation resets erase backgrounds supplied by enclosing cards.
     return super.render(width).map((line) => line.replace(/\x1b\[0?m/g, "\x1b[22;23;24;25;27;28;29;39m"));
   }
+}
+
+export function renderFallbackResult(
+  title: string,
+  target: string,
+  text: string,
+  emptyText: string,
+  showTarget: boolean,
+  theme: Theme,
+): Container {
+  const box = new Container();
+  if (showTarget) {
+    box.addChild(new TruncatedText(theme.fg("toolTitle", theme.bold(`${title} `)) + theme.fg("accent", target), 0, 0));
+  }
+  box.addChild(new TruncatedText(theme.fg("muted", normalizeTitle(text) ?? emptyText), 2, 0));
+  return box;
 }
 
 const MAX_WIDGET_LINES = 10; // pi caps string-array widgets at 10 lines; keep the same cap for the factory form
