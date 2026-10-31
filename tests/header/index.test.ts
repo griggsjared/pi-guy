@@ -18,9 +18,9 @@ import header from "../../src/header/index.ts";
 import { tempDir } from "../helpers/fs.ts";
 import { captureHandlers } from "../helpers/pi.ts";
 import { fakeTheme } from "../helpers/theme.ts";
-import { sleep } from "../helpers/wait.ts";
+import { flush, waitFor } from "../helpers/wait.ts";
 
-test("header shows final context files regardless of extension order and resets each session", async (t) => {
+test("header publishes discovered context files and final prompt files regardless of extension order", async (t) => {
   const root = await tempDir(t, "pi-header-");
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = root;
@@ -91,17 +91,6 @@ test("header shows final context files regardless of extension order and resets 
     .replace(/\x1b\[[0-9;]*m/g, "");
   assert.ok(lines.includes("  Context:\n"));
   assert.ok(lines.includes(`    ${sharedFile}\n    ${localFile}\n    ~/extra-上下.md`));
-  for (const width of [0, 1, 2, 4, 20, 80, 100, 500]) {
-    const output = rendered.render(width);
-    for (const line of output) assert.ok(visibleWidth(line) <= width);
-    if (width >= 2) {
-      const content = output.join("").replace(/\x1b\[[0-9;]*m/g, "");
-      for (const path of [sharedFile, localFile, "~/extra-上下.md"]) {
-        assert.ok(content.includes(path), `${path} missing at width ${width}`);
-      }
-    }
-  }
-
   await rm(localFile);
   extraPath = join(root, "later.md");
   event = { systemPromptOptions: { contextFiles: [...initialContextFiles] } };
@@ -121,6 +110,95 @@ test("header shows final context files regardless of extension order and resets 
   for (const handler of handlers.get("before_agent_start")!) await handler(event, ctx);
   for (const handler of handlers.get("agent_start")!) await handler({}, ctx);
   assert.ok(rendered.render(500).join("\n").includes(localFile));
+});
+
+test("header fits the logo and context paths within the available width", async (t) => {
+  const root = await tempDir(t, "pi-header-");
+  const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+  process.env.PI_CODING_AGENT_DIR = root;
+  t.after(() => {
+    if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+  });
+  const sharedFile = join(root, "AGENTS.md");
+  const localFile = join(root, "AGENTS.local.md");
+  const { handlers, on } = captureHandlers();
+  const events = createEventBus();
+  header({ events, on } as unknown as ExtensionAPI);
+  let rendered: { render(width: number): string[] } | undefined;
+  await handlers.get("session_start")![0]!(
+    {},
+    {
+      mode: "tui",
+      cwd: root,
+      isProjectTrusted: () => true,
+      ui: {
+        setHeader(factory: any) {
+          rendered = factory(
+            { requestRender() {} },
+            {
+              fg: (_color: string, value: string) => `\x1b[2m${value}\x1b[0m`,
+              bold: (value: string) => value,
+            },
+          );
+        },
+      },
+    },
+  );
+  events.emit("context:files", { source: "test", paths: [sharedFile, localFile, join(homedir(), "extra-上下.md")] });
+  assert.ok(rendered);
+  for (const width of [0, 1, 2, 4, 20, 80, 100, 500]) {
+    const output = rendered.render(width);
+    for (const line of output) assert.ok(visibleWidth(line) <= width);
+    if (width >= 2) {
+      const content = output.join("").replace(/\x1b\[[0-9;]*m/g, "");
+      for (const path of [sharedFile, localFile, "~/extra-上下.md"]) {
+        assert.ok(content.includes(path), `${path} missing at width ${width}`);
+      }
+    }
+  }
+});
+
+test("header resets discovered and prompt context files for a new session", async (t) => {
+  const root = await tempDir(t, "pi-header-");
+  const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+  process.env.PI_CODING_AGENT_DIR = root;
+  t.after(() => {
+    if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+  });
+  const sharedFile = join(root, "AGENTS.md");
+  const localFile = join(root, "AGENTS.local.md");
+  await writeFile(sharedFile, "shared");
+  await writeFile(localFile, "local");
+  const { handlers, on } = captureHandlers();
+  const pi = { events: createEventBus(), on } as unknown as ExtensionAPI;
+  let rendered: { render(width: number): string[] } | undefined;
+  const ctx = {
+    mode: "tui",
+    cwd: root,
+    isProjectTrusted: () => true,
+    ui: {
+      setHeader(factory: any) {
+        rendered = factory({ requestRender() {} }, fakeTheme());
+      },
+    },
+  };
+  header(pi);
+  agentsLocal(pi);
+  for (const handler of handlers.get("session_start")!) await handler({}, ctx);
+  await rm(sharedFile);
+  await rm(localFile);
+  const event = {
+    systemPromptOptions: {
+      contextFiles: [
+        { path: sharedFile, content: "shared" },
+        { path: join(root, "later.md"), content: "extra" },
+      ],
+    },
+  };
+  for (const handler of handlers.get("before_agent_start")!) await handler(event, ctx);
+  for (const handler of handlers.get("agent_start")!) await handler({}, ctx);
 
   const child = join(root, "child");
   await mkdir(child);
@@ -128,7 +206,8 @@ test("header shows final context files regardless of extension order and resets 
   await writeFile(childFile, "child");
   ctx.cwd = child;
   for (const handler of handlers.get("session_start")!) await handler({}, ctx);
-  lines = rendered
+  assert.ok(rendered);
+  const lines = rendered
     .render(500)
     .join("\n")
     .replace(/\x1b\[[0-9;]*m/g, "");
@@ -237,7 +316,7 @@ test("header leaves out the pi-bolt version when its probe fails", async (t) => 
           code: failure === "non-zero exit" ? 1 : 0,
           killed: failure === "killed",
         });
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      await flush();
       assert.ok(probe.render().includes(`pi v${VERSION} · pi-guy v`));
     });
   }
@@ -301,7 +380,7 @@ test("header lists configured extensions by short name, without pi-guy or untrus
         },
       },
     );
-    for (let waited = 0; !resolved && waited < 1000; waited += 5) await sleep(5);
+    await waitFor(() => resolved);
     return rendered!.render(500).join("\n");
   };
 
@@ -368,7 +447,7 @@ test("header uses the package version tag or its Git commit, without using a par
           code: 0,
           killed: false,
         });
-        await new Promise<void>((resolve) => setImmediate(resolve));
+        await flush();
         assert.equal(probe.renderRequests, beforeReply + 1);
       }
       const suffix = scenario === "untagged" ? "-843cbb0" : "";
@@ -396,7 +475,7 @@ test("shutdown ignores a late Git version result", async () => {
     code: 0,
     killed: false,
   });
-  await new Promise<void>((resolve) => setImmediate(resolve));
+  await flush();
   assert.equal(probe.render(), before);
 });
 
@@ -437,7 +516,7 @@ async function startHeaderProbe(
       },
     },
   );
-  await new Promise<void>((resolve) => setImmediate(resolve));
+  await flush();
   return {
     calls,
     result,
