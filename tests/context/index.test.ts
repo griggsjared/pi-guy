@@ -316,3 +316,13 @@ test("non-TUI commands report the limitation without opening a terminal componen
   await h.start();
   assert.deepEqual(h.notifications, [{ text: "context requires interactive mode", level: "error" }]);
 });
+
+test("inspection failures report the cause instead of opening a terminal component", async () => {
+  const h = harness();
+  h.ctx.ui.custom = () => assert.fail("usage failure cannot display a terminal overlay");
+  h.ctx.getContextUsage = () => {
+    throw new Error("usage unavailable");
+  };
+  await h.start();
+  assert.deepEqual(h.notifications, [{ text: "Unable to show context usage: usage unavailable", level: "error" }]);
+});

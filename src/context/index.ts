@@ -161,8 +161,11 @@ export default function (pi: ExtensionAPI) {
             overlayOptions: { anchor: "center", width: 76, maxHeight: "100%" },
           },
         );
-      } catch {
-        ctx.ui.notify("Unable to show context usage", "error");
+      } catch (error) {
+        ctx.ui.notify(
+          `Unable to show context usage: ${error instanceof Error ? error.message : String(error)}`,
+          "error",
+        );
       }
     },
   });
