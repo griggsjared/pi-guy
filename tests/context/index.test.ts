@@ -8,7 +8,7 @@ import type {
   Theme,
   ToolInfo,
 } from "@earendil-works/pi-coding-agent";
-import { KeybindingsManager, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
+import { KeybindingsManager, TUI_KEYBINDINGS, TuiMainScreen } from "@earendil-works/pi-tui";
 import type { Component, OverlayOptions, TUI } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import context from "../../src/context/index.ts";
@@ -33,6 +33,19 @@ function harness({
   let modal!: Component;
   let options: { overlay?: boolean; overlayOptions?: OverlayOptions } | undefined;
   let completions = 0;
+  let renders = 0;
+  const terminal = {
+    rows: 40,
+    columns: 80,
+    write: () => {},
+    hideCursor: () => {},
+    moveBy: () => {},
+    clearLine: () => {},
+    clearFromCursor: () => {},
+    clearScreen: () => {},
+    showCursor: () => {},
+    stop: () => {},
+  };
   const notifications: { text: string; level: string }[] = [];
   const styles: { color: string; text: string }[] = [];
   context({
@@ -63,7 +76,7 @@ function harness({
         options = customOptions;
         const pending = Promise.withResolvers<void>();
         modal = factory(
-          { terminal: { rows: 40 } } as TUI,
+          { terminal, requestRender: () => renders++ } as unknown as TUI,
           {
             ...fakeTheme(),
             fg: (color: string, text: string) => {
@@ -85,11 +98,18 @@ function harness({
     ctx,
     notifications,
     styles,
+    terminal,
+    get renders() {
+      return renders;
+    },
     start: () => handler("", ctx),
     input: (key: string) => modal.handleInput!(key),
     render: (width: number) => modal.render(width),
     get options() {
       return options;
+    },
+    get modal() {
+      return modal;
     },
     get completions() {
       return completions;
@@ -284,7 +304,35 @@ test("centered overlay handles minimal width and dismisses with configured keys"
   const h = harness();
   const running = h.start();
   assert.equal(h.options?.overlay, true);
-  assert.equal(h.options?.overlayOptions?.anchor, "center");
+  assert.deepEqual(h.options?.overlayOptions, {
+    anchor: "center",
+    width: "100%",
+    minWidth: 60,
+    maxHeight: "100%",
+    margin: 1,
+  });
+  const tui = new TuiMainScreen(h.terminal as never);
+  const overlay = tui.showOverlay(h.modal, h.options?.overlayOptions);
+  for (const [columns, rows, margin] of [
+    [1, 1, { top: 0, bottom: 0, left: 0, right: 0 }],
+    [1, 9, { top: 1, bottom: 1, left: 0, right: 0 }],
+    [80, 2, { top: 0, bottom: 0, left: 1, right: 1 }],
+    [80, 9, 1],
+  ] as const) {
+    h.terminal.columns = columns;
+    h.terminal.rows = rows;
+    assert.deepEqual(h.options?.overlayOptions?.margin, margin);
+    tui.renderNow(true);
+    const bounds = overlay.getBounds();
+    assert.ok(bounds);
+    assert.ok(bounds.row >= 0 && bounds.row + bounds.height <= rows);
+    assert.ok(bounds.col >= 0 && bounds.col + bounds.width <= columns);
+    assert.equal(bounds.width, columns - (columns >= 3 ? 2 : 0));
+    assert.equal(bounds.height, rows - (rows >= 3 ? 2 : 0));
+    assert.equal(h.render(bounds.width).length, bounds.height);
+  }
+  overlay.hide();
+  tui.stop();
   assert.doesNotThrow(() => h.render(1));
   h.input("x");
   assert.equal(h.completions, 0);
@@ -306,6 +354,60 @@ test("centered overlay handles minimal width and dismisses with configured keys"
     await pending;
     assert.equal(remapped.completions, completed + 1);
   }
+});
+
+test("pages through wrapped context and adapts to terminal resizing", async () => {
+  const h = harness();
+  h.terminal.rows = 9;
+  const running = h.start();
+  const top = h.render(30);
+  assert.equal(top.length, 7);
+  assert.match(top.join("\n"), /Model: Test model/);
+  const pages: string[] = [];
+  for (let i = 0; i < 20; i++) {
+    h.input("\x1b[6~");
+    pages.push(...h.render(30));
+  }
+  assert.equal(h.renders, 20);
+  const bottom = h.render(30).join("\n");
+  assert.match(bottom, /not measured/);
+  assert.match(
+    pages.join(" ").replace(/[│\n]/g, " ").replace(/\s+/g, " "),
+    /Images and provider serialization are not measured/,
+  );
+  for (let i = 0; i < 20; i++) {
+    h.input("\x1b[5~");
+    h.render(30);
+  }
+  assert.match(h.render(30).join("\n"), /Model: Test model/);
+
+  for (let i = 0; i < 20; i++) {
+    h.input("\x1b[6~");
+    h.render(30);
+  }
+  h.terminal.rows = 100;
+  const resized = h.render(76);
+  assert.match(resized.join("\n"), /Model: Test model/);
+  assert.match(
+    resized.join("\n").replace(/[│\n]/g, " ").replace(/\s+/g, " "),
+    /Images and provider serialization are not measured/,
+  );
+  assert.ok(resized.length < 98);
+  const narrow = h.render(30);
+  assert.ok(narrow.length > resized.length);
+  assert.match(
+    narrow.join(" ").replace(/[│\n]/g, " ").replace(/\s+/g, " "),
+    /Images and provider serialization are not measured/,
+  );
+  h.terminal.rows = 3;
+  assert.match(h.render(30).join(""), /Model: Test model/);
+  for (let i = 0; i < 100; i++) {
+    h.input("\x1b[6~");
+    assert.equal(h.render(30).length, 1);
+  }
+  assert.match(h.render(30).join(""), /measured\./);
+  h.input("\x1b");
+  await running;
 });
 
 test("non-TUI commands report the limitation without opening a terminal component", async () => {

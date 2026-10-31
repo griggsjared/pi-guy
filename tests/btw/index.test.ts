@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AssistantMessage, Context } from "@earendil-works/pi-ai";
+import { initTheme } from "@earendil-works/pi-coding-agent";
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
@@ -8,6 +9,7 @@ import type {
   SessionMessageEntry,
 } from "@earendil-works/pi-coding-agent";
 import { KeybindingsManager, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
+import type { OverlayOptions } from "@earendil-works/pi-tui";
 import btw, { fitModalBody, transcript } from "../../src/btw/index.ts";
 import { fakeTheme } from "../helpers/theme.ts";
 import { flush } from "../helpers/wait.ts";
@@ -69,6 +71,7 @@ test("modal body scrolls within the padded terminal height", () => {
 });
 
 interface Modal {
+  render(width: number): string[];
   handleInput(data: string): void;
   dispose(): void;
 }
@@ -82,6 +85,8 @@ function harness(history: SessionMessageEntry["message"][] = []) {
   let handler!: Parameters<ExtensionAPI["registerCommand"]>[1]["handler"];
   let shutdown!: () => void;
   let modal!: Modal;
+  let options: { overlay?: boolean; overlayOptions?: OverlayOptions } | undefined;
+  const terminal = { rows: 24, columns: 80 };
   let renders = 0;
   let completions = 0;
   const sent: { text: string; options: unknown }[] = [];
@@ -137,14 +142,18 @@ function harness(history: SessionMessageEntry["message"][] = []) {
       notify: (text: string, level: string) => {
         notifications.push({ text, level });
       },
-      custom: (factory: (tui: unknown, theme: unknown, kb: unknown, done: (value: string | null) => void) => Modal) => {
+      custom: (
+        factory: (tui: unknown, theme: unknown, kb: unknown, done: (value: string | null) => void) => Modal,
+        customOptions: typeof options,
+      ) => {
+        options = customOptions;
         const pending = Promise.withResolvers<string | null>();
         modal = factory(
           {
             requestRender: () => {
               renders++;
             },
-            terminal: { rows: 24 },
+            terminal,
           },
           fakeTheme(),
           new KeybindingsManager(TUI_KEYBINDINGS),
@@ -163,6 +172,11 @@ function harness(history: SessionMessageEntry["message"][] = []) {
   return {
     start: (question: string) => handler(question, ctx),
     input: (key: string) => modal.handleInput(key),
+    render: (width: number) => modal.render(width),
+    terminal,
+    get options() {
+      return options;
+    },
     shutdown: () => shutdown(),
     requests,
     sent,
@@ -178,6 +192,65 @@ function harness(history: SessionMessageEntry["message"][] = []) {
     },
   };
 }
+
+test("modal centers with padding and grows naturally for short content", async () => {
+  const h = harness();
+  const running = h.start("");
+  assert.deepEqual(h.options, {
+    overlay: true,
+    overlayOptions: { anchor: "center", width: "100%", minWidth: 60, maxHeight: "100%", margin: 1 },
+  });
+  h.terminal.columns = 1;
+  assert.deepEqual(h.options?.overlayOptions?.margin, { top: 1, bottom: 1, left: 0, right: 0 });
+  h.terminal.rows = 2;
+  assert.deepEqual(h.options?.overlayOptions?.margin, { top: 0, bottom: 0, left: 0, right: 0 });
+  assert.equal(h.render(1).length, 2);
+  h.terminal.columns = 80;
+  assert.deepEqual(h.options?.overlayOptions?.margin, { top: 0, bottom: 0, left: 1, right: 1 });
+  h.terminal.rows = 24;
+  const initial = h.render(40);
+  h.terminal.rows = 60;
+  assert.equal(h.render(40).length, initial.length);
+  h.input("hello");
+  assert.match(h.render(40).join("\n"), /hello/);
+  h.input("\r");
+  assert.equal(h.requests.length, 1);
+  h.input("\x1b");
+  await running;
+});
+
+test("short resized terminals scroll wrapped answers and keep the editor usable", async () => {
+  initTheme("dark");
+  const h = harness();
+  h.terminal.rows = 6;
+  const running = h.start("question");
+  h.requests[0]!.resolve(answer(Array.from({ length: 12 }, (_, i) => `answer${i} long words here`).join("\n\n")));
+  await flush();
+  assert.ok(h.render(20).length <= 4);
+  assert.match(h.render(20).join("\n"), /answer11|words here/);
+  for (let i = 0; i < 100; i++) h.input("\x1b[5~");
+  h.input("\x1b[6~");
+  h.input("\x1b[6~");
+  assert.match(h.render(20).join("\n"), /question/);
+  h.terminal.rows = 12;
+  const resized = h.render(40);
+  assert.ok(resized.length <= 10);
+  for (let i = 0; i < 100; i++) h.input("\x1b[6~");
+  assert.match(h.render(40).join("\n"), /answer11/);
+  h.terminal.rows = 200;
+  const expanded = h.render(40).join("\n");
+  assert.match(expanded, /question/);
+  assert.match(expanded, /answer11/);
+  h.terminal.rows = 6;
+  assert.ok(h.render(2).length <= 4);
+  assert.ok(h.render(12).length <= 4);
+  h.input("reply");
+  assert.match(h.render(20).join("\n"), /reply/);
+  h.input("\r");
+  assert.equal(h.requests.length, 2);
+  h.input("\x1b");
+  await running;
+});
 
 test("registry requests isolate all system state while retaining context and successive private turns", async () => {
   const history = [

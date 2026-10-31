@@ -97,8 +97,12 @@ export async function openSubagentTail(
   registry: JobRegistry,
   jobId: number,
 ): Promise<void> {
+  let overlayTui: TUI | undefined;
   await ui.custom<void>(
-    (tui, theme, _keybindings, done) => new SubagentTail(tui, theme, registry, jobId, () => done(undefined)),
+    (tui, theme, _keybindings, done) => {
+      overlayTui = tui;
+      return new SubagentTail(tui, theme, registry, jobId, () => done(undefined));
+    },
     {
       overlay: true,
       overlayOptions: {
@@ -106,7 +110,12 @@ export async function openSubagentTail(
         width: "100%",
         minWidth: 60,
         maxHeight: "100%",
-        margin: 1,
+        get margin() {
+          if (!overlayTui) return 1;
+          const horizontal = overlayTui.terminal.columns >= 3 ? 1 : 0;
+          const vertical = overlayTui.terminal.rows >= 3 ? 1 : 0;
+          return horizontal && vertical ? 1 : { top: vertical, bottom: vertical, left: horizontal, right: horizontal };
+        },
       },
     },
   );

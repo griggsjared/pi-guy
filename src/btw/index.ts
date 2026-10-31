@@ -9,7 +9,8 @@ import {
   UserMessageComponent,
 } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Key, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
+import { CURSOR_MARKER, Key, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
+import type { TUI } from "@earendil-works/pi-tui";
 import { boxed } from "../lib/box.ts";
 
 const SYSTEM_PROMPT =
@@ -77,9 +78,10 @@ export function fitModalBody(
   requestedScrollTop: number,
   terminalRows: number,
   chromeRows: number,
+  borderRows = OVERLAY_BORDER_ROWS,
 ): { lines: string[]; scrollTop: number; viewportRows: number; maxScroll: number } {
-  const maxOverlayRows = Math.max(1, Math.floor(terminalRows) - OVERLAY_MARGIN * 2);
-  const viewportRows = Math.max(0, maxOverlayRows - chromeRows - OVERLAY_BORDER_ROWS);
+  const maxOverlayRows = Math.max(1, Math.floor(terminalRows) - (terminalRows >= 3 ? OVERLAY_MARGIN * 2 : 0));
+  const viewportRows = Math.max(0, maxOverlayRows - chromeRows - borderRows);
   const maxScroll = Math.max(0, lines.length - viewportRows);
   const scrollTop = Math.min(maxScroll, Math.max(0, requestedScrollTop));
   return {
@@ -130,8 +132,10 @@ export default function (pi: ExtensionAPI) {
       let error: unknown;
 
       try {
+        let overlayTui: TUI | undefined;
         const result = await ctx.ui.custom<string | null>(
           (tui, theme, keybindings, done) => {
+            overlayTui = tui;
             let settled = false;
             let disposed = false;
             let loading = question.length > 0;
@@ -230,17 +234,38 @@ export default function (pi: ExtensionAPI) {
               render: (width: number) => {
                 if (disposed) return [];
                 const maxWidth = Math.max(1, Math.floor(width));
-                const innerWidth = Math.max(1, maxWidth - 2);
-                contentWidth = innerWidth;
+                const maxRows = Math.max(
+                  1,
+                  Math.floor(tui.terminal.rows) - (tui.terminal.rows >= 3 ? OVERLAY_MARGIN * 2 : 0),
+                );
                 try {
-                  const body = answerLines(turns, innerWidth, loading ? pendingQuestion : undefined);
-                  const inputLines = replyInput.render(innerWidth);
-                  const chromeRows = inputLines.length + (loading ? 1 : 0) + 1;
-                  const fitted = fitModalBody(body, scrollTop, tui.terminal.rows, chromeRows);
+                  let bordered = maxWidth >= 3;
+                  let innerWidth = bordered ? maxWidth - 2 : maxWidth;
+                  let body = answerLines(turns, innerWidth, loading ? pendingQuestion : undefined);
+                  let inputLines = replyInput.render(innerWidth);
+                  if (bordered && inputLines.length + (body.length > 0 ? 1 : 0) + OVERLAY_BORDER_ROWS > maxRows) {
+                    bordered = false;
+                    innerWidth = maxWidth;
+                    body = answerLines(turns, innerWidth, loading ? pendingQuestion : undefined);
+                    inputLines = replyInput.render(innerWidth);
+                  }
+                  contentWidth = innerWidth;
+                  const borderRows = bordered ? OVERLAY_BORDER_ROWS : 0;
+                  const inputBudget = Math.max(1, maxRows - borderRows - (body.length > 0 && maxRows > 1 ? 1 : 0));
+                  if (inputLines.length > inputBudget) {
+                    const cursor = inputLines.findIndex((line) => line.includes(CURSOR_MARKER));
+                    const start = Math.max(0, Math.min(cursor, inputLines.length - inputBudget));
+                    inputLines = inputLines.slice(start, start + inputBudget);
+                  }
+                  const spareRows = maxRows - borderRows - inputLines.length - (body.length > 0 ? 1 : 0);
+                  const showLoading = loading && spareRows > 0;
+                  const showHint = spareRows > (showLoading ? 1 : 0);
+                  const chromeRows = inputLines.length + (showLoading ? 1 : 0) + (showHint ? 1 : 0);
+                  const fitted = fitModalBody(body, scrollTop, tui.terminal.rows, chromeRows, borderRows);
                   scrollTop = fitted.scrollTop;
                   viewportRows = fitted.viewportRows;
                   const lines = [...fitted.lines, ...inputLines];
-                  if (loading) lines.push(theme.fg("dim", "Thinking…"));
+                  if (showLoading) lines.push(theme.fg("dim", "Thinking…"));
                   const scrollHint =
                     fitted.maxScroll > 0 ? `PgUp/PgDn scroll (${scrollTop + 1}/${fitted.maxScroll + 1}) · ` : "";
                   const hint = loading
@@ -248,8 +273,10 @@ export default function (pi: ExtensionAPI) {
                     : turns.length > 0
                       ? `${scrollHint}Enter send · Ctrl+S send to agent · Esc close`
                       : `${scrollHint}Enter send · Esc close`;
-                  lines.push(theme.fg("dim", hint));
-                  return boxed(lines, maxWidth, theme, "btw");
+                  if (showHint) lines.push(theme.fg("dim", hint));
+                  return bordered
+                    ? boxed(lines, maxWidth, theme, "btw")
+                    : lines.map((line) => truncateToWidth(line, maxWidth, "", true));
                 } catch (caught) {
                   scheduleFail(caught);
                   return [];
@@ -292,11 +319,18 @@ export default function (pi: ExtensionAPI) {
           {
             overlay: true,
             overlayOptions: {
-              anchor: "bottom-center",
+              anchor: "center",
               width: "100%",
               minWidth: 60,
               maxHeight: "100%",
-              margin: OVERLAY_MARGIN,
+              get margin() {
+                if (!overlayTui) return OVERLAY_MARGIN;
+                const horizontal = overlayTui.terminal.columns >= 3 ? OVERLAY_MARGIN : 0;
+                const vertical = overlayTui.terminal.rows >= 3 ? OVERLAY_MARGIN : 0;
+                return horizontal && vertical
+                  ? OVERLAY_MARGIN
+                  : { top: vertical, bottom: vertical, left: horizontal, right: horizontal };
+              },
             },
           },
         );

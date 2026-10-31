@@ -1,11 +1,91 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import { createJobRegistry } from "../../src/subagents/registry.ts";
 import { registerStatusCommands } from "../../src/subagents/status-tools.ts";
 import { captureCommands } from "../helpers/pi.ts";
 import { fakeTheme } from "../helpers/theme.ts";
 import { renderText } from "./helpers.ts";
+
+test("paused tail keeps its event in view as steps and retained history change", (t) => {
+  t.mock.timers.enable({ apis: ["Date", "setInterval"], now: 1000 });
+  const { registry, id, component } = openTail();
+  t.after(() => component.dispose());
+  for (let index = 1; index <= 10; index++) registry.appendEvent(id, { kind: "state", summary: `event ${index}` });
+  t.mock.timers.tick(250);
+  component.render(100);
+  component.handleInput("\x1b[H");
+  for (let index = 0; index < 5; index++) component.handleInput("\x1b[B");
+  assert.match(renderText(component), /\[3\].*event 3/);
+
+  registry.recordStep(id, { phase: "start", id: "step", kind: "tool", summary: "reading" });
+  t.mock.timers.tick(250);
+  assert.match(renderText(component), /\[3\].*event 3/);
+  assert.doesNotMatch(renderText(component), /\[1\].*event 1/);
+  registry.appendEvent(id, { kind: "state", summary: "event 11" });
+  t.mock.timers.tick(250);
+  assert.match(renderText(component), /\[3\].*event 3/);
+  assert.doesNotMatch(renderText(component), /event 11/);
+  registry.recordStep(id, { phase: "end", id: "step" });
+  t.mock.timers.tick(250);
+  assert.match(renderText(component), /\[3\].*event 3/);
+
+  for (let index = 12; index <= 111; index++) registry.appendEvent(id, { kind: "state", summary: `event ${index}` });
+  t.mock.timers.tick(250);
+  assert.match(renderText(component), /\[12\].*event 12/);
+  component.handleInput("\x1b[A");
+  component.handleInput("\x1b[A");
+  assert.match(renderText(component), /History dropped before event 12/);
+});
+
+test("the tail remains visible in a one-cell terminal", (t) => {
+  t.mock.timers.enable({ apis: ["Date", "setInterval"], now: 1000 });
+  const { component, terminal } = openTail();
+  t.after(() => component.dispose());
+  terminal.rows = 1;
+  assert.deepEqual(component.render(1).map(visibleWidth), [1]);
+  terminal.rows = 2;
+  assert.equal(component.render(1).length, 2);
+});
+
+test("a paused tail resumes following when a taller terminal reaches the bottom", (t) => {
+  t.mock.timers.enable({ apis: ["Date", "setInterval"], now: 1000 });
+  const { registry, id, component, terminal } = openTail();
+  t.after(() => component.dispose());
+  for (let index = 1; index <= 10; index++) registry.appendEvent(id, { kind: "state", summary: `event ${index}` });
+  t.mock.timers.tick(250);
+  component.render(100);
+  component.handleInput("\x1b[A");
+  terminal.rows = 20;
+  assert.match(renderText(component), /following/);
+  registry.appendEvent(id, { kind: "state", summary: "newest event" });
+  t.mock.timers.tick(250);
+  assert.match(renderText(component), /newest event/);
+  assert.match(renderText(component), /following/);
+});
+
+function openTail() {
+  const registry = createJobRegistry();
+  const id = registry.add("scout", "task");
+  const { commands, registerCommand } = captureCommands();
+  registerStatusCommands({ registerCommand } as unknown as ExtensionAPI, { registry });
+  const terminal = { rows: 8, columns: 100 };
+  let component: { render(width: number): string[]; handleInput(data: string): void; dispose(): void } | undefined;
+  const ctx = {
+    mode: "tui",
+    hasUI: true,
+    ui: {
+      custom: (factory: (tui: unknown, theme: unknown, keys: unknown, done: () => void) => typeof component) => {
+        component = factory({ terminal, requestRender: () => {} }, fakeTheme(), {}, () => {});
+        return new Promise<void>(() => {});
+      },
+    },
+  } as unknown as ExtensionCommandContext;
+  void commands.get("subagent-tail")!.handler(String(id), ctx);
+  assert.ok(component);
+  return { registry, id, component, terminal };
+}
 
 test("/subagent-tail opens a live overlay and follows new events", async (t) => {
   t.mock.timers.enable({ apis: ["Date", "setInterval"], now: new Date(2026, 0, 2, 12, 34, 53).getTime() });
@@ -41,9 +121,10 @@ test("/subagent-tail opens a live overlay and follows new events", async (t) => 
   t.after(() => component?.dispose());
   let overlayOptions: unknown;
   let renderRequests = 0;
+  const terminal = { rows: 40, columns: 100 };
   const custom = (
     factory: (
-      tui: { requestRender: () => void },
+      tui: { requestRender: () => void; terminal: { rows: number } },
       theme: ReturnType<typeof fakeTheme>,
       keybindings: unknown,
       done: (result: void) => void,
@@ -54,6 +135,7 @@ test("/subagent-tail opens a live overlay and follows new events", async (t) => 
       overlayOptions = options;
       component = factory(
         {
+          terminal,
           requestRender: () => {
             renderRequests += 1;
           },
@@ -102,6 +184,70 @@ test("/subagent-tail opens a live overlay and follows new events", async (t) => 
   t.mock.timers.tick(250);
   assert.match(renderText(component), /new event/);
   assert.ok(renderRequests > 0);
+
+  for (let index = 0; index < 20; index += 1) {
+    registry.appendEvent(id, { kind: "assistant", summary: `event ${index}` });
+  }
+  t.mock.timers.tick(250);
+  let lines = component.render(100);
+  assert.equal(lines.filter((line) => /\[\d+\] \d\d:\d\d:\d\d/.test(line)).length, 14);
+  assert.match(lines.join("\n"), /event 19/);
+
+  terminal.rows = 8;
+  lines = component.render(100);
+  assert.ok(lines.length <= 6);
+  assert.match(lines.join("\n"), /event 19/);
+  component.handleInput!("\x1b[H");
+  assert.match(renderText(component), /Subagent #1 scout · running/);
+  assert.match(renderText(component), /Task: running task/);
+  assert.match(renderText(component), /Title: Tail title/);
+  component.handleInput!("\x1b[6~");
+  assert.match(renderText(component), /Active steps \(3\)/);
+  component.handleInput!("\x1b[6~");
+  assert.match(renderText(component), /Events 1-1\/23 · cursor 23 · paused/);
+  component.handleInput!("\x1b[A");
+  assert.match(renderText(component), /retry: Retrying/);
+  component.handleInput!("\x1b[B");
+  assert.match(renderText(component), /Events 1-1\/23/);
+  component.handleInput!("\x1b[5~");
+  assert.match(renderText(component), /Active steps \(3\)/);
+  component.handleInput!("\x1b[6~");
+  const paused = renderText(component);
+  registry.appendEvent(id, { kind: "assistant", summary: "while paused" });
+  t.mock.timers.tick(250);
+  assert.match(renderText(component), /paused/);
+  assert.doesNotMatch(renderText(component), /while paused/);
+  assert.match(paused, /started/);
+  component.handleInput!("\x1b[F");
+  assert.match(renderText(component), /while paused/);
+  registry.appendEvent(id, { kind: "assistant", summary: "following again" });
+  t.mock.timers.tick(250);
+  assert.match(renderText(component), /following again/);
+
+  terminal.rows = 4;
+  assert.ok(component.render(100).length <= 2);
+  component.handleInput!("\x1b[H");
+  assert.match(renderText(component), /Subagent #1 scout/);
+  terminal.rows = 40;
+  component.render(100);
+  component.handleInput!("\x1b[F");
+  assert.match(renderText(component), /following again/);
+
+  terminal.rows = 8;
+  component.render(100);
+  component.handleInput!("\x1b[H");
+  registry.recordStep(id, { phase: "end", id: "assistant-1" });
+  registry.recordStep(id, { phase: "end", id: "tool-1" });
+  registry.recordStep(id, { phase: "end", id: "retry-1" });
+  for (let index = 0; index < 105; index += 1) {
+    registry.appendEvent(id, { kind: "state", summary: `replacement ${index}` });
+  }
+  t.mock.timers.tick(250);
+  component.render(100);
+  component.handleInput!("\x1b[6~");
+  assert.match(renderText(component), /History dropped before event/);
+  component.handleInput!("\x1b[F");
+  assert.match(renderText(component), /replacement 104/);
 
   component.handleInput!("q");
   await pending;

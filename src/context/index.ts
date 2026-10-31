@@ -1,6 +1,7 @@
 import { convertToLlm } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { Key, matchesKey, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import type { TUI } from "@earendil-works/pi-tui";
 import { boxed } from "../lib/box.ts";
 
 const CHARS_PER_TOKEN = 4;
@@ -8,6 +9,7 @@ const GRID_ROWS = 4;
 const MAX_GRID_COLUMNS = 20;
 const WARNING_PERCENT = 90;
 const ERROR_PERCENT = 100;
+const OVERLAY_MARGIN = 1;
 
 function allocate(weights: number[], total: number): number[] {
   const sum = weights.reduce((value, weight) => value + weight, 0);
@@ -89,76 +91,117 @@ export default function (pi: ExtensionAPI) {
         ] as const;
         const number = (value: number | null) => (value === null ? "unknown" : value.toLocaleString("en-US"));
 
+        let overlayTui: TUI | undefined;
         await ctx.ui.custom<void>(
-          (_tui, theme, keybindings, done) => ({
-            render: (width: number) => {
-              const innerWidth = Math.max(1, width - 2);
-              const columns = Math.min(MAX_GRID_COLUMNS, Math.max(1, Math.floor((innerWidth + 1) / 2)));
-              const cells = columns * GRID_ROWS;
-              const grid: string[] = [];
-              if (used !== null && free !== null) {
-                const gridCounts = allocate([...(counts ?? [0, 0, 0, 0]), counts === null ? used : 0, free], cells);
-                const colors = [...categories.map((category) => category.color), "muted", "dim"] as const;
-                for (let index = 0; index < gridCounts.length; index++) {
-                  for (let cell = 0; cell < gridCounts[index]!; cell++) {
-                    grid.push(theme.fg(colors[index]!, index === 5 ? "·" : "■"));
-                  }
-                }
-              } else {
-                grid.push(...Array.from({ length: cells }, () => theme.fg("dim", "?")));
-              }
-              const lines = [
-                `Model: ${ctx.model?.name ?? ctx.model?.id ?? "Unknown"}`,
-                `Window: ${number(window)} tokens`,
-                theme.fg(
-                  percent !== null && percent >= ERROR_PERCENT
-                    ? "error"
-                    : percent !== null && percent >= WARNING_PERCENT
-                      ? "warning"
-                      : "text",
-                  `Used: ${number(used)} tokens${percent === null ? "" : ` (${percent.toFixed(1)}%)`} · ${startupEstimate ? "Startup estimate (chars/4)" : "Pi estimate"}`,
-                ),
-                `Free: ${number(free)} tokens · grid: · free, ? unknown`,
-                "",
-              ];
-              for (let row = 0; row < GRID_ROWS; row++)
-                lines.push(grid.slice(row * columns, (row + 1) * columns).join(" "));
-              lines.push("", "Estimated breakdown");
-              for (let index = 0; index < categories.length; index++) {
-                const category = categories[index]!;
-                lines.push(
-                  `${theme.fg(category.color, `■ ${category.label}`)}: ${counts === null ? "unknown" : `~${number(counts[index]!)}`} tokens`,
+          (tui, theme, keybindings, done) => {
+            overlayTui = tui;
+            let scrollTop = 0;
+            let viewportRows = 1;
+            let maxScroll = 0;
+            return {
+              render: (width: number) => {
+                const maxRows = Math.max(
+                  1,
+                  Math.floor(tui.terminal.rows) - (tui.terminal.rows >= 3 ? OVERLAY_MARGIN * 2 : 0),
                 );
-              }
-              if (used !== null && counts === null)
-                lines.push(`Unattributed: ${number(used)} tokens (no text/schema weights)`);
-              lines.push(
-                "",
-                ...wrapTextWithAnsi(
+                const bordered = width >= 3 && maxRows >= 3;
+                const innerWidth = Math.max(1, width - (bordered ? 2 : 0));
+                const columns = Math.min(MAX_GRID_COLUMNS, Math.max(1, Math.floor((innerWidth + 1) / 2)));
+                const cells = columns * GRID_ROWS;
+                const grid: string[] = [];
+                if (used !== null && free !== null) {
+                  const gridCounts = allocate([...(counts ?? [0, 0, 0, 0]), counts === null ? used : 0, free], cells);
+                  const colors = [...categories.map((category) => category.color), "muted", "dim"] as const;
+                  for (let index = 0; index < gridCounts.length; index++) {
+                    for (let cell = 0; cell < gridCounts[index]!; cell++) {
+                      grid.push(theme.fg(colors[index]!, index === 5 ? "·" : "■"));
+                    }
+                  }
+                } else {
+                  grid.push(...Array.from({ length: cells }, () => theme.fg("dim", "?")));
+                }
+                const lines = [
+                  `Model: ${ctx.model?.name ?? ctx.model?.id ?? "Unknown"}`,
+                  `Window: ${number(window)} tokens`,
+                  theme.fg(
+                    percent !== null && percent >= ERROR_PERCENT
+                      ? "error"
+                      : percent !== null && percent >= WARNING_PERCENT
+                        ? "warning"
+                        : "text",
+                    `Used: ${number(used)} tokens${percent === null ? "" : ` (${percent.toFixed(1)}%)`} · ${startupEstimate ? "Startup estimate (chars/4)" : "Pi estimate"}`,
+                  ),
+                  `Free: ${number(free)} tokens · grid: · free, ? unknown`,
+                  "",
+                ];
+                for (let row = 0; row < GRID_ROWS; row++)
+                  lines.push(grid.slice(row * columns, (row + 1) * columns).join(" "));
+                lines.push("", "Estimated breakdown");
+                for (let index = 0; index < categories.length; index++) {
+                  const category = categories[index]!;
+                  lines.push(
+                    `${theme.fg(category.color, `■ ${category.label}`)}: ${counts === null ? "unknown" : `~${number(counts[index]!)}`} tokens`,
+                  );
+                }
+                if (used !== null && counts === null)
+                  lines.push(`Unattributed: ${number(used)} tokens (no text/schema weights)`);
+                lines.push(
+                  "",
                   theme.fg(
                     "dim",
                     "Relative text/schema estimates, not measured category counts. Images and provider serialization are not measured.",
                   ),
-                  innerWidth,
-                ),
-              );
-              lines.push(
-                theme.fg(
-                  "dim",
-                  `${keybindings.getKeys("tui.select.cancel").join("/")} / ${keybindings.getKeys("tui.select.confirm").join("/")} close`,
-                ),
-              );
-              return boxed(lines, width, theme, "Context");
-            },
-            handleInput: (data: string) => {
-              if (keybindings.matches(data, "tui.select.cancel") || keybindings.matches(data, "tui.select.confirm"))
-                done();
-            },
-            invalidate: () => {},
-          }),
+                );
+                const body = lines.flatMap((line) => wrapTextWithAnsi(line, innerWidth));
+                const availableRows = maxRows - (bordered ? 2 : 0);
+                const showHint = availableRows >= 2;
+                viewportRows = availableRows - (showHint ? 1 : 0);
+                maxScroll = Math.max(0, body.length - viewportRows);
+                scrollTop = Math.min(maxScroll, Math.max(0, scrollTop));
+                const visible = body.slice(scrollTop, scrollTop + viewportRows);
+                if (showHint) {
+                  const scrollHint = maxScroll > 0 ? "PgUp/PgDn scroll · " : "";
+                  visible.push(
+                    theme.fg(
+                      "dim",
+                      `${scrollHint}${keybindings.getKeys("tui.select.cancel").join("/")} / ${keybindings.getKeys("tui.select.confirm").join("/")} close`,
+                    ),
+                  );
+                }
+                return bordered
+                  ? boxed(visible, width, theme, "Context")
+                  : visible.map((line) => truncateToWidth(line, innerWidth));
+              },
+              handleInput: (data: string) => {
+                if (keybindings.matches(data, "tui.select.cancel") || keybindings.matches(data, "tui.select.confirm")) {
+                  done();
+                } else if (matchesKey(data, Key.pageUp) || matchesKey(data, Key.pageDown)) {
+                  scrollTop = Math.min(
+                    maxScroll,
+                    Math.max(0, scrollTop + (matchesKey(data, Key.pageUp) ? -viewportRows : viewportRows)),
+                  );
+                  tui.requestRender();
+                }
+              },
+              invalidate: () => {},
+            };
+          },
           {
             overlay: true,
-            overlayOptions: { anchor: "center", width: 76, maxHeight: "100%" },
+            overlayOptions: {
+              anchor: "center",
+              width: "100%",
+              minWidth: 60,
+              maxHeight: "100%",
+              get margin() {
+                if (!overlayTui) return OVERLAY_MARGIN;
+                const horizontal = overlayTui.terminal.columns >= 3 ? OVERLAY_MARGIN : 0;
+                const vertical = overlayTui.terminal.rows >= 3 ? OVERLAY_MARGIN : 0;
+                return horizontal && vertical
+                  ? OVERLAY_MARGIN
+                  : { top: vertical, bottom: vertical, left: horizontal, right: horizontal };
+              },
+            },
           },
         );
       } catch (error) {

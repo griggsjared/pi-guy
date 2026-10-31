@@ -63,15 +63,16 @@ test("clicks open the rendered job's tail and leave other mouse gestures alone",
   }
   let widget: Widget | undefined;
   const tails: Tail[] = [];
-  const options: unknown[] = [];
-  const tui = { requestRender: () => {} };
+  const options: { overlayOptions: { margin: unknown } }[] = [];
+  const terminal = { columns: 80, rows: 24 };
+  const tui = { terminal, requestRender: () => {} };
   const ui = {
     setWidget: (_key: string, factory: unknown) => {
       if (typeof factory === "function") widget = factory(tui, fakeTheme());
     },
     custom: (
       factory: (tui: unknown, theme: unknown, keybindings: unknown, done: () => void) => Tail,
-      overlayOptions: unknown,
+      overlayOptions: { overlayOptions: { margin: unknown } },
     ) =>
       new Promise<void>((resolve) => {
         options.push(overlayOptions);
@@ -106,6 +107,14 @@ test("clicks open the rendered job's tail and leave other mouse gestures alone",
     overlay: true,
     overlayOptions: { anchor: "center", width: "100%", minWidth: 60, maxHeight: "100%", margin: 1 },
   });
+  terminal.columns = 1;
+  assert.deepEqual(options[0]!.overlayOptions.margin, { top: 1, bottom: 1, left: 0, right: 0 });
+  terminal.rows = 1;
+  assert.deepEqual(options[0]!.overlayOptions.margin, { top: 0, bottom: 0, left: 0, right: 0 });
+  terminal.columns = 80;
+  assert.deepEqual(options[0]!.overlayOptions.margin, { top: 0, bottom: 0, left: 1, right: 1 });
+  terminal.rows = 24;
+  assert.equal(options[0]!.overlayOptions.margin, 1);
   assert.deepEqual(widget.handleMouse({ type: "click", button: "left", y: 1 }), { handled: true });
   assert.equal(tails.length, 1);
   tails[0]!.handleInput("q");
