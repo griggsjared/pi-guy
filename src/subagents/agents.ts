@@ -37,6 +37,7 @@ export interface AgentConfig {
 const EMPTY_PROFILE: SubagentProfile = { defaults: {}, agents: {} };
 const EMPTY_SETTINGS: SubagentSettings = { profiles: { [SESSION_PROFILE_NAME]: EMPTY_PROFILE }, extensions: [] };
 const PACKAGE_SPEC = /^npm:(?:@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/;
+const MAX_INACTIVITY_TIMEOUT_MS = 2_147_483_647; // largest delay setTimeout honors
 
 function validModel(value: unknown): value is string {
   return typeof value === "string" && /^[^\s\x00-\x1F\x7F]+$/.test(value);
@@ -47,7 +48,7 @@ function validThinkingLevel(value: unknown): value is string {
 }
 
 function validInactivityTimeout(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 2147483647;
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= MAX_INACTIVITY_TIMEOUT_MS;
 }
 
 function parseAgentSettings(value: unknown): AgentSettings {

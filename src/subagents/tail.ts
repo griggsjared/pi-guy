@@ -3,12 +3,16 @@ import { Key, matchesKey } from "@earendil-works/pi-tui";
 import type { Component, TUI } from "@earendil-works/pi-tui";
 import { boxed } from "../lib/box.ts";
 import { formatDuration } from "../lib/format.ts";
+import { MIN_DISPLAY_DURATION_MS } from "./constants.ts";
 import type { Job, JobRegistry } from "./registry.ts";
 import type { JobEvent, JobStep } from "./types.ts";
 
 const MAX_TAIL_EVENTS = 100;
 const MAX_VISIBLE_EVENTS = 14;
 const POLL_INTERVAL_MS = 250;
+const MAX_FIRST_LINE_CHARS = 120;
+/** Width of the event kind column, shared with the peek tool's renderer. */
+export const EVENT_LABEL_WIDTH = 9;
 const TERMINAL_SEQUENCE =
   /\x1B\][\s\S]*?(?:\x07|\x1B\\|\x9C)|\x1B[P^_X][\s\S]*?(?:\x1B\\|\x9C)|[\x1B\x9B][[\]()#;?]*(?:\d{1,4}(?:[;:]\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]/g;
 const CONTROL_CHARACTER = /[\x00-\x1F\x7F-\x9F]/g;
@@ -19,7 +23,7 @@ export function formatLocalTime(timestamp: number): string {
 }
 
 export function formatStepTiming(step: JobStep, now: number): string {
-  return `${formatLocalTime(step.startedAt)} · ${formatDuration(Math.max(1000, (step.endedAt ?? now) - step.startedAt))}${step.endedAt === undefined ? " elapsed" : ""}`;
+  return `${formatLocalTime(step.startedAt)} · ${formatDuration(Math.max(MIN_DISPLAY_DURATION_MS, (step.endedAt ?? now) - step.startedAt))}${step.endedAt === undefined ? " elapsed" : ""}`;
 }
 
 export function formatEventTiming(
@@ -39,7 +43,7 @@ export function formatEventTiming(
     suffix:
       duration === undefined
         ? ""
-        : ` · ${formatDuration(Math.max(1000, duration))}${event.durationMs === undefined && active ? " elapsed" : ""}`,
+        : ` · ${formatDuration(Math.max(MIN_DISPLAY_DURATION_MS, duration))}${event.durationMs === undefined && active ? " elapsed" : ""}`,
   };
 }
 
@@ -79,7 +83,7 @@ function contentText(content: unknown): string {
 
 function firstLine(text: string): string {
   const line = normalizeLine(text.split(/\r?\n/, 1)[0] ?? text);
-  return line.length > 120 ? `${line.slice(0, 119)}…` : line;
+  return line.length > MAX_FIRST_LINE_CHARS ? `${line.slice(0, MAX_FIRST_LINE_CHARS - 1)}…` : line;
 }
 
 function compactToolResult(serialized: string, isError: boolean): string {
@@ -314,7 +318,7 @@ export class SubagentTail implements Component {
     } else {
       for (const event of visible) {
         const summary = formatEventSummary(event) || "(empty)";
-        const label = eventKindLabel(event.kind).padEnd(9);
+        const label = eventKindLabel(event.kind).padEnd(EVENT_LABEL_WIDTH);
         const timing = formatEventTiming(event, job, now);
         lines.push(
           `${this.theme.fg("dim", `[${event.seq}] ${timing.timestamp}`)} ${this.theme.fg(eventColor(event.kind), label)} ${this.theme.fg("muted", summary + timing.suffix)}`,

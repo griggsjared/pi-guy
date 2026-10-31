@@ -7,7 +7,13 @@ import type { Static } from "typebox";
 import { formatDuration } from "../lib/format.ts";
 import { OFF_PROFILE_NAME, resolveAgentSettings } from "./agents.ts";
 import type { AgentConfig, SubagentSettings } from "./agents.ts";
-import { ENTRY_TYPE, QUESTION_ENTRY_TYPE } from "./constants.ts";
+import {
+  CANCELLED_EXIT_CODE,
+  DEFAULT_TERMINAL_COLUMNS,
+  ENTRY_TYPE,
+  MIN_DISPLAY_DURATION_MS,
+  QUESTION_ENTRY_TYPE,
+} from "./constants.ts";
 import { capOutput, formatResultOutput, normalizeTitle, shortLabel } from "./format.ts";
 import type { Job, JobRegistry } from "./registry.ts";
 import { TruncatedText } from "./render.ts";
@@ -25,11 +31,16 @@ import type {
 
 const MAX_PARALLEL = 8;
 const DEFAULT_CONCURRENCY = 3;
-const MAX_QUESTION_SUMMARY = 500;
+const MAX_QUESTION_SUMMARY_CHARS = 500;
+const MAX_RESULT_OUTPUT_CHARS = 20_000;
+const MAX_CALL_PREVIEW_TASKS = 8;
+const BUSY_REFRESH_INTERVAL_MS = 1_000;
 
 function questionSummary(question: SubagentQuestion): string {
   const flattened = question.question.replace(/\s+/g, " ").trim();
-  return flattened.length > MAX_QUESTION_SUMMARY ? `${flattened.slice(0, MAX_QUESTION_SUMMARY - 1)}…` : flattened;
+  return flattened.length > MAX_QUESTION_SUMMARY_CHARS
+    ? `${flattened.slice(0, MAX_QUESTION_SUMMARY_CHARS - 1)}…`
+    : flattened;
 }
 
 const TaskItem = Type.Object({
@@ -155,7 +166,7 @@ function cancelledResult(
     task,
     title,
     text: "",
-    exitCode: 130,
+    exitCode: CANCELLED_EXIT_CODE,
     error: `Cancelled (${reason}).`,
     cancelled: true,
     cancellationReason: reason,
@@ -168,11 +179,17 @@ function cancelledResult(
 function normalizeCancellation(result: SubagentResult, job: Job | undefined): SubagentResult {
   const reason = job?.cancellationReason;
   if (!reason) return result;
-  return { ...result, exitCode: 130, error: `Cancelled (${reason}).`, cancelled: true, cancellationReason: reason };
+  return {
+    ...result,
+    exitCode: CANCELLED_EXIT_CODE,
+    error: `Cancelled (${reason}).`,
+    cancelled: true,
+    cancellationReason: reason,
+  };
 }
 
 function startTicker(tickers: Set<ReturnType<typeof setInterval>>, fn: () => void): () => void {
-  const id = setInterval(fn, 1000);
+  const id = setInterval(fn, BUSY_REFRESH_INTERVAL_MS);
   tickers.add(id);
   return () => {
     clearInterval(id);
@@ -279,8 +296,10 @@ class Batch {
   deliverResult(jobId: number, result: SubagentResult): void {
     const job = this.deps.registry.jobs.get(jobId);
     result = normalizeCancellation(result, job);
-    const capped = capOutput(formatResultOutput(result), 20000);
-    const duration = job?.endTime ? formatDuration(Math.max(1000, job.endTime - job.startTime)) : "?";
+    const capped = capOutput(formatResultOutput(result), MAX_RESULT_OUTPUT_CHARS);
+    const duration = job?.endTime
+      ? formatDuration(Math.max(MIN_DISPLAY_DURATION_MS, job.endTime - job.startTime))
+      : "?";
     const status = result.cancelled ? "cancelled" : result.exitCode === 0 ? "completed" : "failed";
     const icon = status === "completed" ? "✓" : status === "cancelled" ? "⊘" : "✗";
     const details: SubagentMessageDetails = {
@@ -336,7 +355,7 @@ class Batch {
     const lines = [
       `Subagent #${jobId} ${job.agent} inactivity check-in`,
       `Task: ${job.task}`,
-      `No activity for ${formatDuration(Math.max(1000, notice.detectedAt - notice.lastActivityAt))}. Last activity: ${formatLocalTime(notice.lastActivityAt)}.`,
+      `No activity for ${formatDuration(Math.max(MIN_DISPLAY_DURATION_MS, notice.detectedAt - notice.lastActivityAt))}. Last activity: ${formatLocalTime(notice.lastActivityAt)}.`,
       ...active.map(
         (step) =>
           `Active: ${formatStepTiming(step, notice.detectedAt)} · ${step.kind}: ${formatEventSummary({ kind: "state", summary: step.summary })}`,
@@ -494,7 +513,11 @@ export function createSubagentTool(deps: SubagentToolDeps): ToolDefinition<typeo
         try {
           if (!ctx.hasUI) return;
           ctx.ui.notify(
-            truncateToWidth(`subagent #${jobId} ${agent} — ${reason} · ${label}`, process.stdout.columns ?? 80, "…"),
+            truncateToWidth(
+              `subagent #${jobId} ${agent} — ${reason} · ${label}`,
+              process.stdout.columns ?? DEFAULT_TERMINAL_COLUMNS,
+              "…",
+            ),
             result.cancelled ? "warning" : "error",
           );
         } catch {
@@ -736,13 +759,15 @@ export function createSubagentTool(deps: SubagentToolDeps): ToolDefinition<typeo
             0,
           ),
         );
-        for (const task of args.tasks.slice(0, 8)) {
+        for (const task of args.tasks.slice(0, MAX_CALL_PREVIEW_TASKS)) {
           const title = normalizeTitle(task.title);
           const preview = title ? title : shortLabel(undefined, task.task, Infinity);
           box.addChild(new TruncatedText(theme.fg("accent", task.agent) + theme.fg("dim", ` · ${preview}`), 2, 0));
         }
-        if (args.tasks.length > 8)
-          box.addChild(new TruncatedText(theme.fg("muted", `… +${args.tasks.length - 8} more`), 2, 0));
+        if (args.tasks.length > MAX_CALL_PREVIEW_TASKS)
+          box.addChild(
+            new TruncatedText(theme.fg("muted", `… +${args.tasks.length - MAX_CALL_PREVIEW_TASKS} more`), 2, 0),
+          );
         return box;
       }
       const agentName = args.agent || "...";

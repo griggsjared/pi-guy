@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import type { AgentConfig } from "./agents.ts";
+import { ASK_PARENT_TOOL_NAME, CANCELLED_EXIT_CODE } from "./constants.ts";
 import { normalizeTitle, toolCallLabel } from "./format.ts";
 import { accumulateEvent, createStreamState, extractFinalText, parseParentQuestion } from "./jsonl.ts";
 import { createTimeline } from "./timeline.ts";
@@ -22,9 +23,14 @@ import type {
 const DEFAULT_TOOLS = ["read", "grep", "find", "ls", "bash"];
 const MAX_CHILD_OUTPUT = 4 * 1024 * 1024; // keep only the tail of child stdout
 const MAX_CHILD_ERROR = 1024 * 1024; // keep only the tail of child stderr
-const DEFAULT_INACTIVITY_TIMEOUT_MS = 300000;
+const MAX_FALLBACK_SNIPPET_CHARS = 2000; // failed runs report this much raw stdout
+const DEFAULT_INACTIVITY_TIMEOUT_MS = 5 * 60_000;
 const STREAM_INTERVAL_MS = 2000; // throttle live progress updates to the model
-const SHUTDOWN_GRACE_MS = 10000;
+const SHUTDOWN_GRACE_MS = 10_000;
+const DEFAULT_KILL_DELAY_MS = 5_000;
+const CHILD_HEAP_OPTION = "--max-old-space-size=8192";
+// Shell convention: codes at or above this mean the process died from a signal.
+const SIGNAL_EXIT_CODE_BASE = 128;
 
 /**
  * Resolve how to invoke pi from this (extension) process. Children are spawned
@@ -55,7 +61,7 @@ export function formatModel(model: { provider: string; id: string } | undefined)
 }
 
 /** SIGTERM, escalating to SIGKILL if the process ignores it. */
-function killProcess(proc: ChildProcess, delayMs = 5000): void {
+function killProcess(proc: ChildProcess, delayMs = DEFAULT_KILL_DELAY_MS): void {
   try {
     proc.kill("SIGTERM");
   } catch {
@@ -121,9 +127,9 @@ export async function runSubagent(
   const title = normalizeTitle(options.title);
   const bridgeExtension = options.bridgeExtensionPath;
   const hasBridgeExtension = !!bridgeExtension && isAbsolute(bridgeExtension);
-  const tools = [...new Set([...(agent.tools ?? DEFAULT_TOOLS), ...(hasBridgeExtension ? ["ask_parent"] : [])])].join(
-    ",",
-  );
+  const tools = [
+    ...new Set([...(agent.tools ?? DEFAULT_TOOLS), ...(hasBridgeExtension ? [ASK_PARENT_TOOL_NAME] : [])]),
+  ].join(",");
   const extraExtensions = (options.extensionPaths ?? []).filter(isAbsolute);
   const args = [
     ...base.args,
@@ -147,8 +153,8 @@ export async function runSubagent(
     // exceed node's default 4GB heap. Raise the cap, preserving any existing
     // NODE_OPTIONS.
     const nodeOptions = process.env.NODE_OPTIONS
-      ? `${process.env.NODE_OPTIONS} --max-old-space-size=8192`
-      : "--max-old-space-size=8192";
+      ? `${process.env.NODE_OPTIONS} ${CHILD_HEAP_OPTION}`
+      : CHILD_HEAP_OPTION;
     const childEnv: NodeJS.ProcessEnv = { ...process.env, NODE_OPTIONS: nodeOptions };
     proc = (options.spawnFn ?? spawn)(base.cmd, args, {
       cwd,
@@ -476,7 +482,10 @@ export async function runSubagent(
       };
       if (!text && stdout.length > 0 && !failedTransport) {
         const lines = stdout.split("\n").filter((line) => line.trim().length > 0);
-        const rawSnippet = stdout.length > 2000 ? `...(truncated)\n${stdout.slice(-2000)}` : lines.join("\n");
+        const rawSnippet =
+          stdout.length > MAX_FALLBACK_SNIPPET_CHARS
+            ? `...(truncated)\n${stdout.slice(-MAX_FALLBACK_SNIPPET_CHARS)}`
+            : lines.join("\n");
         const snippet = rawSnippet
           .split("\n")
           .filter((line) => line.trim().length > 0)
@@ -489,8 +498,8 @@ export async function runSubagent(
         appendStderr(`Cancelled (${cancellationReason ?? "manual"}).`);
       } else if (!completionWatchdogFired && !failedTransport && signal) {
         appendStderr(`[subagents] Killed by ${signal}`);
-      } else if (!completionWatchdogFired && !failedTransport && code != null && code >= 128) {
-        appendStderr(`[subagents] Killed by signal ${code - 128}`);
+      } else if (!completionWatchdogFired && !failedTransport && code != null && code >= SIGNAL_EXIT_CODE_BASE) {
+        appendStderr(`[subagents] Killed by signal ${code - SIGNAL_EXIT_CODE_BASE}`);
       }
       resolve({
         agent: agent.name,
@@ -498,12 +507,12 @@ export async function runSubagent(
         title,
         text,
         exitCode: cancelled
-          ? 130
+          ? CANCELLED_EXIT_CODE
           : failedTransport
             ? 1
             : completionWatchdogFired
               ? 0
-              : signal || (code != null && code >= 128)
+              : signal || (code != null && code >= SIGNAL_EXIT_CODE_BASE)
                 ? 1
                 : (code ?? 0),
         error: failedTransport ? stderr || "failed to run subagent RPC transport" : stderr,

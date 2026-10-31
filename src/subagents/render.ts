@@ -10,7 +10,7 @@ import {
 } from "@earendil-works/pi-tui";
 import type { TUI } from "@earendil-works/pi-tui";
 import { formatDuration } from "../lib/format.ts";
-import { ENTRY_TYPE, QUESTION_ENTRY_TYPE } from "./constants.ts";
+import { DEFAULT_TERMINAL_COLUMNS, ENTRY_TYPE, MIN_DISPLAY_DURATION_MS, QUESTION_ENTRY_TYPE } from "./constants.ts";
 import { formatUsageStats, normalizeTitle, shortLabel, toolCallLabel } from "./format.ts";
 import type { JobRegistry } from "./registry.ts";
 import { SubagentTail } from "./tail.ts";
@@ -28,7 +28,11 @@ export class TruncatedText extends TuiTruncatedText {
 const MAX_WIDGET_LINES = 10; // pi caps string-array widgets at 10 lines; keep the same cap for the factory form
 export const WIDGET_KEY = "subagents";
 
-function renderWidgetRows(registry: JobRegistry, fg: Fg, width = 80): { jobId?: number; line: string }[] {
+function renderWidgetRows(
+  registry: JobRegistry,
+  fg: Fg,
+  width = DEFAULT_TERMINAL_COLUMNS,
+): { jobId?: number; line: string }[] {
   const now = Date.now();
   const maxWidth = Math.max(1, Math.floor(width));
   const running = registry.running();
@@ -36,7 +40,7 @@ function renderWidgetRows(registry: JobRegistry, fg: Fg, width = 80): { jobId?: 
 
   const rows: { jobId?: number; line: string }[] = [];
   for (const job of running) {
-    const elapsed = formatDuration(Math.max(1000, now - job.startTime));
+    const elapsed = formatDuration(Math.max(MIN_DISPLAY_DURATION_MS, now - job.startTime));
     const title = job.title ? `: ${job.title}` : "";
     rows.push({
       jobId: job.id,
@@ -48,7 +52,7 @@ function renderWidgetRows(registry: JobRegistry, fg: Fg, width = 80): { jobId?: 
     });
   }
   for (const job of completed) {
-    const duration = job.endTime ? formatDuration(Math.max(1000, job.endTime - job.startTime)) : "?";
+    const duration = job.endTime ? formatDuration(Math.max(MIN_DISPLAY_DURATION_MS, job.endTime - job.startTime)) : "?";
     const icon = job.status === "completed" ? "✓" : job.status === "cancelled" ? "⊘" : "✗";
     const color = job.status === "completed" ? "success" : job.status === "cancelled" ? "warning" : "error";
     const label = job.title ? `: ${job.title}` : `: ${shortLabel(undefined, job.task, Infinity)}`;

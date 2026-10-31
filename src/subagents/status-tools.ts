@@ -4,13 +4,14 @@ import type { Component } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { formatDuration } from "../lib/format.ts";
 import { OFF_PROFILE_NAME } from "./agents.ts";
-import { PROFILE_ENTRY_TYPE } from "./constants.ts";
+import { DEFAULT_TERMINAL_COLUMNS, MIN_DISPLAY_DURATION_MS, PROFILE_ENTRY_TYPE } from "./constants.ts";
 import { capOutput, formatUsageStats, normalizeTitle, shortLabel, toolCallLabel } from "./format.ts";
 import { chooseProfile } from "./profile-ui.ts";
 import type { ProfileCommandDeps } from "./profile-ui.ts";
 import type { JobRegistry, Job } from "./registry.ts";
 import { openSubagentTail, TruncatedText } from "./render.ts";
 import {
+  EVENT_LABEL_WIDTH,
   eventColor,
   eventKindLabel,
   formatEventSummary,
@@ -89,10 +90,12 @@ const PeekOutput = Type.Object({
   droppedBefore: Type.Optional(Type.Integer({ minimum: 1 })),
 });
 
-const MAX_STATUS_OUTPUT = 4000;
+const MAX_STATUS_OUTPUT_CHARS = 4000;
 const DEFAULT_PEEK_LIMIT = 20;
 const DEFAULT_PEEK_CHARS = 2000;
 const MAX_STATUS_TOOL_CALLS = 8;
+const RECENT_JOB_LIMIT = 20;
+const RECENT_JOB_WINDOW_MS = 60_000;
 
 type StatusJob = Job;
 interface StatusToolDetails {
@@ -301,7 +304,7 @@ function statusToolCalls(job: Job, now: number): { call: ToolCallInfo; prefix: s
 
 function formatJob(job: StatusJob, now: number): string {
   if (job.status === "running") {
-    const elapsed = formatDuration(Math.max(1000, now - job.startTime));
+    const elapsed = formatDuration(Math.max(MIN_DISPLAY_DURATION_MS, now - job.startTime));
     const progress =
       job.pendingQuestions.length > 0
         ? " — waiting for parent"
@@ -316,14 +319,14 @@ function formatJob(job: StatusJob, now: number): string {
       ...activeStepLines(job, now),
     ].join("\n");
   }
-  const duration = job.endTime ? formatDuration(Math.max(1000, job.endTime - job.startTime)) : "?";
+  const duration = job.endTime ? formatDuration(Math.max(MIN_DISPLAY_DURATION_MS, job.endTime - job.startTime)) : "?";
   const icon = job.status === "completed" ? "✓" : job.status === "cancelled" ? "⊘" : "✗";
   const metadata = formatUsageStats(job.usage, job.model, job.thinkingLevel);
   return `- ${icon} #${job.id} ${job.agent} (${formatLocalTime(job.startTime)} · ${duration}${metadata ? ` ${metadata}` : ""}): ${jobLabel(job)}`;
 }
 
 function formatDetailedStatus(job: Job, now: number): string {
-  const duration = formatDuration(Math.max(1000, (job.endTime ?? now) - job.startTime));
+  const duration = formatDuration(Math.max(MIN_DISPLAY_DURATION_MS, (job.endTime ?? now) - job.startTime));
   const metadata = formatUsageStats(job.usage, job.model, job.thinkingLevel);
   const lines = [
     `**Subagent #${job.id}**`,
@@ -350,9 +353,9 @@ function formatDetailedStatus(job: Job, now: number): string {
       lines.push(`${prefix}${toolCallLabel(call.name, call.args)}`);
     }
   }
-  if (job.text) lines.push(`Latest output:\n${capOutput(job.text, MAX_STATUS_OUTPUT)}`);
+  if (job.text) lines.push(`Latest output:\n${capOutput(job.text, MAX_STATUS_OUTPUT_CHARS)}`);
   if (job.cancellationReason) lines.push(`Cancellation: ${job.cancellationReason}`);
-  if (job.error) lines.push(`Error:\n${capOutput(job.error, MAX_STATUS_OUTPUT)}`);
+  if (job.error) lines.push(`Error:\n${capOutput(job.error, MAX_STATUS_OUTPUT_CHARS)}`);
   return lines.join("\n");
 }
 
@@ -362,7 +365,7 @@ function formatStatus(registry: JobRegistry, jobId?: number, now = Date.now()): 
     return job ? formatDetailedStatus(job, now) : `subagent status #${jobId}: Unknown subagent job ID: ${jobId}`;
   }
   const running = registry.running();
-  const recent = registry.recent(20).filter((j) => j.endTime && now - j.endTime < 60000);
+  const recent = registry.recent(RECENT_JOB_LIMIT).filter((j) => j.endTime && now - j.endTime < RECENT_JOB_WINDOW_MS);
   const lines =
     running.length > 0
       ? [`**Running (${running.length}):**`, ...running.map((job) => formatJob(job, now))]
@@ -404,8 +407,8 @@ export function createStatusTool(deps: {
       const now = Date.now();
       const text = formatStatus(deps.registry, params.jobId, now);
       const job = params.jobId === undefined ? undefined : deps.registry.get(params.jobId);
-      const output = job?.text ? capOutput(job.text, MAX_STATUS_OUTPUT) : undefined;
-      const error = job?.error ? capOutput(job.error, MAX_STATUS_OUTPUT) : undefined;
+      const output = job?.text ? capOutput(job.text, MAX_STATUS_OUTPUT_CHARS) : undefined;
+      const error = job?.error ? capOutput(job.error, MAX_STATUS_OUTPUT_CHARS) : undefined;
       const toolCalls = job ? statusToolCalls(job, now).slice(-MAX_STATUS_TOOL_CALLS) : undefined;
       const jobs =
         params.jobId !== undefined
@@ -414,7 +417,9 @@ export function createStatusTool(deps: {
             : []
           : [
               ...deps.registry.running(),
-              ...deps.registry.recent(20).filter((item) => item.endTime && now - item.endTime < 60000),
+              ...deps.registry
+                .recent(RECENT_JOB_LIMIT)
+                .filter((item) => item.endTime && now - item.endTime < RECENT_JOB_WINDOW_MS),
             ];
       return {
         content: [{ type: "text", text }],
@@ -596,7 +601,7 @@ export function createPeekTool(deps: { registry: JobRegistry }): ToolDefinition<
               lines.push(theme.fg("dim", "no new events"));
             } else {
               for (const event of details.events) {
-                const label = eventKindLabel(event.kind).padEnd(9);
+                const label = eventKindLabel(event.kind).padEnd(EVENT_LABEL_WIDTH);
                 const timing = formatEventTiming(event, job, now);
                 lines.push(
                   `${theme.fg("dim", `[${event.seq}] ${timing.timestamp}`)} ${theme.fg(eventColor(event.kind), label)} ${theme.fg("muted", (formatEventSummary(event) || "(empty)") + timing.suffix)}`,
@@ -899,7 +904,7 @@ export function createReplyTool(deps: { registry: JobRegistry }): ToolDefinition
 
 function pickerLabel(job: Job): string {
   const label = `#${job.id} ${job.agent} [${job.status}] · ${shortLabel(job.title, job.task, Infinity)}`;
-  return shortLabel(undefined, label, Math.max(1, (process.stdout.columns ?? 80) - 4));
+  return shortLabel(undefined, label, Math.max(1, (process.stdout.columns ?? DEFAULT_TERMINAL_COLUMNS) - 4));
 }
 
 async function pickJob(
@@ -987,7 +992,7 @@ export function registerStatusCommands(
       if (!value) {
         const job = await pickJob(
           ctx,
-          [...deps.registry.running(), ...deps.registry.recent(20)],
+          [...deps.registry.running(), ...deps.registry.recent(RECENT_JOB_LIMIT)],
           "Tail subagent",
           "No subagents are available.",
         );
@@ -1020,7 +1025,7 @@ export function registerStatusCommands(
         }
         const job = await pickJob(
           ctx,
-          [...deps.registry.running(), ...deps.registry.recent(20)],
+          [...deps.registry.running(), ...deps.registry.recent(RECENT_JOB_LIMIT)],
           "Inspect subagent status",
           "No subagents are available.",
         );

@@ -3,6 +3,8 @@ import { formatTokens } from "../lib/format.ts";
 import type { SubagentUsage } from "./types.ts";
 
 const ANSI_ESCAPE = /\x1b(?:\][^\x07]*?(?:\x07|\x1b\\)|\[[0-?]*[ -/]*[@-~]|[()][0-2A-Z])/g;
+const DEFAULT_LABEL_WIDTH = 60;
+const MAX_LABEL_TASKS = 4;
 
 function inlineText(value: string): string {
   return value
@@ -54,7 +56,7 @@ function stringArg(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-function subagentTaskLabel(task: unknown, max = 60): string {
+function subagentTaskLabel(task: unknown, max = DEFAULT_LABEL_WIDTH): string {
   if (!task || typeof task !== "object") return "…";
   const item = task as Record<string, unknown>;
   const label = shortLabel(stringArg(item.title), stringArg(item.task), max);
@@ -108,14 +110,14 @@ export function capOutput(output: string, max: number): string {
 // Plain, short label of a tool call, used for live progress in the widget.
 export function toolCallLabel(name: string, args: Record<string, unknown>, width?: number): string {
   const maxWidth = width === undefined ? undefined : Math.max(0, Math.floor(width));
-  const str = (value: unknown, max = 60): string => {
+  const str = (value: unknown, max = DEFAULT_LABEL_WIDTH): string => {
     const text = valueText(value);
     return text ? clip(text, max) : "";
   };
   const full = (value: unknown): string => valueText(value);
   const fit = (label: string): string => (maxWidth === undefined ? label : clip(label, maxWidth));
   const pathValue = (): string => valueText(args.file_path ?? args.path ?? "…");
-  const pathOf = (): string => pathClip(pathValue(), 60);
+  const pathOf = (): string => pathClip(pathValue(), DEFAULT_LABEL_WIDTH);
   const pathWithSuffix = (prefix: string, suffix: string): string => {
     if (maxWidth === undefined) return `${prefix}${pathOf()}${suffix}`;
     const available = maxWidth - visibleWidth(prefix) - visibleWidth(suffix);
@@ -124,7 +126,7 @@ export function toolCallLabel(name: string, args: Record<string, unknown>, width
     return fit(`${prefix}${pathValue()}`);
   };
   const twoArgs = (prefix: string, first: string, separator: string, path: string): string => {
-    if (maxWidth === undefined) return `${prefix}${str(first)}${separator}${pathClip(path, 60)}`;
+    if (maxWidth === undefined) return `${prefix}${str(first)}${separator}${pathClip(path, DEFAULT_LABEL_WIDTH)}`;
     const available = maxWidth - visibleWidth(prefix) - visibleWidth(separator);
     const [firstBudget, pathBudget] = splitContentWidths(first, path, available);
     return fit(`${prefix}${clip(first, firstBudget)}${separator}${pathClip(path, pathBudget)}`);
@@ -153,7 +155,7 @@ export function toolCallLabel(name: string, args: Record<string, unknown>, width
     case "edit":
       return pathWithSuffix("edit ", "");
     case "ls": {
-      if (maxWidth === undefined) return `ls ${pathClip(valueText(args.path ?? "."), 60)}`;
+      if (maxWidth === undefined) return `ls ${pathClip(valueText(args.path ?? "."), DEFAULT_LABEL_WIDTH)}`;
       return fit(`ls ${pathClip(valueText(args.path ?? "."), maxWidth - 3)}`);
     }
     case "find":
@@ -163,10 +165,13 @@ export function toolCallLabel(name: string, args: Record<string, unknown>, width
     case "subagent": {
       if (maxWidth === undefined) {
         const agent = str(args.agent ?? "…", 40);
-        const preview = clip(valueText(normalizeTitle(stringArg(args.title)) ?? stringArg(args.task)) || "…", 60);
+        const preview = clip(
+          valueText(normalizeTitle(stringArg(args.title)) ?? stringArg(args.task)) || "…",
+          DEFAULT_LABEL_WIDTH,
+        );
         if (Array.isArray(args.tasks) && args.tasks.length > 0) {
           const tasks = args.tasks
-            .slice(0, 4)
+            .slice(0, MAX_LABEL_TASKS)
             .map(
               (task) => `${str((task as Record<string, unknown>)?.agent ?? "…", 32)} · ${subagentTaskLabel(task, 48)}`,
             );
@@ -178,7 +183,7 @@ export function toolCallLabel(name: string, args: Record<string, unknown>, width
       const agent = full(args.agent ?? "…");
       const preview = valueText(normalizeTitle(stringArg(args.title)) ?? stringArg(args.task)) || "…";
       if (Array.isArray(args.tasks) && args.tasks.length > 0) {
-        const tasks = args.tasks.slice(0, 4).map((task) => {
+        const tasks = args.tasks.slice(0, MAX_LABEL_TASKS).map((task) => {
           const item = task as Record<string, unknown>;
           return `${full(item?.agent ?? "…")} · ${subagentTaskLabel(task, Infinity)}`;
         });
@@ -195,13 +200,14 @@ export function toolCallLabel(name: string, args: Record<string, unknown>, width
       return fit(`subagent cancel ${args.all || args.jobId === undefined ? "all" : `#${full(args.jobId)}`}`);
     case "subagent_send": {
       const mode = args.deliverAs === "followUp" ? "follow-up" : "steering";
-      const message = maxWidth === undefined ? str(args.message ?? "…", 60) : full(args.message ?? "…");
+      const message =
+        maxWidth === undefined ? str(args.message ?? "…", DEFAULT_LABEL_WIDTH) : full(args.message ?? "…");
       return fit(
         `subagent send ${args.jobId === undefined ? "…" : `#${maxWidth === undefined ? str(args.jobId) : full(args.jobId)}`} ${mode} · ${message}`,
       );
     }
     case "subagent_reply": {
-      const answer = maxWidth === undefined ? str(args.answer ?? "…", 60) : full(args.answer ?? "…");
+      const answer = maxWidth === undefined ? str(args.answer ?? "…", DEFAULT_LABEL_WIDTH) : full(args.answer ?? "…");
       return fit(
         `subagent reply ${args.jobId === undefined ? "…" : `#${maxWidth === undefined ? str(args.jobId) : full(args.jobId)}`} · ${answer}`,
       );

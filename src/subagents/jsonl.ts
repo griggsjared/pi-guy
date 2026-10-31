@@ -3,6 +3,7 @@ import type { SubagentQuestion, SubagentUsage, ToolCallInfo } from "./types.ts";
 
 /** Keep only the most recent tool calls; a long-running agent can accumulate many. */
 const MAX_TOOL_CALLS = 20;
+const MAX_COLLECTION_ITEMS = 50; // cap arrays and keys before serializing them
 
 interface UsageInfo {
   input?: number;
@@ -157,10 +158,10 @@ export function sanitizeToolCallArgs(name: string, args: Record<string, unknown>
 
 export function truncateStrings(value: unknown, max = 120): unknown {
   if (typeof value === "string") return value.length > max ? `${value.slice(0, max)}…` : value;
-  if (Array.isArray(value)) return value.slice(0, 50).map((v) => truncateStrings(v, max));
+  if (Array.isArray(value)) return value.slice(0, MAX_COLLECTION_ITEMS).map((v) => truncateStrings(v, max));
   if (value && typeof value === "object") {
     const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value).slice(0, 50)) out[k] = truncateStrings(v, max);
+    for (const [k, v] of Object.entries(value).slice(0, MAX_COLLECTION_ITEMS)) out[k] = truncateStrings(v, max);
     return out;
   }
   return value;
