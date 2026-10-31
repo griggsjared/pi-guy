@@ -14,6 +14,8 @@ import { truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { CONTEXT_FILES_EVENT } from "../lib/events.ts";
 import type { ContextFilesEvent } from "../lib/events.ts";
 
+const PACKAGE_NAME = "pi-guy";
+const VERSION_CHECK_TIMEOUT_MS = 5000;
 const PACKAGE_DIR = fileURLToPath(new URL("../../", import.meta.url));
 const PACKAGE_VERSION = (
   JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as { version: string }
@@ -62,7 +64,7 @@ export default function (pi: ExtensionAPI) {
       const { signal } = packageVersionAbort;
       void (async () => {
         try {
-          const options = { cwd: PACKAGE_DIR, timeout: 5000, signal };
+          const options = { cwd: PACKAGE_DIR, timeout: VERSION_CHECK_TIMEOUT_MS, signal };
           const repo = await pi.exec("git", ["rev-parse", "--show-toplevel", "--short", "HEAD"], options);
           if (repo.code !== 0 || repo.killed || signal.aborted) return;
           const [root, hash] = repo.stdout.trim().split("\n");
@@ -85,7 +87,7 @@ export default function (pi: ExtensionAPI) {
       piBoltChecked = true;
       piBoltAbort = new AbortController();
       const { signal } = piBoltAbort;
-      pi.exec(process.execPath, ["--version"], { timeout: 5000, signal }).then(
+      pi.exec(process.execPath, ["--version"], { timeout: VERSION_CHECK_TIMEOUT_MS, signal }).then(
         (result) => {
           if (result.code !== 0 || result.killed || signal.aborted) return;
           piBoltVersion = /\(Pi-Bolt ([^,)]+)/.exec(result.stdout)?.[1];
@@ -114,7 +116,7 @@ export default function (pi: ExtensionAPI) {
                     ? basename(dirname(path))
                     : parse(path).name,
               );
-            extensionNames = [...new Set(names)].filter((name) => name !== "pi-guy");
+            extensionNames = [...new Set(names)].filter((name) => name !== PACKAGE_NAME);
             requestRender?.();
           },
           () => {},
@@ -129,7 +131,7 @@ export default function (pi: ExtensionAPI) {
             (_, row) =>
               `  ${LOGO_GLYPHS.map((glyph, letter) => theme.fg(LOGO_COLORS[letter]!, glyph[row]!)).join(" ")}`,
           );
-          const title = `${theme.bold("  pi")}${theme.fg("dim", ` v${VERSION} · `)}${piBoltVersion ? `${theme.bold("pi-bolt")}${theme.fg("dim", ` v${piBoltVersion} · `)}` : ""}${theme.bold("pi-guy")}${theme.fg("dim", ` v${packageVersion}`)}`;
+          const title = `${theme.bold("  pi")}${theme.fg("dim", ` v${VERSION} · `)}${piBoltVersion ? `${theme.bold("pi-bolt")}${theme.fg("dim", ` v${piBoltVersion} · `)}` : ""}${theme.bold(PACKAGE_NAME)}${theme.fg("dim", ` v${packageVersion}`)}`;
           const paths = [...new Set([...contextPaths, ...Array.from(reportedContextPaths.values()).flat()])];
           const agents = paths.length
             ? [
