@@ -1,12 +1,12 @@
-import type { TUI } from "@earendil-works/pi-tui";
-import { Box, Markdown, Spacer, Text, TruncatedText as TuiTruncatedText, truncateToWidth } from "@earendil-works/pi-tui";
 import { getMarkdownTheme } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionContext, Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
+import { Box, Markdown, Spacer, Text, TruncatedText as TuiTruncatedText, truncateToWidth } from "@earendil-works/pi-tui";
+import type { TUI } from "@earendil-works/pi-tui";
 import { formatDuration } from "../lib/format.ts";
+import { ENTRY_TYPE, QUESTION_ENTRY_TYPE } from "./constants.ts";
 import { formatUsageStats, normalizeTitle, shortLabel, toolCallLabel } from "./format.ts";
 import type { JobRegistry } from "./registry.ts";
 import { SubagentTail } from "./tail.ts";
-import { ENTRY_TYPE, QUESTION_ENTRY_TYPE, WIDGET_KEY } from "./types.ts";
 import type { SubagentMessageDetails, SubagentQuestionMessageDetails } from "./types.ts";
 
 export type Fg = (color: ThemeColor, text: string) => string;
@@ -19,6 +19,7 @@ export class TruncatedText extends TuiTruncatedText {
 }
 
 const MAX_WIDGET_LINES = 10; // pi caps string-array widgets at 10 lines; keep the same cap for the factory form
+export const WIDGET_KEY = "subagents";
 
 function renderWidgetRows(registry: JobRegistry, fg: Fg, width = 80): { jobId?: number; line: string }[] {
   const now = Date.now();
@@ -79,6 +80,7 @@ export async function openSubagentTail(ui: ExtensionContext["ui"], registry: Job
 // may be stale; only hasUI and ui are used.
 export type UiContext = Pick<ExtensionContext, "hasUI" | "ui">;
 
+// refreshUi is called repeatedly from outside (the subagent tool), so the cache of installed widgets must outlive each call; the WeakMap lets a closed UI's TUI be collected.
 const widgetTuis = new WeakMap<object, TUI>();
 
 export function refreshUi(ctx: UiContext, registry: JobRegistry): void {

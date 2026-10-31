@@ -1,9 +1,9 @@
+import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { Container, fuzzyFilter, getKeybindings, Input, SelectList, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
-import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { OFF_PROFILE_NAME, resolveAgentSettings, SESSION_PROFILE_NAME } from "./agents.ts";
 import type { AgentConfig, SubagentSettings } from "./agents.ts";
-import { PROFILE_ENTRY_TYPE } from "./types.ts";
+import { PROFILE_ENTRY_TYPE } from "./constants.ts";
 
 export interface ProfileCommandDeps {
   settings: SubagentSettings;

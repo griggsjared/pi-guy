@@ -1,6 +1,6 @@
 import { readFile, readdir } from "node:fs/promises";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { join, parse } from "node:path";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 export const SESSION_PROFILE_NAME = "session";
 /** A profile choice that blocks new subagent launches; it is not an entry in settings.profiles. */

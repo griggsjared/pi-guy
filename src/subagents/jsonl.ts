@@ -1,4 +1,4 @@
-import { ASK_PARENT_TITLE_PREFIX, EMPTY_USAGE } from "./types.ts";
+import { ASK_PARENT_TITLE_PREFIX, EMPTY_USAGE } from "./constants.ts";
 import type { SubagentQuestion, SubagentUsage, ToolCallInfo } from "./types.ts";
 
 /** Keep only the most recent tool calls; a long-running agent can accumulate many. */

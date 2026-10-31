@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import childBridge from "../../src/subagents/child-bridge.ts";
-import { ASK_PARENT_TITLE_PREFIX } from "../../src/subagents/types.ts";
+import { ASK_PARENT_TITLE_PREFIX } from "../../src/subagents/constants.ts";
 import { captureTools } from "../helpers/pi.ts";
 
 function registeredTool() {

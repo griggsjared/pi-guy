@@ -9,7 +9,7 @@ import {
   shortLabel,
   toolCallLabel,
 } from "../../src/subagents/format.ts";
-import { EMPTY_USAGE } from "../../src/subagents/types.ts";
+import { EMPTY_USAGE } from "../../src/subagents/constants.ts";
 import type { SubagentUsage } from "../../src/subagents/types.ts";
 
 test("formatUsageStats keeps metadata without usage", () => {

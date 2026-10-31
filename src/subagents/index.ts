@@ -4,10 +4,11 @@ import { PROVIDER_USAGE_REQUEST_EVENT } from "../lib/events.ts";
 import type { ProviderUsageRequest } from "../lib/events.ts";
 import { discoverAgents, loadSubagentSettings, OFF_PROFILE_NAME, resolveExtensionPaths } from "./agents.ts";
 import type { SubagentSettings } from "./agents.ts";
-import { refreshUi, registerRenderers } from "./render.ts";
-import type { UiContext } from "./render.ts";
+import { PROFILE_ENTRY_TYPE } from "./constants.ts";
 import { confirmSubagentProfile } from "./profile-ui.ts";
 import { createJobRegistry } from "./registry.ts";
+import { refreshUi, registerRenderers, WIDGET_KEY } from "./render.ts";
+import type { UiContext } from "./render.ts";
 import {
   createCancelTool,
   createPeekTool,
@@ -17,7 +18,6 @@ import {
   registerStatusCommands,
 } from "./status-tools.ts";
 import { createSubagentTool } from "./tools.ts";
-import { PROFILE_ENTRY_TYPE, STATUS_KEY, WIDGET_KEY } from "./types.ts";
 
 function restoreActiveProfile(entries: readonly unknown[], settings: SubagentSettings): string | undefined {
   const models = new Set<string>();
@@ -138,7 +138,6 @@ export default async function (pi: ExtensionAPI) {
     registry.cancelAll("session-shutdown");
     if (lastUiContext?.hasUI) {
       lastUiContext.ui.setWidget(WIDGET_KEY, []);
-      lastUiContext.ui.setStatus(STATUS_KEY, undefined);
       lastUiContext.ui.setStatus(PROFILE_ENTRY_TYPE, undefined);
     }
   });

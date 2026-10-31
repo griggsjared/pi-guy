@@ -1,22 +1,22 @@
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
-import { Container, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import type {
   ExtensionAPI,
   ExtensionContext,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import { Container, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import type { Static } from "typebox";
+import { formatDuration } from "../lib/format.ts";
 import { OFF_PROFILE_NAME, resolveAgentSettings } from "./agents.ts";
 import type { AgentConfig, SubagentSettings } from "./agents.ts";
-import { formatDuration } from "../lib/format.ts";
+import { ENTRY_TYPE, QUESTION_ENTRY_TYPE } from "./constants.ts";
 import { capOutput, formatResultOutput, normalizeTitle, shortLabel } from "./format.ts";
 import type { Job, JobRegistry } from "./registry.ts";
-import { formatModel, runSubagent, runWithConcurrencyLimit } from "./runner.ts";
 import { TruncatedText } from "./render.ts";
+import { formatModel, runSubagent, runWithConcurrencyLimit } from "./runner.ts";
 import { formatEventSummary, formatLocalTime, formatStepTiming } from "./tail.ts";
-import { ENTRY_TYPE, QUESTION_ENTRY_TYPE } from "./types.ts";
 import type {
   SubagentInactivity,
   SubagentMessageDetails,

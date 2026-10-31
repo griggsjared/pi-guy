@@ -17,7 +17,7 @@ import {
   createStatusTool,
   registerStatusCommands,
 } from "../../src/subagents/status-tools.ts";
-import { EMPTY_USAGE, PROFILE_ENTRY_TYPE } from "../../src/subagents/types.ts";
+import { EMPTY_USAGE, PROFILE_ENTRY_TYPE } from "../../src/subagents/constants.ts";
 import { responseEvent } from "./fake-child.ts";
 import { fakeTheme, taggedTheme as createTaggedTheme } from "../helpers/theme.ts";
 import { sleep, waitFor } from "../helpers/wait.ts";

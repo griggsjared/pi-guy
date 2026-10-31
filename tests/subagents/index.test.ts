@@ -9,7 +9,7 @@ import type { ExtensionAPI, ExtensionToolContext } from "@earendil-works/pi-codi
 import { OFF_PROFILE_NAME, parseSubagentSettings, SESSION_PROFILE_NAME } from "../../src/subagents/agents.ts";
 import subagentsExtension from "../../src/subagents/index.ts";
 import { createSubagentTool } from "../../src/subagents/tools.ts";
-import { PROFILE_ENTRY_TYPE, STATUS_KEY } from "../../src/subagents/types.ts";
+import { PROFILE_ENTRY_TYPE } from "../../src/subagents/constants.ts";
 import {
   FakeChild,
   fakeSpawnChildren,
@@ -295,8 +295,7 @@ test("extension selects profiles explicitly and uses the headless fallback", asy
         }
       } finally {
         await handlers.get("session_shutdown")?.({}, ctx);
-        assert.deepEqual(latestStatuses.calls.slice(-2), entry.mode === "tui" ? [
-          [STATUS_KEY, undefined],
+        assert.deepEqual(latestStatuses.calls.slice(-1), entry.mode === "tui" ? [
           [PROFILE_ENTRY_TYPE, undefined],
         ] : []);
         t.mock.restoreAll();

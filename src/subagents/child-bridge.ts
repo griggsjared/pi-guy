@@ -1,14 +1,16 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { ASK_PARENT_TITLE_PREFIX } from "./types.ts";
+import { ASK_PARENT_TITLE_PREFIX } from "./constants.ts";
 
 const AskParentParams = Type.Object({
   question: Type.String({ minLength: 1, maxLength: 4000, description: "One concise question for the parent agent" }),
   context: Type.Optional(Type.String({ maxLength: 8000, description: "Optional context the parent needs to answer" })),
 });
 
-export default function (pi: ExtensionAPI): void {
-  pi.registerTool({
+interface AskParentToolDetails { answered: boolean; }
+
+export default function (pi: ExtensionAPI) {
+  pi.registerTool<typeof AskParentParams, AskParentToolDetails>({
     name: "ask_parent",
     label: "Ask Parent",
     description: "Ask the parent agent one blocking question and wait for its answer.",

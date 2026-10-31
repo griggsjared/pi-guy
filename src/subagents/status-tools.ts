@@ -1,16 +1,16 @@
+import type { ExtensionAPI, ExtensionContext, Theme, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Container, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
-import type { ExtensionAPI, ExtensionContext, Theme, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { OFF_PROFILE_NAME } from "./agents.ts";
 import { formatDuration } from "../lib/format.ts";
+import { OFF_PROFILE_NAME } from "./agents.ts";
+import { PROFILE_ENTRY_TYPE } from "./constants.ts";
 import { capOutput, formatUsageStats, normalizeTitle, shortLabel, toolCallLabel } from "./format.ts";
 import { chooseProfile } from "./profile-ui.ts";
 import type { ProfileCommandDeps } from "./profile-ui.ts";
 import type { JobRegistry, Job } from "./registry.ts";
 import { openSubagentTail, TruncatedText } from "./render.ts";
 import { eventColor, eventKindLabel, formatEventSummary, formatEventTiming, formatLocalTime, formatStepTiming } from "./tail.ts";
-import { PROFILE_ENTRY_TYPE } from "./types.ts";
 import type { JobEvent, ToolCallInfo } from "./types.ts";
 
 const StatusParams = Type.Object({ jobId: Type.Optional(Type.Integer({ minimum: 1 })) });
@@ -278,7 +278,7 @@ function formatDetailedStatus(job: Job, now: number): string {
   return lines.join("\n");
 }
 
-export function formatStatus(registry: JobRegistry, jobId?: number, now = Date.now()): string {
+function formatStatus(registry: JobRegistry, jobId?: number, now = Date.now()): string {
   if (jobId !== undefined) {
     const job = registry.get(jobId);
     return job ? formatDetailedStatus(job, now) : `subagent status #${jobId}: Unknown subagent job ID: ${jobId}`;

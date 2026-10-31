@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { mkdtemp, rmdir, unlink, writeFile } from "node:fs/promises";
-import { isAbsolute, join } from "node:path";
 import { tmpdir } from "node:os";
+import { isAbsolute, join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import type { AgentConfig } from "./agents.ts";
 import { normalizeTitle, toolCallLabel } from "./format.ts";

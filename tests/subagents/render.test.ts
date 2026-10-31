@@ -5,7 +5,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createJobRegistry } from "../../src/subagents/registry.ts";
 import { refreshUi, registerRenderers } from "../../src/subagents/render.ts";
 import { createSendTool } from "../../src/subagents/status-tools.ts";
-import { EMPTY_USAGE, ENTRY_TYPE, QUESTION_ENTRY_TYPE } from "../../src/subagents/types.ts";
+import { EMPTY_USAGE, ENTRY_TYPE, QUESTION_ENTRY_TYPE } from "../../src/subagents/constants.ts";
 import { fakeTheme, taggedTheme as createTaggedTheme } from "../helpers/theme.ts";
 import { flush } from "../helpers/wait.ts";
 import { complete, makeTool, renderable, renderAtWidth, renderText } from "./helpers.ts";

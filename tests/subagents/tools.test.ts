@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 import { createJobRegistry } from "../../src/subagents/registry.ts";
 import { resolveMode } from "../../src/subagents/tools.ts";
 import { createPeekTool, createReplyTool } from "../../src/subagents/status-tools.ts";
-import { QUESTION_ENTRY_TYPE } from "../../src/subagents/types.ts";
+import { QUESTION_ENTRY_TYPE } from "../../src/subagents/constants.ts";
 import {
   FakeChild,
   fakeSpawnChildren,
