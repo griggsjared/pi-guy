@@ -3,6 +3,12 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { boxed } from "../lib/box.ts";
 
+const CHARS_PER_TOKEN = 4;
+const GRID_ROWS = 4;
+const MAX_GRID_COLUMNS = 20;
+const WARNING_PERCENT = 90;
+const ERROR_PERCENT = 100;
+
 function allocate(weights: number[], total: number): number[] {
   const sum = weights.reduce((value, weight) => value + weight, 0);
   if (sum === 0) return weights.map(() => 0);
@@ -70,7 +76,7 @@ export default function (pi: ExtensionAPI) {
         }
         // Pi reports zero before the first request records the prompt and tools.
         const startupEstimate = usage?.tokens === 0 && messages.length === 0;
-        const used = startupEstimate ? Math.ceil((weights[0]! + weights[1]!) / 4) : piUsed;
+        const used = startupEstimate ? Math.ceil((weights[0]! + weights[1]!) / CHARS_PER_TOKEN) : piUsed;
         const free = used !== null && window !== null ? Math.max(0, window - used) : null;
         const percent = used !== null && window !== null ? (used / window) * 100 : null;
         const attributed = weights.some((weight) => weight > 0);
@@ -87,8 +93,8 @@ export default function (pi: ExtensionAPI) {
           (_tui, theme, keybindings, done) => ({
             render: (width: number) => {
               const innerWidth = Math.max(1, width - 2);
-              const columns = Math.min(20, Math.max(1, Math.floor((innerWidth + 1) / 2)));
-              const cells = columns * 4;
+              const columns = Math.min(MAX_GRID_COLUMNS, Math.max(1, Math.floor((innerWidth + 1) / 2)));
+              const cells = columns * GRID_ROWS;
               const grid: string[] = [];
               if (used !== null && free !== null) {
                 const gridCounts = allocate([...(counts ?? [0, 0, 0, 0]), counts === null ? used : 0, free], cells);
@@ -105,13 +111,18 @@ export default function (pi: ExtensionAPI) {
                 `Model: ${ctx.model?.name ?? ctx.model?.id ?? "Unknown"}`,
                 `Window: ${number(window)} tokens`,
                 theme.fg(
-                  percent !== null && percent >= 100 ? "error" : percent !== null && percent >= 90 ? "warning" : "text",
+                  percent !== null && percent >= ERROR_PERCENT
+                    ? "error"
+                    : percent !== null && percent >= WARNING_PERCENT
+                      ? "warning"
+                      : "text",
                   `Used: ${number(used)} tokens${percent === null ? "" : ` (${percent.toFixed(1)}%)`} · ${startupEstimate ? "Startup estimate (chars/4)" : "Pi estimate"}`,
                 ),
                 `Free: ${number(free)} tokens · grid: · free, ? unknown`,
                 "",
               ];
-              for (let row = 0; row < 4; row++) lines.push(grid.slice(row * columns, (row + 1) * columns).join(" "));
+              for (let row = 0; row < GRID_ROWS; row++)
+                lines.push(grid.slice(row * columns, (row + 1) * columns).join(" "));
               lines.push("", "Estimated breakdown");
               for (let index = 0; index < categories.length; index++) {
                 const category = categories[index]!;
