@@ -603,13 +603,16 @@ const TOOL_WORDS: Record<string, string[]> = {
 };
 
 const ALL_WORDS = [...THINKING_WORDS, ...WRITING_WORDS, ...WAITING_WORDS, ...Object.values(TOOL_WORDS).flat()];
+const TOOL_BUCKET_PREFIX = "tool:";
 
 const THEME_COLORS = ["error", "warning", "success", "accent", "borderAccent", "customMessageLabel"] as const;
 const WORKING_PATTERNS = ["shimmer", "bounce", "karaoke", "ripple", "sparkle", "rainbow", "palettePulse"] as const;
+const PLAN_COUNT = 12;
 const COLOR_INTERVAL_MS = 300;
 const PALETTE_PULSE_INTERVAL_MS = 1500;
 const WORD_INTERVAL_MS = 9000;
 const SPINNER_INTERVAL_MS = 150;
+const CHARS_PER_TOKEN = 4;
 type WorkingPattern = (typeof WORKING_PATTERNS)[number];
 type PaletteColor = (typeof THEME_COLORS)[number];
 type ColorIntensity = "bright" | "normal" | "dim";
@@ -753,10 +756,14 @@ export default function (pi: ExtensionAPI) {
   const lastWordIndexByBucket: Record<string, number> = {};
 
   const bucketFor = (phase: Phase, tool: string | undefined): string =>
-    phase === "tooling" ? (tool && TOOL_WORDS[tool] ? `tool:${tool}` : "tool:generic") : phase;
+    phase === "tooling"
+      ? tool && TOOL_WORDS[tool]
+        ? `${TOOL_BUCKET_PREFIX}${tool}`
+        : `${TOOL_BUCKET_PREFIX}generic`
+      : phase;
 
   const wordsFor = (bucket: string): string[] => {
-    if (bucket.startsWith("tool:")) return TOOL_WORDS[bucket.slice(5)] ?? ALL_WORDS;
+    if (bucket.startsWith(TOOL_BUCKET_PREFIX)) return TOOL_WORDS[bucket.slice(TOOL_BUCKET_PREFIX.length)] ?? ALL_WORDS;
     return bucket === "thinking"
       ? THINKING_WORDS
       : bucket === "writing"
@@ -786,7 +793,7 @@ export default function (pi: ExtensionAPI) {
     activeTools.clear();
 
     const firstPatternIndex = Math.floor(Math.random() * WORKING_PATTERNS.length);
-    const plans = Array.from({ length: 12 }, (_, index) => {
+    const plans = Array.from({ length: PLAN_COUNT }, (_, index) => {
       const pattern = WORKING_PATTERNS[(firstPatternIndex + index) % WORKING_PATTERNS.length] ?? "shimmer";
       const color = THEME_COLORS[Math.floor(Math.random() * THEME_COLORS.length)] ?? "accent";
       const randomizeIntensity =
@@ -902,7 +909,7 @@ export default function (pi: ExtensionAPI) {
       if (update.type === "thinking_end" || update.type === "text_end" || update.type === "toolcall_end") {
         inFlightCharacters = Math.max(inFlightCharacters, messageCharacters(event.message.content));
       }
-      const estimate = Math.ceil(inFlightCharacters / 4);
+      const estimate = Math.ceil(inFlightCharacters / CHARS_PER_TOKEN);
       if (estimate > inFlightTokens) inFlightTokens = estimate;
     }
     outputTokens = settledTokens + inFlightTokens;
