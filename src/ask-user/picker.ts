@@ -12,6 +12,8 @@ import type { SelectItem } from "@earendil-works/pi-tui";
 export const OTHER_VALUE = "__other__";
 export const CHAT_VALUE = "__chat__";
 const DONE_VALUE = "__done__";
+const MAX_VISIBLE_ITEMS = 10;
+const DIGIT_KEY_RE = /^[1-9]$/;
 
 export interface InitialState {
   values?: string[];
@@ -259,7 +261,7 @@ export function pickTui(
       initial?.otherText
         ? items.map((item) => (item.value === OTHER_VALUE ? { ...item, description: initial.otherText } : item))
         : items,
-      Math.min(items.length, 10),
+      Math.min(items.length, MAX_VISIBLE_ITEMS),
       listTheme(theme),
     );
     selectList.setSelectedIndex(
@@ -325,7 +327,7 @@ export function pickTui(
           else if (item && item.value !== CHAT_VALUE) beginContext(item);
           return;
         }
-        if (/^[1-9]$/.test(data)) {
+        if (DIGIT_KEY_RE.test(data)) {
           const item = items[Number(data) - 1];
           if (item) {
             if (item.value === CHAT_VALUE) {
@@ -403,7 +405,12 @@ export function pickMultiTui(
       else container.addChild(next);
     };
     const makeList = (): MultiLineSelectList => {
-      const selectList = new MultiLineSelectList(listItems(), Math.min(items.length + 1, 10), listTheme(theme), 4);
+      const selectList = new MultiLineSelectList(
+        listItems(),
+        Math.min(items.length + 1, MAX_VISIBLE_ITEMS),
+        listTheme(theme),
+        4,
+      );
       selectList.setSelectedIndex(Math.min(cursor, items.length));
       selectList.onSelectionChange = (item) => {
         cursor = listItems().findIndex((i) => i.value === item.value);
@@ -524,7 +531,7 @@ export function pickMultiTui(
           }
           return;
         }
-        if (/^[1-9]$/.test(data)) {
+        if (DIGIT_KEY_RE.test(data)) {
           const item = listItems()[Number(data) - 1];
           if (item) {
             if (item.value === DONE_VALUE) {
@@ -561,7 +568,7 @@ function pickConfirmTui(
     for (const line of summary) {
       container.addChild(new Text(theme.fg("muted", line), 1, 0));
     }
-    const selectList = new MultiLineSelectList(items, Math.min(items.length, 10), listTheme(theme));
+    const selectList = new MultiLineSelectList(items, Math.min(items.length, MAX_VISIBLE_ITEMS), listTheme(theme));
     selectList.onSelect = (item) => done(item);
     selectList.onCancel = () => done(null);
     container.addChild(selectList);
@@ -572,7 +579,7 @@ function pickConfirmTui(
       render: (w) => container.render(w),
       invalidate: () => container.invalidate(),
       handleInput: (data) => {
-        if (/^[1-9]$/.test(data)) {
+        if (DIGIT_KEY_RE.test(data)) {
           const item = items[Number(data) - 1];
           if (item) {
             done(item);
