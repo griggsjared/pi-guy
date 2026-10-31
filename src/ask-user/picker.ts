@@ -13,11 +13,11 @@ export const OTHER_VALUE = "__other__";
 export const CHAT_VALUE = "__chat__";
 const DONE_VALUE = "__done__";
 
-export type InitialState = {
+export interface InitialState {
   values?: string[];
   otherText?: string;
   contexts?: Record<string, string>;
-};
+}
 
 type PickResult =
   | { kind: "chat" }

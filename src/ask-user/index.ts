@@ -56,10 +56,10 @@ const AskUserParams = Type.Object({
   }),
 });
 
-type MultiSelected = {
+interface MultiSelected {
   items: { label: string; description?: string; index: number; context?: string }[];
   other?: string;
-};
+}
 
 type Selected =
   | { label: string; description?: string; index: number; context?: string }
@@ -67,7 +67,15 @@ type Selected =
   | { discuss: true }
   | MultiSelected;
 
-type Answer = { question: string; selected: Selected };
+interface Answer {
+  question: string;
+  selected: Selected;
+}
+
+interface AskUserToolDetails {
+  answers: Answer[];
+  cancelled: boolean;
+}
 
 function buildItems(question: {
   options: { label: string; description?: string }[];
@@ -122,7 +130,7 @@ function formatAnswers(answers: Answer[], cancelled: boolean): string {
 }
 
 export default function (pi: ExtensionAPI) {
-  pi.registerTool({
+  pi.registerTool<typeof AskUserParams, AskUserToolDetails>({
     name: "ask_user",
     exposure: "model-only",
     label: "Ask User",
