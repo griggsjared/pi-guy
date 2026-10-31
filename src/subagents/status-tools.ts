@@ -1,4 +1,10 @@
-import type { ExtensionAPI, ExtensionContext, Theme, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+  Theme,
+  ThemeColor,
+  ToolDefinition,
+} from "@earendil-works/pi-coding-agent";
 import { Container, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
@@ -9,7 +15,7 @@ import { capOutput, formatUsageStats, normalizeTitle, shortLabel, toolCallLabel 
 import { chooseProfile } from "./profile-ui.ts";
 import type { ProfileCommandDeps } from "./profile-ui.ts";
 import type { JobRegistry, Job } from "./registry.ts";
-import { openSubagentTail, TruncatedText } from "./render.ts";
+import { openSubagentTail, renderFallbackResult, TruncatedText } from "./render.ts";
 import {
   EVENT_LABEL_WIDTH,
   eventColor,
@@ -98,13 +104,28 @@ const RECENT_JOB_LIMIT = 20;
 const RECENT_JOB_WINDOW_MS = 60_000;
 
 type StatusJob = Job;
+type StatusLine =
+  | { kind: "heading"; text: string }
+  | {
+      kind: "job";
+      icon: string;
+      color: "accent" | "success" | "warning" | "error";
+      jobId: number;
+      agent: string;
+      meta: string;
+      label: string;
+      progress?: string;
+    }
+  | { kind: "field"; label: string; value: string }
+  | { kind: "output"; color: "toolOutput" | "error"; text: string }
+  | { kind: "question"; id: string; text: string }
+  | { kind: "step"; text: string }
+  | { kind: "toolCall"; prefix: string; call: ToolCallInfo }
+  | { kind: "plain"; text: string; displayText?: string };
 interface StatusToolDetails {
   text: string;
   jobId?: number;
-  outputLines?: number;
-  errorLines?: number;
-  toolCalls?: ToolCallInfo[];
-  toolCallPrefixes?: string[];
+  sections?: StatusLine[];
 }
 interface CancelTarget {
   jobId: number;
@@ -157,141 +178,142 @@ function resultText(result: { content: Array<{ type: string; text?: string }> })
   return text?.type === "text" ? (text.text ?? "") : "";
 }
 
-function renderFallbackResult(
-  title: string,
-  target: string,
-  text: string,
-  emptyText: string,
-  showTarget: boolean,
-  theme: Theme,
-): Component {
-  const box = new Container();
-  if (showTarget) {
-    box.addChild(new TruncatedText(theme.fg("toolTitle", theme.bold(`${title} `)) + theme.fg("accent", target), 0, 0));
-  }
-  box.addChild(new TruncatedText(theme.fg("muted", normalizeTitle(text) ?? emptyText), 2, 0));
-  return box;
+// String fields each kind needs to render; saved transcripts may hold sections from another version.
+const STATUS_LINE_STRING_FIELDS: Record<StatusLine["kind"], string[]> = {
+  heading: ["text"],
+  job: ["icon", "color", "agent", "meta", "label"],
+  field: ["label", "value"],
+  output: ["color", "text"],
+  question: ["id", "text"],
+  step: ["text"],
+  toolCall: ["prefix"],
+  plain: ["text"],
+};
+
+function isStatusLine(value: unknown): value is StatusLine {
+  if (!value || typeof value !== "object") return false;
+  const line = value as Record<string, unknown>;
+  const fields = Object.hasOwn(STATUS_LINE_STRING_FIELDS, String(line.kind))
+    ? STATUS_LINE_STRING_FIELDS[line.kind as StatusLine["kind"]]
+    : undefined;
+  if (!fields || !fields.every((field) => typeof line[field] === "string")) return false;
+  return line.kind !== "toolCall" || typeof (line.call as { name?: unknown } | undefined)?.name === "string";
 }
 
-function renderStatusText(
-  text: string,
-  theme: Theme,
-  sections: Pick<StatusToolDetails, "outputLines" | "errorLines" | "toolCalls" | "toolCallPrefixes"> = {},
-): Component {
-  let bodyColor: "toolOutput" | "error" | undefined;
-  let bodyLines = 0;
-  let waitingForParent = false;
-  let readingToolCalls = false;
-  let toolCallIndex = 0;
-  const toolCallRows = new Map<number, { call: ToolCallInfo; prefix: string }>();
-  const lines = text.split("\n").map((line, index) => {
-    if (bodyLines > 0 && bodyColor) {
-      bodyLines -= 1;
-      return theme.fg(bodyColor, line);
-    }
+function renderStatusLines(lines: StatusLine[], options: { includeQuestionIds?: boolean } = {}): string {
+  return lines
+    .map((line) => {
+      switch (line.kind) {
+        case "heading":
+          return `**${line.text}**`;
+        case "job":
+          return `- ${line.icon} #${line.jobId} ${line.agent} (${line.meta}): ${line.label}${line.progress ? ` — ${line.progress}` : ""}`;
+        case "field":
+          return line.value ? `${line.label}: ${line.value}` : `${line.label}:`;
+        case "output":
+          return line.text;
+        case "question":
+          return options.includeQuestionIds === false ? questionDisplay(line) : `- ${line.id}: ${line.text}`;
+        case "step":
+          return line.text;
+        case "toolCall":
+          return `${line.prefix}${toolCallLabel(line.call.name, line.call.args)}`;
+        case "plain":
+          return line.text;
+      }
+    })
+    .join("\n");
+}
 
-    const heading = line.match(/^\*\*(.+)\*\*:?$/);
-    if (heading?.[1]) {
-      bodyColor = undefined;
-      waitingForParent = false;
-      return theme.fg("toolTitle", theme.bold(heading[1]));
-    }
+function fieldValueColor(label: string, value: string): ThemeColor {
+  if (label === "State")
+    return value.includes("completed")
+      ? "success"
+      : value.includes("cancelled")
+        ? "warning"
+        : value.includes("failed")
+          ? "error"
+          : "accent";
+  if (label === "Agent" || label === "Profile") return "accent";
+  if (label === "Cancellation") return "warning";
+  if (label === "Error") return "error";
+  if (label === "Usage" || label === "Elapsed" || label === "Task" || label === "Progress") return "dim";
+  return "muted";
+}
 
-    const job = line.match(/^- ([⊙✓⊘✗]) (#\d+) (\S+)(.*)$/);
-    if (job?.[1] && job[2] && job[3] !== undefined && job[4] !== undefined) {
-      bodyColor = undefined;
-      waitingForParent = false;
-      const color = job[1] === "✓" ? "success" : job[1] === "⊘" ? "warning" : job[1] === "✗" ? "error" : "accent";
-      const suffix = job[4].match(/^( \([^)]*\)):\s*(.*?)(\s+—\s+.*)?$/);
-      return (
-        theme.fg(color, `${job[1]} `) +
-        theme.fg("accent", `${job[2]} ${job[3]}`) +
-        (suffix
-          ? theme.fg("muted", suffix[1] ?? "") +
-            theme.fg("dim", `: ${suffix[2] ?? ""}`) +
-            theme.fg("muted", suffix[3] ?? "")
-          : theme.fg("muted", job[4]))
-      );
-    }
-
-    if (waitingForParent && line.startsWith("- ")) {
-      const question = line.match(/^- [^:]+:\s*(.*)$/);
-      return theme.fg("dim", question?.[1] ? `- ${question[1]}` : line);
-    }
-
-    if (readingToolCalls && line.startsWith("- ")) {
-      const call = sections.toolCalls?.[toolCallIndex];
-      const prefix = sections.toolCallPrefixes?.[toolCallIndex] ?? "- ";
-      toolCallIndex += 1;
-      if (call) toolCallRows.set(index, { call, prefix });
-      return theme.fg("dim", line);
-    }
-
-    const field = line.startsWith("- ") ? null : line.match(/^([^:]+):(.*)$/);
-    if (field?.[1] && field[2] !== undefined) {
-      const label = field[1];
-      const value = field[2];
-      waitingForParent = label.startsWith("Waiting for parent");
-      readingToolCalls = label.startsWith("Tool calls (");
-      bodyColor = label === "Latest output" ? "toolOutput" : label === "Error" ? "error" : undefined;
-      bodyLines =
-        label === "Latest output" ? (sections.outputLines ?? 0) : label === "Error" ? (sections.errorLines ?? 0) : 0;
-      const valueColor =
-        label === "State"
-          ? value.includes("completed")
-            ? "success"
-            : value.includes("cancelled")
-              ? "warning"
-              : value.includes("failed")
-                ? "error"
-                : "accent"
-          : label === "Agent" || label === "Profile"
-            ? "accent"
-            : label === "Cancellation"
-              ? "warning"
-              : label === "Error"
-                ? "error"
-                : label === "Usage" || label === "Elapsed" || label === "Task" || label === "Progress"
-                  ? "dim"
-                  : "muted";
-      return theme.fg("muted", `${label}:`) + theme.fg(valueColor, value);
-    }
-
-    if (line.startsWith("- ")) return theme.fg("dim", line);
-    if (!line) return "";
-    return theme.fg(bodyColor ?? "muted", line);
-  });
+function renderStatusSections(lines: StatusLine[], theme: Theme): Component {
   return {
     render(width: number) {
-      const displayLines = lines.map((line, index) => {
-        const row = toolCallRows.get(index);
-        return row
-          ? theme.fg(
+      const rendered = lines.map((line) => {
+        switch (line.kind) {
+          case "heading":
+            return theme.fg("toolTitle", theme.bold(line.text));
+          case "job":
+            return (
+              theme.fg(line.color, `${line.icon} `) +
+              theme.fg("accent", `#${line.jobId} ${line.agent}`) +
+              theme.fg("muted", ` (${line.meta})`) +
+              theme.fg("dim", `: ${line.label}`) +
+              (line.progress === undefined ? "" : theme.fg("muted", ` — ${line.progress}`))
+            );
+          case "field":
+            return (
+              theme.fg("muted", `${line.label}:`) +
+              theme.fg(fieldValueColor(line.label, line.value), line.value ? ` ${line.value}` : "")
+            );
+          case "output":
+            return line.text
+              .split("\n")
+              .map((text) => theme.fg(line.color, text))
+              .join("\n");
+          case "question":
+            return theme.fg("dim", questionDisplay(line));
+          case "step":
+            return theme.fg("dim", line.text);
+          case "toolCall":
+            return theme.fg(
               "dim",
               truncateToWidth(
-                `${row.prefix}${toolCallLabel(row.call.name, row.call.args, Math.max(0, width - visibleWidth(row.prefix)))}`,
+                `${line.prefix}${toolCallLabel(line.call.name, line.call.args, Math.max(0, width - visibleWidth(line.prefix)))}`,
                 width,
                 "…",
               ),
-            )
-          : line;
+            );
+          case "plain":
+            return line.text ? theme.fg("muted", line.displayText ?? line.text) : "";
+        }
       });
-      return new Text(displayLines.join("\n"), 0, 0).render(width);
+      return new Text(rendered.join("\n"), 0, 0).render(width);
     },
     invalidate() {},
   };
 }
 
-function activeStepLines(job: Job, now: number): string[] {
+function questionDisplay(line: Extract<StatusLine, { kind: "question" }>): string {
+  return line.text ? `- ${line.text}` : `- ${line.id}:`;
+}
+
+function isIdentityLine(line: StatusLine, job: Job): boolean {
+  if (line.kind === "heading") return line.text === `Subagent #${job.id}`;
+  if (line.kind !== "field") return false;
+  if (line.label === "Agent") return line.value === job.agent;
+  return (line.label === "Task" || line.label === "Title") && line.value === jobLabel(job, Infinity);
+}
+
+function outputLines(text: string, color: "toolOutput" | "error"): StatusLine[] {
+  return [{ kind: "output", color, text: capOutput(text, MAX_STATUS_OUTPUT_CHARS) }];
+}
+
+function stepLines(job: Job, now: number): StatusLine[] {
   const steps = job.status === "running" ? job.steps.filter((step) => step.endedAt === undefined) : [];
   return steps.length === 0
     ? []
     : [
-        `Active steps (${steps.length}):`,
-        ...steps.map(
-          (step) =>
-            `- ${formatStepTiming(step, now)} · ${step.kind}: ${formatEventSummary({ kind: "assistant", summary: step.summary })}`,
-        ),
+        { kind: "field", label: `Active steps (${steps.length})`, value: "" },
+        ...steps.map((step): StatusLine => ({
+          kind: "step",
+          text: `- ${formatStepTiming(step, now)} · ${step.kind}: ${formatEventSummary({ kind: "assistant", summary: step.summary })}`,
+        })),
       ];
 }
 
@@ -302,95 +324,122 @@ function statusToolCalls(job: Job, now: number): { call: ToolCallInfo; prefix: s
     : job.toolCalls.map((call) => ({ call, prefix: "- --:--:-- · " }));
 }
 
-function formatJob(job: StatusJob, now: number): string {
+function jobLines(job: StatusJob, now: number): StatusLine[] {
   if (job.status === "running") {
     const elapsed = formatDuration(Math.max(MIN_DISPLAY_DURATION_MS, now - job.startTime));
     const progress =
       job.pendingQuestions.length > 0
-        ? " — waiting for parent"
+        ? "waiting for parent"
         : job.steps.some((step) => step.endedAt === undefined)
-          ? ""
-          : job.progress
-            ? ` — ${job.progress}`
-            : "";
+          ? undefined
+          : job.progress;
     const metadata = formatUsageStats(undefined, job.model, job.thinkingLevel);
     return [
-      `- ⊙ #${job.id} ${job.agent} (${formatLocalTime(job.startTime)} · ${elapsed}${metadata ? ` ${metadata}` : ""}): ${jobLabel(job)}${progress}`,
-      ...activeStepLines(job, now),
-    ].join("\n");
+      {
+        kind: "job",
+        icon: "⊙",
+        color: "accent",
+        jobId: job.id,
+        agent: job.agent,
+        meta: `${formatLocalTime(job.startTime)} · ${elapsed}${metadata ? ` ${metadata}` : ""}`,
+        label: jobLabel(job),
+        ...(progress ? { progress } : {}),
+      },
+      ...stepLines(job, now),
+    ];
   }
   const duration = job.endTime ? formatDuration(Math.max(MIN_DISPLAY_DURATION_MS, job.endTime - job.startTime)) : "?";
-  const icon = job.status === "completed" ? "✓" : job.status === "cancelled" ? "⊘" : "✗";
   const metadata = formatUsageStats(job.usage, job.model, job.thinkingLevel);
-  return `- ${icon} #${job.id} ${job.agent} (${formatLocalTime(job.startTime)} · ${duration}${metadata ? ` ${metadata}` : ""}): ${jobLabel(job)}`;
+  return [
+    {
+      kind: "job",
+      icon: job.status === "completed" ? "✓" : job.status === "cancelled" ? "⊘" : "✗",
+      color: job.status === "completed" ? "success" : job.status === "cancelled" ? "warning" : "error",
+      jobId: job.id,
+      agent: job.agent,
+      meta: `${formatLocalTime(job.startTime)} · ${duration}${metadata ? ` ${metadata}` : ""}`,
+      label: jobLabel(job),
+    },
+  ];
 }
 
-function formatDetailedStatus(job: Job, now: number): string {
+function toolCallLines(job: Job, now: number): StatusLine[] {
+  const calls = statusToolCalls(job, now);
+  return calls.length === 0
+    ? []
+    : [
+        { kind: "field", label: `Tool calls (${calls.length})`, value: "" },
+        ...calls
+          .slice(-MAX_STATUS_TOOL_CALLS)
+          .map(({ call, prefix }): StatusLine => ({ kind: "toolCall", prefix, call })),
+      ];
+}
+
+function detailedLines(job: Job, now: number): StatusLine[] {
   const duration = formatDuration(Math.max(MIN_DISPLAY_DURATION_MS, (job.endTime ?? now) - job.startTime));
   const metadata = formatUsageStats(job.usage, job.model, job.thinkingLevel);
-  const lines = [
-    `**Subagent #${job.id}**`,
-    `State: ${job.status}`,
-    `Agent: ${job.agent}`,
-    `Task: ${normalizeTitle(job.task) ?? "..."}`,
-    ...(normalizeTitle(job.title) ? [`Title: ${normalizeTitle(job.title)}`] : []),
-    `Elapsed: ${duration}`,
-    `Started: ${formatLocalTime(job.startTime)}`,
-    ...(job.endTime !== undefined ? [`Finished: ${formatLocalTime(job.endTime)}`] : []),
+  const title = normalizeTitle(job.title);
+  const lines: StatusLine[] = [
+    { kind: "heading", text: `Subagent #${job.id}` },
+    { kind: "field", label: "State", value: job.status },
+    { kind: "field", label: "Agent", value: job.agent },
+    { kind: "field", label: "Task", value: normalizeTitle(job.task) ?? "..." },
   ];
-  if (job.profile) lines.push(`Profile: ${job.profile}`);
-  if (metadata) lines.push(`Usage: ${metadata}`);
+  if (title) lines.push({ kind: "field", label: "Title", value: title });
+  lines.push({ kind: "field", label: "Elapsed", value: duration });
+  lines.push({ kind: "field", label: "Started", value: formatLocalTime(job.startTime) });
+  if (job.endTime !== undefined) lines.push({ kind: "field", label: "Finished", value: formatLocalTime(job.endTime) });
+  if (job.profile) lines.push({ kind: "field", label: "Profile", value: job.profile });
+  if (metadata) lines.push({ kind: "field", label: "Usage", value: metadata });
   if (job.pendingQuestions.length > 0) {
-    lines.push(`Waiting for parent (${job.pendingQuestions.length}):`);
-    for (const question of job.pendingQuestions) lines.push(`- ${question.id}: ${question.question}`);
+    lines.push({ kind: "field", label: `Waiting for parent (${job.pendingQuestions.length})`, value: "" });
+    for (const question of job.pendingQuestions)
+      lines.push({ kind: "question", id: question.id, text: question.question });
   } else if (job.progress && !job.steps.some((step) => step.endedAt === undefined))
-    lines.push(`Progress: ${job.progress}`);
-  lines.push(...activeStepLines(job, now));
-  const toolCalls = statusToolCalls(job, now);
-  if (toolCalls.length > 0) {
-    lines.push(`Tool calls (${toolCalls.length}):`);
-    for (const { call, prefix } of toolCalls.slice(-MAX_STATUS_TOOL_CALLS)) {
-      lines.push(`${prefix}${toolCallLabel(call.name, call.args)}`);
-    }
-  }
-  if (job.text) lines.push(`Latest output:\n${capOutput(job.text, MAX_STATUS_OUTPUT_CHARS)}`);
-  if (job.cancellationReason) lines.push(`Cancellation: ${job.cancellationReason}`);
-  if (job.error) lines.push(`Error:\n${capOutput(job.error, MAX_STATUS_OUTPUT_CHARS)}`);
-  return lines.join("\n");
+    lines.push({ kind: "field", label: "Progress", value: job.progress });
+  lines.push(...stepLines(job, now));
+  lines.push(...toolCallLines(job, now));
+  if (job.text)
+    lines.push({ kind: "field", label: "Latest output", value: "" }, ...outputLines(job.text, "toolOutput"));
+  if (job.cancellationReason) lines.push({ kind: "field", label: "Cancellation", value: job.cancellationReason });
+  if (job.error) lines.push({ kind: "field", label: "Error", value: "" }, ...outputLines(job.error, "error"));
+  return lines;
 }
 
-function formatStatus(registry: JobRegistry, jobId?: number, now = Date.now()): string {
+function statusLines(registry: JobRegistry, jobId?: number, now = Date.now()): StatusLine[] {
   if (jobId !== undefined) {
     const job = registry.get(jobId);
-    return job ? formatDetailedStatus(job, now) : `subagent status #${jobId}: Unknown subagent job ID: ${jobId}`;
+    return job
+      ? detailedLines(job, now)
+      : [
+          {
+            kind: "plain",
+            text: `subagent status #${jobId}: Unknown subagent job ID: ${jobId}`,
+            displayText: `Unknown subagent job ID: ${jobId}`,
+          },
+        ];
   }
   const running = registry.running();
   const recent = registry.recent(RECENT_JOB_LIMIT).filter((j) => j.endTime && now - j.endTime < RECENT_JOB_WINDOW_MS);
-  const lines =
+  const lines: StatusLine[] =
     running.length > 0
-      ? [`**Running (${running.length}):**`, ...running.map((job) => formatJob(job, now))]
-      : ["**Running:** none"];
-  if (recent.length > 0) lines.push(`\n**Recent (${recent.length}):**`, ...recent.map((job) => formatJob(job, now)));
-  return lines.join("\n");
+      ? [{ kind: "heading", text: `Running (${running.length}):` }, ...running.flatMap((job) => jobLines(job, now))]
+      : [{ kind: "plain", text: "**Running:** none" }];
+  if (recent.length > 0)
+    lines.push(
+      { kind: "plain", text: "" },
+      { kind: "heading", text: `Recent (${recent.length}):` },
+      ...recent.flatMap((job) => jobLines(job, now)),
+    );
+  return lines;
+}
+
+function formatStatus(registry: JobRegistry): string {
+  return renderStatusLines(statusLines(registry));
 }
 
 function formatStatusForDisplay(registry: JobRegistry, jobId: number): string {
-  let waitingForParent = false;
-  return formatStatus(registry, jobId)
-    .split("\n")
-    .map((line) => {
-      if (line.startsWith("Waiting for parent")) {
-        waitingForParent = true;
-        return line;
-      }
-      if (waitingForParent && line.startsWith("- ")) {
-        const question = line.match(/^- [^:]+:\s*(.*)$/);
-        return question?.[1] ? `- ${question[1]}` : line;
-      }
-      waitingForParent = false;
-      return line;
-    })
-    .join("\n");
+  return renderStatusLines(statusLines(registry, jobId), { includeQuestionIds: false });
 }
 
 export function createStatusTool(deps: {
@@ -405,11 +454,9 @@ export function createStatusTool(deps: {
     outputSchema: StatusOutput,
     async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
       const now = Date.now();
-      const text = formatStatus(deps.registry, params.jobId, now);
+      const sections = statusLines(deps.registry, params.jobId, now);
+      const text = renderStatusLines(sections);
       const job = params.jobId === undefined ? undefined : deps.registry.get(params.jobId);
-      const output = job?.text ? capOutput(job.text, MAX_STATUS_OUTPUT_CHARS) : undefined;
-      const error = job?.error ? capOutput(job.error, MAX_STATUS_OUTPUT_CHARS) : undefined;
-      const toolCalls = job ? statusToolCalls(job, now).slice(-MAX_STATUS_TOOL_CALLS) : undefined;
       const jobs =
         params.jobId !== undefined
           ? job
@@ -437,14 +484,7 @@ export function createStatusTool(deps: {
         details: {
           text,
           jobId: params.jobId,
-          outputLines: output?.split("\n").length,
-          errorLines: error?.split("\n").length,
-          ...(toolCalls
-            ? {
-                toolCalls: toolCalls.map((row) => row.call),
-                toolCallPrefixes: toolCalls.map((row) => row.prefix),
-              }
-            : {}),
+          sections,
         },
       };
     },
@@ -462,26 +502,19 @@ export function createStatusTool(deps: {
       const args = context.args ?? {};
       const job = args.jobId === undefined ? undefined : deps.registry.get(args.jobId);
       const target = job ? jobTarget(job) : args.jobId === undefined ? "all" : `#${args.jobId}`;
-      const rawText = typeof details?.text === "string" ? details.text : resultText(result);
-      const prefix = `subagent status ${target}: `;
-      const text = context.args && rawText.startsWith(prefix) ? rawText.slice(prefix.length) : rawText;
-      if (context.isError || !details || typeof details.text !== "string") {
+      const text = typeof details?.text === "string" ? details.text : resultText(result);
+      const saved = Array.isArray(details?.sections)
+        ? details.sections.filter(isStatusLine)
+        : typeof details?.text === "string"
+          ? // Results saved before typed sections kept only their text.
+            details.text.split("\n").map((line): StatusLine => ({ kind: "plain", text: line }))
+          : undefined;
+      if (context.isError || !saved) {
         return renderFallbackResult("subagent status", target, text, "(no status)", !context.args, theme);
       }
-      const duplicateLines =
-        job && details.jobId === job.id && text.startsWith(`**Subagent #${job.id}**\n`)
-          ? [
-              `**Subagent #${job.id}**`,
-              `Agent: ${job.agent}`,
-              `Task: ${jobLabel(job, Infinity)}`,
-              `Title: ${jobLabel(job, Infinity)}`,
-            ]
-          : [];
-      const displayText = text
-        .split("\n")
-        .filter((line, index) => index >= 5 || !duplicateLines.includes(line))
-        .join("\n");
-      return renderStatusText(displayText, theme, details);
+      const sections =
+        context.args && job && details?.jobId === job.id ? saved.filter((line) => !isIdentityLine(line, job)) : saved;
+      return renderStatusSections(sections, theme);
     },
   };
 }
@@ -628,7 +661,6 @@ export function createPeekTool(deps: { registry: JobRegistry }): ToolDefinition<
 
 export function createCancelTool(deps: {
   registry: JobRegistry;
-  activeProcs?: unknown;
 }): ToolDefinition<typeof CancelParams, CancelToolDetails> {
   return {
     name: "subagent_cancel",
@@ -923,9 +955,15 @@ async function pickJob(
   return jobs[options.indexOf(selected)];
 }
 
+function parseJobId(raw: string): number | undefined {
+  if (!/^\d+$/.test(raw)) return undefined;
+  const jobId = Number(raw);
+  return Number.isSafeInteger(jobId) && jobId >= 1 ? jobId : undefined;
+}
+
 export function registerStatusCommands(
   pi: ExtensionAPI,
-  deps: { registry: JobRegistry; activeProcs?: unknown; profiles?: ProfileCommandDeps },
+  deps: { registry: JobRegistry; profiles?: ProfileCommandDeps },
 ): void {
   const switchProfile = async (requested: string, ctx: ExtensionContext): Promise<void> => {
     const profiles = deps.profiles;
@@ -999,15 +1037,16 @@ export function registerStatusCommands(
         if (!job) return;
         jobId = job.id;
       } else {
-        jobId = Number(value);
-        if (!/^\d+$/.test(value) || !Number.isSafeInteger(jobId) || jobId < 1) {
+        const parsed = parseJobId(value);
+        if (parsed === undefined) {
           ctx.ui.notify("Usage: /subagent-tail <numeric-job-id>", "error");
           return;
         }
-        if (!deps.registry.get(jobId)) {
-          ctx.ui.notify(`Unknown subagent job ID: ${jobId}`, "error");
+        if (!deps.registry.get(parsed)) {
+          ctx.ui.notify(`Unknown subagent job ID: ${parsed}`, "error");
           return;
         }
+        jobId = parsed;
       }
       await openSubagentTail(ctx.ui, deps.registry, jobId);
     },
@@ -1037,8 +1076,8 @@ export function registerStatusCommands(
         ctx.ui.notify(formatStatus(deps.registry), "info");
         return;
       }
-      const jobId = Number(trimmed);
-      if (!Number.isInteger(jobId) || jobId < 1) {
+      const jobId = parseJobId(trimmed);
+      if (jobId === undefined) {
         ctx.ui.notify("Usage: /subagent-status [numeric-job-id|all]", "error");
         return;
       }
@@ -1066,11 +1105,15 @@ export function registerStatusCommands(
         ctx.ui.notify(count ? `Cancelling subagent #${job.id} ${job.agent}.` : "No matching running subagent", "info");
         return;
       }
-      if (value !== "all" && (!/^\d+$/.test(value) || Number(value) < 1)) {
-        ctx.ui.notify("Usage: /subagent-cancel <numeric-job-id|all>", "error");
-        return;
+      let jobId: number | undefined;
+      if (value !== "all") {
+        jobId = parseJobId(value);
+        if (jobId === undefined) {
+          ctx.ui.notify("Usage: /subagent-cancel <numeric-job-id|all>", "error");
+          return;
+        }
       }
-      const count = value === "all" ? deps.registry.cancelAll() : deps.registry.cancel(Number(value)) ? 1 : 0;
+      const count = jobId === undefined ? deps.registry.cancelAll() : deps.registry.cancel(jobId) ? 1 : 0;
       ctx.ui.notify(
         count ? `Cancelling ${count} subagent${count > 1 ? "s" : ""}` : "No matching running subagent",
         "info",
@@ -1083,7 +1126,7 @@ export function registerStatusCommands(
     handler: async (args, ctx) => {
       if (!ctx.hasUI) return;
       const raw = args.trim();
-      let jobId: number;
+      let jobId: number | undefined;
       let mode: string | undefined;
       let message: string | undefined;
       if (!raw) {
@@ -1110,13 +1153,13 @@ export function registerStatusCommands(
         const match = raw.match(/^(\d+)\s+(\S+)(?:\s+([\s\S]*))?$/);
         mode = match?.[2]?.toLowerCase();
         message = match?.[3]?.trim();
+        jobId = match?.[1] === undefined ? undefined : parseJobId(match[1]);
         if (!match || !message || (mode !== "steer" && mode !== "followup")) {
           ctx.ui.notify("Usage: /subagent-send <numeric-job-id> <steer|followup> <message>", "error");
           return;
         }
-        jobId = Number(match[1]);
       }
-      if (!Number.isInteger(jobId) || jobId < 1) {
+      if (jobId === undefined) {
         ctx.ui.notify("Usage: /subagent-send <numeric-job-id> <steer|followup> <message>", "error");
         return;
       }

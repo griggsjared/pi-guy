@@ -608,6 +608,29 @@ test("status, cancel, and send tools render job-aware output", async () => {
   );
   assert.equal(renderTrimmed(malformedStatus), "subagent status all\n  legacy status");
 
+  const savedText = "**Subagent #1**\nState: completed\nLatest output:\nfinal answer";
+  const savedStatus = statusTool.renderResult!(
+    { content: [{ type: "text", text: savedText }], details: { text: savedText, jobId: 99 } } as never,
+    { expanded: false, isPartial: false },
+    theme,
+    { args: { jobId: 99 } } as never,
+  );
+  assert.equal(renderTrimmed(savedStatus), savedText);
+
+  const damagedStatus = statusTool.renderResult!(
+    {
+      content: [{ type: "text", text: "status" }],
+      details: {
+        text: "status",
+        sections: [{ kind: "toolCall", prefix: "- " }, { kind: "output" }, { kind: "plain", text: "kept" }],
+      },
+    } as never,
+    { expanded: false, isPartial: false },
+    theme,
+    {} as never,
+  );
+  assert.equal(renderTrimmed(damagedStatus), "kept");
+
   const sendTool = createSendTool({ registry });
   const sendArgs = { jobId, message: "Check the failure path", deliverAs: "steer" as const };
   const sendCall = renderText(sendTool.renderCall!(sendArgs, theme, {} as never))
@@ -743,6 +766,31 @@ test("resolved status and peek results omit only duplicated identity", async () 
   assert.match(statusText, /Agent: body agent/);
   assert.match(statusText, /output body/);
 
+  const noArgsStatus = renderText(
+    statusTool.renderResult!(statusResult, { expanded: false, isPartial: false }, fakeTheme() as never, {} as never),
+  );
+  assert.match(noArgsStatus, /Subagent #1/);
+  assert.match(noArgsStatus, /Agent: scout/);
+  assert.match(noArgsStatus, /Task: actual task/);
+  assert.match(noArgsStatus, /Title: Displayed title/);
+
+  const untitledId = registry.add("builder", "untitled task");
+  const untitledArgs = { jobId: untitledId };
+  const untitledCall = renderText(statusTool.renderCall!(untitledArgs, fakeTheme() as never, {} as never));
+  const untitledResult = await statusTool.execute("status-untitled", untitledArgs, undefined, undefined, {} as never);
+  const untitledText = renderText(
+    statusTool.renderResult!(
+      untitledResult,
+      { expanded: false, isPartial: false },
+      fakeTheme() as never,
+      { args: untitledArgs } as never,
+    ),
+  );
+  const combinedUntitled = `${untitledCall}\n${untitledText}`;
+  assert.equal(combinedUntitled.match(/#2 builder · untitled task/g)?.length, 1);
+  assert.doesNotMatch(untitledText, /Subagent #2|Agent: builder|Task: untitled task/);
+  assert.match(untitledText, /State: running/);
+
   const peekTool = createPeekTool({ registry });
   const peekArgs = { jobId, since: 0 };
   const peekCall = renderText(peekTool.renderCall!(peekArgs, fakeTheme() as never, {} as never));
@@ -799,6 +847,77 @@ test("resolved status and peek results omit only duplicated identity", async () 
   assert.match(archivedPeek, /subagent peek #1 scout · Displayed title/);
   assert.match(archivedPeek, /Task: actual task/);
   assert.match(archivedPeek, /Title: Displayed title/);
+});
+
+test("subagent status preview drops only duplicated identity and question IDs", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: new Date(2026, 0, 2, 12, 34, 56).getTime() });
+  const registry = createJobRegistry();
+  const questionId = "f7455070-1bdd-4bf8-9806-2647a04b1eba";
+  const runningId = registry.add("scout", "running task", "Running title");
+  registry.recordQuestion(runningId, { id: questionId, question: "Which API?" });
+  registry.recordStep(runningId, {
+    phase: "start",
+    id: "read-1",
+    kind: "tool",
+    summary: "read src/auth.ts",
+    toolCall: { name: "read", args: { path: "src/auth.ts" } },
+  });
+  const cancelledId = registry.add("worker", "cancelled task");
+  registry.complete(cancelledId, {
+    agent: "worker",
+    task: "cancelled task",
+    text: "partial output",
+    exitCode: 130,
+    error: "",
+    cancelled: true,
+    cancellationReason: "manual",
+  });
+  const failedId = registry.add("builder", "failed task");
+  registry.complete(failedId, { agent: "builder", task: "failed task", text: "", exitCode: 1, error: "boom" });
+  const tool = createStatusTool({ registry });
+  const theme = fakeTheme() as never;
+
+  const cases = [
+    { jobId: runningId, agent: "scout", identity: "Running title" },
+    { jobId: cancelledId, agent: "worker", identity: "cancelled task" },
+    { jobId: failedId, agent: "builder", identity: "failed task" },
+  ];
+  for (const current of cases) {
+    const result = await tool.execute(
+      `status-${current.jobId}`,
+      { jobId: current.jobId },
+      undefined,
+      undefined,
+      {} as never,
+    );
+    const text = (result.content[0] as { text: string }).text;
+    const identity = [
+      `**Subagent #${current.jobId}**`,
+      `Agent: ${current.agent}`,
+      `Task: ${current.identity}`,
+      `Title: ${current.identity}`,
+    ];
+    assert.ok(text.includes(identity[0]!) && text.includes(identity[1]!));
+    assert.ok(text.includes(identity[2]!) || text.includes(identity[3]!));
+    const preview = widePreviewLines(
+      tool.renderResult!(result, { expanded: false, isPartial: false }, theme, {
+        args: { jobId: current.jobId },
+      } as never),
+    );
+    assert.deepEqual(preview, statusPreviewLines(text, identity, questionId));
+  }
+
+  const cancelled = await tool.execute("cancelled", { jobId: cancelledId }, undefined, undefined, {} as never);
+  assert.match((cancelled.content[0] as { text: string }).text, /Cancellation: manual/);
+  const failed = await tool.execute("failed", { jobId: failedId }, undefined, undefined, {} as never);
+  assert.match((failed.content[0] as { text: string }).text, /Error:\nboom/);
+
+  const aggregate = await tool.execute("status-all", {}, undefined, undefined, {} as never);
+  const aggregateText = (aggregate.content[0] as { text: string }).text;
+  const aggregatePreview = widePreviewLines(
+    tool.renderResult!(aggregate, { expanded: false, isPartial: false }, theme, {} as never),
+  );
+  assert.deepEqual(aggregatePreview, statusPreviewLines(aggregateText, [], questionId));
 });
 
 test("send and reply receipts keep identity only for fallback cases", async () => {
@@ -998,7 +1117,7 @@ test("/subagent-status shares the status formatter", async () => {
       commands.set(name, command);
     },
   } as unknown as ExtensionAPI;
-  registerStatusCommands(pi, { registry, activeProcs: new Set() });
+  registerStatusCommands(pi, { registry });
   const command = commands.get("subagent-status");
   assert.ok(command);
   const ctx = {
@@ -1533,6 +1652,9 @@ test("/subagent-cancel validates and targets numeric job IDs", async () => {
   assert.match(notices.at(-1) ?? "", /Usage: \/subagent-cancel/);
   await command.handler("\\\\1", ctx);
   assert.match(notices.at(-1) ?? "", /Usage: \/subagent-cancel/);
+  await command.handler("9007199254740993", ctx);
+  assert.match(notices.at(-1) ?? "", /Usage: \/subagent-cancel/);
+  assert.equal(cancelled, 0);
   await command.handler(String(id), ctx);
   assert.match(notices.at(-1) ?? "", /Cancelling 1/);
   assert.equal(cancelled, 1);
@@ -1916,6 +2038,21 @@ test("subagent messaging tools reject queued, stale, and empty inputs", async ()
     /cannot be empty/,
   );
 });
+
+function statusPreviewLines(text: string, identity: string[], questionId: string): string[] {
+  return text
+    .split("\n")
+    .filter((line) => !identity.includes(line))
+    .map((line) => line.replace(/^\*\*(.+)\*\*$/, "$1"))
+    .map((line) => line.replace(/^- (?=[⊙✓⊘✗] )/, ""))
+    .map((line) => (line.startsWith(`- ${questionId}: `) ? `- ${line.slice(questionId.length + 4)}` : line));
+}
+
+function widePreviewLines(value: unknown): string[] {
+  return renderAtWidth(value, 400)
+    .split("\n")
+    .map((line) => line.trimEnd());
+}
 
 function renderTrimmed(value: unknown): string {
   return renderText(value)
