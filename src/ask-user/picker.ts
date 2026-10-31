@@ -46,14 +46,18 @@ export function pickSimple(
   items: SelectItem[],
   signal?: AbortSignal,
 ): Promise<PickResult | null> {
-  return ui.select(titleFor(question), items.map((item) => item.label), { signal }).then(
-    (picked) => {
+  return ui
+    .select(
+      titleFor(question),
+      items.map((item) => item.label),
+      { signal },
+    )
+    .then((picked) => {
       if (picked === undefined) return null;
       const item = items.find((item) => item.label === picked);
       if (item?.value === CHAT_VALUE) return { kind: "chat" };
       return item ? { kind: "item", item } : null;
-    },
-  );
+    });
 }
 
 export function pickMultiSimple(
@@ -66,24 +70,22 @@ export function pickMultiSimple(
     (item, index) => `${index + 1}. ${item.label}${item.description ? ` — ${item.description}` : ""}`,
   );
   const placeholder = `numbers, e.g. 1,3 · ${numbered.join(" · ")}`;
-  return ui
-    .input(`${titleFor(question)} (multi-select)`, placeholder, { signal })
-    .then((raw) => {
-      if (raw === undefined) return null;
-      const values = new Set<string>();
-      for (const part of raw.split(/[,\s]+/)) {
-        const n = Number(part);
-        if (Number.isInteger(n) && n >= 1 && n <= items.length) {
-          values.add(items[n - 1]!.value);
-        }
+  return ui.input(`${titleFor(question)} (multi-select)`, placeholder, { signal }).then((raw) => {
+    if (raw === undefined) return null;
+    const values = new Set<string>();
+    for (const part of raw.split(/[,\s]+/)) {
+      const n = Number(part);
+      if (Number.isInteger(n) && n >= 1 && n <= items.length) {
+        values.add(items[n - 1]!.value);
       }
-      if (values.has(CHAT_VALUE)) return { kind: "chat" };
-      return {
-        kind: "multi",
-        values: [...values],
-        otherToggled: values.has(OTHER_VALUE),
-      };
-    });
+    }
+    if (values.has(CHAT_VALUE)) return { kind: "chat" };
+    return {
+      kind: "multi",
+      values: [...values],
+      otherToggled: values.has(OTHER_VALUE),
+    };
+  });
 }
 
 interface TuiLike {
@@ -136,12 +138,7 @@ class MultiLineSelectList {
   onCancel?: () => void;
   onSelectionChange?: (item: SelectItem) => void;
 
-  constructor(
-    items: SelectItem[],
-    maxVisible: number,
-    theme: MultiLineListTheme,
-    descriptionIndent = 2,
-  ) {
+  constructor(items: SelectItem[], maxVisible: number, theme: MultiLineListTheme, descriptionIndent = 2) {
     this.items = items;
     this.selectedIndex = 0;
     this.maxVisible = maxVisible;
@@ -162,12 +159,10 @@ class MultiLineSelectList {
   handleInput(keyData: string): void {
     const kb = getKeybindings();
     if (kb.matches(keyData, "tui.select.up") || keyData === "up") {
-      this.selectedIndex =
-        this.selectedIndex === 0 ? this.items.length - 1 : this.selectedIndex - 1;
+      this.selectedIndex = this.selectedIndex === 0 ? this.items.length - 1 : this.selectedIndex - 1;
       this.notifySelectionChange();
     } else if (kb.matches(keyData, "tui.select.down") || keyData === "down") {
-      this.selectedIndex =
-        this.selectedIndex === this.items.length - 1 ? 0 : this.selectedIndex + 1;
+      this.selectedIndex = this.selectedIndex === this.items.length - 1 ? 0 : this.selectedIndex + 1;
       this.notifySelectionChange();
     } else if (
       kb.matches(keyData, "tui.select.confirm") ||
@@ -190,10 +185,7 @@ class MultiLineSelectList {
   render(width: number): string[] {
     const startIndex = Math.max(
       0,
-      Math.min(
-        this.selectedIndex - Math.floor(this.maxVisible / 2),
-        this.items.length - this.maxVisible,
-      ),
+      Math.min(this.selectedIndex - Math.floor(this.maxVisible / 2), this.items.length - this.maxVisible),
     );
     const endIndex = Math.min(startIndex + this.maxVisible, this.items.length);
     const lines: string[] = [];
@@ -207,10 +199,7 @@ class MultiLineSelectList {
       const padded = row + " ".repeat(Math.max(0, width - visibleWidth(row)));
       lines.push(selected ? this.theme.selectedBg(this.theme.selectedText(padded)) : padded);
       if (item.description) {
-        for (const line of wrapTextWithAnsi(
-          item.description,
-          Math.max(1, labelWidth - this.descriptionIndent),
-        )) {
+        for (const line of wrapTextWithAnsi(item.description, Math.max(1, labelWidth - this.descriptionIndent))) {
           lines.push(" ".repeat(this.descriptionIndent) + this.theme.description(line));
         }
       }
@@ -249,9 +238,7 @@ export function pickTui(
       const label = typing === "other" ? "Other: " : "Extra context: ";
       textInput.setText(
         typing
-          ? theme.fg("accent", theme.bold(label)) +
-              theme.fg("toolOutput", inputText) +
-              theme.fg("warning", "▏")
+          ? theme.fg("accent", theme.bold(label)) + theme.fg("toolOutput", inputText) + theme.fg("warning", "▏")
           : "",
       );
       tui.requestRender();
@@ -270,17 +257,16 @@ export function pickTui(
     };
     const selectList = new MultiLineSelectList(
       initial?.otherText
-        ? items.map((item) =>
-            item.value === OTHER_VALUE
-              ? { ...item, description: initial.otherText }
-              : item,
-          )
+        ? items.map((item) => (item.value === OTHER_VALUE ? { ...item, description: initial.otherText } : item))
         : items,
       Math.min(items.length, 10),
       listTheme(theme),
     );
     selectList.setSelectedIndex(
-      Math.max(0, items.findIndex((item) => item.value === initial?.values?.[0])),
+      Math.max(
+        0,
+        items.findIndex((item) => item.value === initial?.values?.[0]),
+      ),
     );
     selectList.onSelect = (item) => {
       if (item.value === CHAT_VALUE) {
@@ -392,9 +378,7 @@ export function pickMultiTui(
       const label = typing === "other" ? "Other: " : "Extra context: ";
       textInput.setText(
         typing
-          ? theme.fg("accent", theme.bold(label)) +
-              theme.fg("toolOutput", inputText) +
-              theme.fg("warning", "▏")
+          ? theme.fg("accent", theme.bold(label)) + theme.fg("toolOutput", inputText) + theme.fg("warning", "▏")
           : "",
       );
       tui.requestRender();
@@ -402,9 +386,7 @@ export function pickMultiTui(
     const listItems = (): SelectItem[] => [
       ...items.map((item) => ({
         ...item,
-        label: selected.has(item.value)
-          ? `${theme.fg("success", "✓")} ${item.label}`
-          : `  ${item.label}`,
+        label: selected.has(item.value) ? `${theme.fg("success", "✓")} ${item.label}` : `  ${item.label}`,
         description:
           item.value === OTHER_VALUE && selected.has(OTHER_VALUE)
             ? committedOtherText
@@ -412,9 +394,7 @@ export function pickMultiTui(
               ? `${item.description ? `${item.description} · ` : ""}Context: ${contexts.get(item.value)}`
               : item.description,
       })),
-      ...(selected.size > 0
-        ? [{ value: DONE_VALUE, label: "  Done", description: "Confirm selection" }]
-        : []),
+      ...(selected.size > 0 ? [{ value: DONE_VALUE, label: "  Done", description: "Confirm selection" }] : []),
     ];
     const replaceList = (from: MultiLineSelectList, next: MultiLineSelectList) => {
       const index = container.children.indexOf(from);
@@ -423,12 +403,7 @@ export function pickMultiTui(
       else container.addChild(next);
     };
     const makeList = (): MultiLineSelectList => {
-      const selectList = new MultiLineSelectList(
-        listItems(),
-        Math.min(items.length + 1, 10),
-        listTheme(theme),
-        4,
-      );
+      const selectList = new MultiLineSelectList(listItems(), Math.min(items.length + 1, 10), listTheme(theme), 4);
       selectList.setSelectedIndex(Math.min(cursor, items.length));
       selectList.onSelectionChange = (item) => {
         cursor = listItems().findIndex((i) => i.value === item.value);
@@ -459,7 +434,7 @@ export function pickMultiTui(
       cursor = listItems().findIndex((item) => item.value === value);
       if (value === OTHER_VALUE) {
         typing = "other";
-        inputText = selected.has(OTHER_VALUE) ? committedOtherText : initial?.otherText ?? "";
+        inputText = selected.has(OTHER_VALUE) ? committedOtherText : (initial?.otherText ?? "");
         contextValue = null;
       } else {
         typing = "context";
@@ -489,7 +464,11 @@ export function pickMultiTui(
     container.addChild(makeList());
     container.addChild(textInput);
     container.addChild(
-      new Text(theme.fg("dim", "↑↓ navigate • 1-9 toggle • tab add context • enter/space toggle • done confirms • esc cancel"), 1, 0),
+      new Text(
+        theme.fg("dim", "↑↓ navigate • 1-9 toggle • tab add context • enter/space toggle • done confirms • esc cancel"),
+        1,
+        0,
+      ),
     );
     container.addChild(new DynamicBorder((s: string) => theme.fg("borderAccent", s)));
     signal?.addEventListener("abort", () => done(null), { once: true });
@@ -586,9 +565,7 @@ function pickConfirmTui(
     selectList.onSelect = (item) => done(item);
     selectList.onCancel = () => done(null);
     container.addChild(selectList);
-    container.addChild(
-      new Text(theme.fg("dim", "↑↓ navigate • 1-9 select • enter confirm • esc cancel"), 1, 0),
-    );
+    container.addChild(new Text(theme.fg("dim", "↑↓ navigate • 1-9 select • enter confirm • esc cancel"), 1, 0));
     container.addChild(new DynamicBorder((s: string) => theme.fg("borderAccent", s)));
     signal?.addEventListener("abort", () => done(null), { once: true });
     return {

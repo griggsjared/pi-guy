@@ -1,10 +1,6 @@
-import { spawn } from "node:child_process";
+import type { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
-import type {
-  ExtensionAPI,
-  ExtensionContext,
-  ToolDefinition,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Container, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import type { Static } from "typebox";
@@ -33,9 +29,7 @@ const MAX_QUESTION_SUMMARY = 500;
 
 function questionSummary(question: SubagentQuestion): string {
   const flattened = question.question.replace(/\s+/g, " ").trim();
-  return flattened.length > MAX_QUESTION_SUMMARY
-    ? `${flattened.slice(0, MAX_QUESTION_SUMMARY - 1)}…`
-    : flattened;
+  return flattened.length > MAX_QUESTION_SUMMARY ? `${flattened.slice(0, MAX_QUESTION_SUMMARY - 1)}…` : flattened;
 }
 
 const TaskItem = Type.Object({
@@ -45,25 +39,35 @@ const TaskItem = Type.Object({
 });
 
 const SubagentParams = Type.Object({
-  agent: Type.Optional(Type.String({
-    description: "Agent name to invoke (single mode)",
-  })),
-  task: Type.Optional(Type.String({
-    description: "Task to delegate (single mode)",
-  })),
-  title: Type.Optional(Type.String({
-    description: "Short display title for results and history (single mode)",
-  })),
-  tasks: Type.Optional(Type.Array(TaskItem, {
-    description: "Array of tasks to run in parallel",
-    minItems: 1,
-  })),
-  concurrency: Type.Optional(Type.Integer({
-    minimum: 1,
-    maximum: MAX_PARALLEL,
-    default: DEFAULT_CONCURRENCY,
-    description: "Maximum number of parallel tasks",
-  })),
+  agent: Type.Optional(
+    Type.String({
+      description: "Agent name to invoke (single mode)",
+    }),
+  ),
+  task: Type.Optional(
+    Type.String({
+      description: "Task to delegate (single mode)",
+    }),
+  ),
+  title: Type.Optional(
+    Type.String({
+      description: "Short display title for results and history (single mode)",
+    }),
+  ),
+  tasks: Type.Optional(
+    Type.Array(TaskItem, {
+      description: "Array of tasks to run in parallel",
+      minItems: 1,
+    }),
+  ),
+  concurrency: Type.Optional(
+    Type.Integer({
+      minimum: 1,
+      maximum: MAX_PARALLEL,
+      default: DEFAULT_CONCURRENCY,
+      description: "Maximum number of parallel tasks",
+    }),
+  ),
 });
 
 type SubagentParamsType = Static<typeof SubagentParams>;
@@ -77,9 +81,7 @@ interface SingleRequest {
   title?: string;
 }
 
-type Mode =
-  | { single: SingleRequest; tasks?: never }
-  | { single?: never; tasks: TaskItemType[] };
+type Mode = { single: SingleRequest; tasks?: never } | { single?: never; tasks: TaskItemType[] };
 
 function requestedTargets(params: SubagentParamsType): SubagentToolTarget[] {
   if (params.agent && params.task) {
@@ -98,13 +100,17 @@ function requestedLabel(targets: SubagentToolTarget[]): string {
     const target = targets[0]!;
     return `${target.agent} · ${shortLabel(normalizeTitle(target.title), normalizeTitle(target.task), Infinity)}`;
   }
-  return targets.map((target) => `${target.agent} · ${shortLabel(normalizeTitle(target.title), normalizeTitle(target.task), Infinity)}`).join(", ");
+  return targets
+    .map(
+      (target) =>
+        `${target.agent} · ${shortLabel(normalizeTitle(target.title), normalizeTitle(target.task), Infinity)}`,
+    )
+    .join(", ");
 }
 
 export function resolveMode(params: SubagentParamsType): Mode {
-  const single = params.agent && params.task
-    ? { agent: params.agent, task: params.task, title: params.title }
-    : undefined;
+  const single =
+    params.agent && params.task ? { agent: params.agent, task: params.task, title: params.title } : undefined;
   const tasks = params.tasks;
   if (tasks && tasks.length === 0) {
     throw new Error("tasks[] must contain at least one task");
@@ -175,9 +181,10 @@ function startTicker(tickers: Set<ReturnType<typeof setInterval>>, fn: () => voi
 }
 
 function buildGuidelines(agents: AgentConfig[]): string[] {
-  const agentGuidance = agents.length > 0
-    ? `Use the subagent tool with these available agents: ${agents.map((agent) => `${agent.name} (${agent.description || "no description"})`).join("; ")}.`
-    : "Use the subagent tool with an available agent discovered from the agents directory.";
+  const agentGuidance =
+    agents.length > 0
+      ? `Use the subagent tool with these available agents: ${agents.map((agent) => `${agent.name} (${agent.description || "no description"})`).join("; ")}.`
+      : "Use the subagent tool with an available agent discovered from the agents directory.";
   return [
     agentGuidance,
     "Launch results include job IDs; use those IDs with subagent_peek, subagent_send, subagent_cancel, and subagent_reply instead of calling subagent_status just to discover them.",
@@ -330,13 +337,21 @@ class Batch {
       `Subagent #${jobId} ${job.agent} inactivity check-in`,
       `Task: ${job.task}`,
       `No activity for ${formatDuration(Math.max(1000, notice.detectedAt - notice.lastActivityAt))}. Last activity: ${formatLocalTime(notice.lastActivityAt)}.`,
-      ...active.map((step) => `Active: ${formatStepTiming(step, notice.detectedAt)} · ${step.kind}: ${formatEventSummary({ kind: "state", summary: step.summary })}`),
+      ...active.map(
+        (step) =>
+          `Active: ${formatStepTiming(step, notice.detectedAt)} · ${step.kind}: ${formatEventSummary({ kind: "state", summary: step.summary })}`,
+      ),
       ...(latest ? [`Last event: ${formatEventSummary(latest)}`] : []),
       "The child is still running; it has not been paused or cancelled and is not waiting for a parent reply. The main agent should inspect it with subagent_peek, then wait, steer with subagent_send, or cancel with subagent_cancel as appropriate.",
     ];
     try {
       this.deps.pi.sendMessage(
-        { customType: "subagent-check-in", content: lines.join("\n\n"), display: true, details: { jobId, agent: job.agent, ...notice } },
+        {
+          customType: "subagent-check-in",
+          content: lines.join("\n\n"),
+          display: true,
+          details: { jobId, agent: job.agent, ...notice },
+        },
         { deliverAs: "steer", triggerTurn: true },
       );
     } catch (err) {
@@ -408,7 +423,8 @@ export function createSubagentTool(deps: SubagentToolDeps): ToolDefinition<typeo
   return {
     name: "subagent",
     label: "Subagent Launch",
-    description: "Delegate work to specialized subagents. Jobs always run asynchronously and deliver their results as follow-up messages.",
+    description:
+      "Delegate work to specialized subagents. Jobs always run asynchronously and deliver their results as follow-up messages.",
     parameters: SubagentParams,
     exposure: "model-only",
     promptGuidelines: buildGuidelines(deps.agents),
@@ -419,10 +435,14 @@ export function createSubagentTool(deps: SubagentToolDeps): ToolDefinition<typeo
     async execute(_toolCallId, params, _signal, onUpdate, ctx) {
       const targets = requestedTargets(params);
       const targetSummary = requestedLabel(targets);
-      if (!await deps.confirmProfile(ctx, (text) => onUpdate?.({
-        content: [{ type: "text", text: `subagent launch ${targetSummary}: ${text}` }],
-        details: { status: "running", targets },
-      }))) {
+      if (
+        !(await deps.confirmProfile(ctx, (text) =>
+          onUpdate?.({
+            content: [{ type: "text", text: `subagent launch ${targetSummary}: ${text}` }],
+            details: { status: "running", targets },
+          }),
+        ))
+      ) {
         return {
           content: [{ type: "text", text: `subagent launch ${targetSummary}: cancelled (no profile selected)` }],
           details: { status: "cancelled", targets },
@@ -431,7 +451,12 @@ export function createSubagentTool(deps: SubagentToolDeps): ToolDefinition<typeo
       const profile = deps.getActiveProfile();
       if (profile === OFF_PROFILE_NAME) {
         return {
-          content: [{ type: "text", text: `subagent launch ${targetSummary}: blocked, the user turned subagents off. Do the work without subagents.` }],
+          content: [
+            {
+              type: "text",
+              text: `subagent launch ${targetSummary}: blocked, the user turned subagents off. Do the work without subagents.`,
+            },
+          ],
           details: { status: "failed", targets },
         };
       }
@@ -462,22 +487,30 @@ export function createSubagentTool(deps: SubagentToolDeps): ToolDefinition<typeo
       ): void => {
         if (!result.cancelled && result.exitCode === 0) return;
         const label = shortLabel(normalizeTitle(title), normalizeTitle(task), Infinity);
-        const reason = result.cancelled && result.cancellationReason
-          ? `cancelled (${result.cancellationReason})`
-          : `failed: ${shortLabel(undefined, normalizeTitle(result.error), Infinity)}`;
+        const reason =
+          result.cancelled && result.cancellationReason
+            ? `cancelled (${result.cancellationReason})`
+            : `failed: ${shortLabel(undefined, normalizeTitle(result.error), Infinity)}`;
         try {
           if (!ctx.hasUI) return;
           ctx.ui.notify(
             truncateToWidth(`subagent #${jobId} ${agent} — ${reason} · ${label}`, process.stdout.columns ?? 80, "…"),
             result.cancelled ? "warning" : "error",
           );
-        } catch { /* session torn down mid-run */ }
+        } catch {
+          /* session torn down mid-run */
+        }
       };
 
       // Launch one job: stream updates into the registry, then complete it.
       // Failures are returned as failed results, except spawn-level failures
       // which reject and are recorded here.
-      const launchOne = async (agent: ResolvedAgent, task: string, jobId: number, title?: string): Promise<SubagentResult> => {
+      const launchOne = async (
+        agent: ResolvedAgent,
+        task: string,
+        jobId: number,
+        title?: string,
+      ): Promise<SubagentResult> => {
         try {
           // A cancelled job may have been waiting for a concurrency slot. Do
           // not spawn it just to discover the cancellation after launch.
@@ -523,7 +556,7 @@ export function createSubagentTool(deps: SubagentToolDeps): ToolDefinition<typeo
             },
           });
           registry.registerControl(jobId, launched);
-          let subagentResult: SubagentResult = { ...await launched.result, profile: agent.profile };
+          let subagentResult: SubagentResult = { ...(await launched.result), profile: agent.profile };
           registry.complete(jobId, subagentResult);
           subagentResult = normalizeCancellation(subagentResult, registry.jobs.get(jobId));
           // Cancellation may race the child's final close/update. The registry
@@ -584,14 +617,18 @@ export function createSubagentTool(deps: SubagentToolDeps): ToolDefinition<typeo
 
         // Results are delivered later via sendMessage with the custom renderer.
         return {
-          content: [{ type: "text", text: `Launched **${agent.name}** subagent #${jobId}: "${single.title ?? single.task}"` }],
+          content: [
+            { type: "text", text: `Launched **${agent.name}** subagent #${jobId}: "${single.title ?? single.task}"` },
+          ],
           details: {
             agent: agent.name,
             task: single.task,
             title: single.title,
             status: "launched",
             jobIds: [jobId],
-            targets: [{ agent: agent.name, task: single.task, ...(single.title ? { title: single.title } : {}), jobId }],
+            targets: [
+              { agent: agent.name, task: single.task, ...(single.title ? { title: single.title } : {}), jobId },
+            ],
             jobScope: registry.scope,
             profile,
           },
@@ -603,10 +640,7 @@ export function createSubagentTool(deps: SubagentToolDeps): ToolDefinition<typeo
       if (unknownCount === tasks.length) {
         throw new Error(`Unknown agent(s): ${[...new Set(tasks.map((t) => t.agent))].join(", ")}`);
       }
-      const concurrency = Math.min(
-        Math.max(1, params.concurrency ?? DEFAULT_CONCURRENCY),
-        MAX_PARALLEL,
-      );
+      const concurrency = Math.min(Math.max(1, params.concurrency ?? DEFAULT_CONCURRENCY), MAX_PARALLEL);
 
       const jobIds = tasks.map((t) => {
         const id = registry.add(t.agent, t.task, t.title, agentByName.get(t.agent) ?? { profile });
@@ -625,12 +659,12 @@ export function createSubagentTool(deps: SubagentToolDeps): ToolDefinition<typeo
           const result = cancellationReason
             ? cancelledResult(task.agent, task.task, task.title, cancellationReason, { profile })
             : failedResult(
-              task.agent,
-              task.task,
-              task.title,
-              `Unknown agent "${task.agent}". Available: ${available}`,
-              { profile },
-            );
+                task.agent,
+                task.task,
+                task.title,
+                `Unknown agent "${task.agent}". Available: ${available}`,
+                { profile },
+              );
           registry.complete(jobId, result);
           batch.recordCompletion(jobId);
           refresh();
@@ -663,9 +697,16 @@ export function createSubagentTool(deps: SubagentToolDeps): ToolDefinition<typeo
         .catch((err) => console.error("subagents: batch execution failed", err));
 
       const skipped = unknownCount > 0 ? `, ${unknownCount} skipped (unknown agent)` : "";
-      const launchedLines = tasks.map((task, index) => `- #${jobIds[index]} ${task.agent}: "${task.title ?? task.task}"`);
+      const launchedLines = tasks.map(
+        (task, index) => `- #${jobIds[index]} ${task.agent}: "${task.title ?? task.task}"`,
+      );
       return {
-        content: [{ type: "text", text: `Launched ${tasks.length - unknownCount} subagents in parallel${skipped}:\n${launchedLines.join("\n")}` }],
+        content: [
+          {
+            type: "text",
+            text: `Launched ${tasks.length - unknownCount} subagents in parallel${skipped}:\n${launchedLines.join("\n")}`,
+          },
+        ],
         details: {
           count: tasks.length - unknownCount,
           skipped: unknownCount,
@@ -686,32 +727,29 @@ export function createSubagentTool(deps: SubagentToolDeps): ToolDefinition<typeo
     renderCall(args, theme, _context) {
       const box = new Container();
       if (args.tasks && args.tasks.length > 0) {
-        box.addChild(new TruncatedText(
-          theme.fg("toolTitle", theme.bold("subagent launch ")) +
-            theme.fg("accent", `parallel (${args.tasks.length} tasks)`) +
-            theme.fg("muted", ` [concurrency ${args.concurrency ?? DEFAULT_CONCURRENCY}]`),
-          0,
-          0,
-        ));
+        box.addChild(
+          new TruncatedText(
+            theme.fg("toolTitle", theme.bold("subagent launch ")) +
+              theme.fg("accent", `parallel (${args.tasks.length} tasks)`) +
+              theme.fg("muted", ` [concurrency ${args.concurrency ?? DEFAULT_CONCURRENCY}]`),
+            0,
+            0,
+          ),
+        );
         for (const task of args.tasks.slice(0, 8)) {
           const title = normalizeTitle(task.title);
           const preview = title ? title : shortLabel(undefined, task.task, Infinity);
-          box.addChild(new TruncatedText(
-            theme.fg("accent", task.agent) + theme.fg("dim", ` · ${preview}`),
-            2,
-            0,
-          ));
+          box.addChild(new TruncatedText(theme.fg("accent", task.agent) + theme.fg("dim", ` · ${preview}`), 2, 0));
         }
-        if (args.tasks.length > 8) box.addChild(new TruncatedText(theme.fg("muted", `… +${args.tasks.length - 8} more`), 2, 0));
+        if (args.tasks.length > 8)
+          box.addChild(new TruncatedText(theme.fg("muted", `… +${args.tasks.length - 8} more`), 2, 0));
         return box;
       }
       const agentName = args.agent || "...";
       const preview = normalizeTitle(args.title) || shortLabel(undefined, args.task, Infinity);
-      box.addChild(new TruncatedText(
-        theme.fg("toolTitle", theme.bold("subagent launch ")) + theme.fg("accent", agentName),
-        0,
-        0,
-      ));
+      box.addChild(
+        new TruncatedText(theme.fg("toolTitle", theme.bold("subagent launch ")) + theme.fg("accent", agentName), 0, 0),
+      );
       box.addChild(new TruncatedText(theme.fg("dim", preview), 2, 0));
       return box;
     },
@@ -737,11 +775,9 @@ export function createSubagentTool(deps: SubagentToolDeps): ToolDefinition<typeo
       const color = running ? "accent" : cancelled ? "warning" : failed ? "error" : "success";
       const box = new Container();
       if (!context.args || requestedLabel(requestedTargets(args)) !== target) {
-        box.addChild(new TruncatedText(
-          theme.fg("toolTitle", theme.bold("subagent launch ")) + theme.fg("accent", target),
-          0,
-          0,
-        ));
+        box.addChild(
+          new TruncatedText(theme.fg("toolTitle", theme.bold("subagent launch ")) + theme.fg("accent", target), 0, 0),
+        );
       }
       box.addChild(new TruncatedText(theme.fg(color, `${icon} ${summary}`), 2, 0));
       return box;

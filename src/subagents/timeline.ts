@@ -1,19 +1,12 @@
 import { toolCallLabel } from "./format.ts";
-import {
-  assistantText,
-  normalizeToolArgs,
-  sanitizeToolCallArgs,
-  truncateStrings,
-} from "./jsonl.ts";
+import { assistantText, normalizeToolArgs, sanitizeToolCallArgs, truncateStrings } from "./jsonl.ts";
 import type { JobEventInput, JobStepInput } from "./types.ts";
 
 const MAX_EVENT_SUMMARY = 500;
 
 function flattenSummary(value: string): string {
   const flattened = value.replace(/\s+/g, " ").trim();
-  return flattened.length > MAX_EVENT_SUMMARY
-    ? `${flattened.slice(0, MAX_EVENT_SUMMARY - 1)}…`
-    : flattened;
+  return flattened.length > MAX_EVENT_SUMMARY ? `${flattened.slice(0, MAX_EVENT_SUMMARY - 1)}…` : flattened;
 }
 
 function valueSummary(value: unknown): string {
@@ -29,13 +22,13 @@ function valueSummary(value: unknown): string {
 
 function toolName(event: Record<string, unknown>): string {
   const nested = event.toolCall;
-  const call = nested && typeof nested === "object" ? nested as Record<string, unknown> : undefined;
+  const call = nested && typeof nested === "object" ? (nested as Record<string, unknown>) : undefined;
   return String(event.toolName ?? event.name ?? call?.toolName ?? call?.name ?? "tool");
 }
 
 function toolArgs(event: Record<string, unknown>): Record<string, unknown> {
   const nested = event.toolCall;
-  const call = nested && typeof nested === "object" ? nested as Record<string, unknown> : undefined;
+  const call = nested && typeof nested === "object" ? (nested as Record<string, unknown>) : undefined;
   return normalizeToolArgs(event.args ?? event.arguments ?? event.input ?? call?.args ?? call?.arguments);
 }
 
@@ -49,11 +42,9 @@ function toolEndSummary(event: Record<string, unknown>): string {
   const name = toolName(event);
   const isError = event.isError === true || event.success === false || event.error !== undefined;
   const status = isError ? "error" : "success";
-  const detail = isError ? event.error ?? event.result : event.result;
+  const detail = isError ? (event.error ?? event.result) : event.result;
   if ((name === "write" || name === "edit") && !isError) return flattenSummary(`${name} success`);
-  return flattenSummary(detail === undefined
-    ? `${name} ${status}`
-    : `${name} ${status}: ${valueSummary(detail)}`);
+  return flattenSummary(detail === undefined ? `${name} ${status}` : `${name} ${status}: ${valueSummary(detail)}`);
 }
 
 interface TimelineCallbacks {

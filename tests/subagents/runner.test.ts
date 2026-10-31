@@ -1,8 +1,8 @@
-import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { runSubagent, runWithConcurrencyLimit } from "../../src/subagents/runner.ts";
+import type { spawn } from "node:child_process";
+import { test } from "node:test";
 import type { AgentConfig } from "../../src/subagents/agents.ts";
+import { runSubagent, runWithConcurrencyLimit } from "../../src/subagents/runner.ts";
 import type { JobEventInput, JobStepInput, SubagentInactivity } from "../../src/subagents/types.ts";
 import { sleep } from "../helpers/wait.ts";
 import {
@@ -33,7 +33,10 @@ function respondToCommand(child: FakeChild, index = 0, success = true, error?: s
 test("children use the parent invocation or PATH fallback", async (t) => {
   const argv = process.argv;
   const execPath = process.execPath;
-  t.after(() => { process.argv = argv; process.execPath = execPath; });
+  t.after(() => {
+    process.argv = argv;
+    process.execPath = execPath;
+  });
   for (const entry of [
     { argv: ["/usr/bin/node", "/path/to/pi/cli.js"], cmd: "/usr/bin/node", args: ["/path/to/pi/cli.js"] },
     { argv: ["/opt/pi/bin/pi"], cmd: "/opt/pi/bin/pi", args: [] },
@@ -93,7 +96,13 @@ test("runSubagent: assembles result from streamed JSONL", async () => {
     assert.equal(r.text, "final answer");
     assert.equal(r.exitCode, 0);
     assert.deepEqual(r.usage, {
-      turns: 1, input: 5, output: 3, cacheRead: 0, cacheWrite: 0, cost: 0.0001, contextTokens: 8,
+      turns: 1,
+      input: 5,
+      output: 3,
+      cacheRead: 0,
+      cacheWrite: 0,
+      cost: 0.0001,
+      contextTokens: 8,
     });
     assert.equal(r.model, "served-model");
     assert.equal(r.thinkingLevel, "medium");
@@ -208,7 +217,11 @@ test("runSubagent: reports live updates when state changes", async () => {
 test("runSubagent: inactivity uses runner override then agent then five-minute default, with zero disabling", async (t) => {
   t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 10000 });
   for (const [agentTimeout, optionTimeout, expected] of [
-    [undefined, undefined, 300000], [30, undefined, 30], [10, 20, 20], [10, 0, 0], [0, undefined, 0],
+    [undefined, undefined, 300000],
+    [30, undefined, 30],
+    [10, 20, 20],
+    [10, 0, 0],
+    [0, undefined, 0],
   ] as const) {
     const child = new FakeChild();
     const notifications: SubagentInactivity[] = [];
@@ -222,7 +235,9 @@ test("runSubagent: inactivity uses runner override then agent then five-minute d
       t.mock.timers.tick(expected - 1);
       assert.equal(notifications.length, 0);
       t.mock.timers.tick(1);
-      assert.deepEqual(notifications, [{ lastActivityAt: startedAt, detectedAt: startedAt + expected, inactivityTimeoutMs: expected }]);
+      assert.deepEqual(notifications, [
+        { lastActivityAt: startedAt, detectedAt: startedAt + expected, inactivityTimeoutMs: expected },
+      ]);
     }
     t.mock.timers.tick(600000);
     assert.equal(notifications.length, expected ? 1 : 0);
@@ -295,7 +310,10 @@ test("runSubagent: inactivity notifies once despite callback failure and raw chi
   const launched = await runSubagent(agent, "t", "/tmp", "m", {
     spawnFn: fakeSpawn(child),
     inactivityTimeoutMs: 100,
-    onInactivity: (idle) => { notifications.push(idle); throw new Error("callback failed"); },
+    onInactivity: (idle) => {
+      notifications.push(idle);
+      throw new Error("callback failed");
+    },
   });
   respondToCommand(child);
   t.mock.timers.tick(100);
@@ -304,8 +322,12 @@ test("runSubagent: inactivity notifies once despite callback failure and raw chi
   assert.equal(notifications.length, 1);
 
   for (const [stream, chunk] of [
-    [child.stdout, "{"], [child.stdout, "malformed\n"], [child.stdout, " \n"],
-    [child.stdout, updateEvent("same")], [child.stdout, updateEvent("same")], [child.stderr, "diagnostic"],
+    [child.stdout, "{"],
+    [child.stdout, "malformed\n"],
+    [child.stdout, " \n"],
+    [child.stdout, updateEvent("same")],
+    [child.stdout, updateEvent("same")],
+    [child.stderr, "diagnostic"],
   ] as const) {
     stream.emit("data", Buffer.from(chunk));
     const count: number = notifications.length;
@@ -316,7 +338,11 @@ test("runSubagent: inactivity notifies once despite callback failure and raw chi
     assert.equal(notifications.length, count);
     stream.emit("data", Buffer.from(""));
     t.mock.timers.tick(1);
-    assert.deepEqual(notifications.at(-1), { lastActivityAt: activityAt, detectedAt: activityAt + 100, inactivityTimeoutMs: 100 });
+    assert.deepEqual(notifications.at(-1), {
+      lastActivityAt: activityAt,
+      detectedAt: activityAt + 100,
+      inactivityTimeoutMs: 100,
+    });
     assert.equal(notifications.length, count + 1);
   }
   assert.equal(child.killed, null);
@@ -329,7 +355,8 @@ test("runSubagent: inactivity stops when the transport exits before its pipes cl
   const child = new FakeChild();
   const notifications: SubagentInactivity[] = [];
   const launched = await runSubagent(agent, "t", "/tmp", "m", {
-    spawnFn: fakeSpawn(child), inactivityTimeoutMs: 100,
+    spawnFn: fakeSpawn(child),
+    inactivityTimeoutMs: 100,
     onInactivity: (idle) => notifications.push(idle),
   });
   child.exitCode = 0;
@@ -346,7 +373,8 @@ test("runSubagent: inactivity ignores parent steering and monitors unresolved se
   const child = new FakeChild();
   const notifications: SubagentInactivity[] = [];
   const launched = await runSubagent(agent, "t", "/tmp", "m", {
-    spawnFn: fakeSpawn(child), inactivityTimeoutMs: 100,
+    spawnFn: fakeSpawn(child),
+    inactivityTimeoutMs: 100,
     onInactivity: (idle) => notifications.push(idle),
   });
   respondToCommand(child);
@@ -377,7 +405,8 @@ test("runSubagent: inactivity stays suppressed until the final parent reply succ
   const child = new FakeChild();
   const notifications: SubagentInactivity[] = [];
   const launched = await runSubagent(agent, "t", "/tmp", "m", {
-    spawnFn: fakeSpawn(child), inactivityTimeoutMs: 100,
+    spawnFn: fakeSpawn(child),
+    inactivityTimeoutMs: 100,
     onInactivity: (idle) => notifications.push(idle),
   });
   respondToCommand(child);
@@ -395,7 +424,10 @@ test("runSubagent: inactivity stays suppressed until the final parent reply succ
   assert.equal(notifications.length, 0);
   child.stdin.writeError = undefined;
   let completeWrite: ((error?: Error | null) => void) | undefined;
-  t.mock.method(child.stdin, "write", (_data: string | Uint8Array, callback?: (error?: Error | null) => void) => { completeWrite = callback; return true; });
+  t.mock.method(child.stdin, "write", (_data: string | Uint8Array, callback?: (error?: Error | null) => void) => {
+    completeWrite = callback;
+    return true;
+  });
   const reply = launched.reply("q2", "yes");
   t.mock.timers.tick(200);
   assert.equal(notifications.length, 0);
@@ -457,7 +489,10 @@ test("runSubagent: reassembles characters split across output chunks", async () 
   const { result } = await runSubagent(agent, "t", "/tmp", "m", {
     spawnFn: fakeSpawn(child),
   });
-  for (const [stream, bytes] of [[child.stdout, Buffer.from(endEvent("π"))], [child.stderr, Buffer.from("π error\n")]] as const) {
+  for (const [stream, bytes] of [
+    [child.stdout, Buffer.from(endEvent("π"))],
+    [child.stderr, Buffer.from("π error\n")],
+  ] as const) {
     const split = bytes.indexOf(Buffer.from("π")) + 1;
     stream.emit("data", bytes.subarray(0, split));
     stream.emit("data", bytes.subarray(split));
@@ -494,9 +529,9 @@ test("runSubagent: formats no-text diagnostics from nonempty JSONL records", asy
   assert.equal(r.text, "");
   assert.equal(
     r.error,
-    "[subagents] No text extracted from 2 JSONL lines. Last lines:\n"
-      + "  {\"type\":\"progress\"}\n"
-      + "  {\"type\":\"progress\",\"step\":2}",
+    "[subagents] No text extracted from 2 JSONL lines. Last lines:\n" +
+      '  {"type":"progress"}\n' +
+      '  {"type":"progress","step":2}',
   );
 });
 
@@ -529,8 +564,14 @@ test("runSubagent: spawns the child with the full pi CLI contract", async () => 
   assert.equal(flags[modelIdx + 1], "p/m");
   assert.ok(flags.includes("--thinking"));
   assert.ok(flags.includes("--append-system-prompt"));
-  assert.equal(flags.some((a) => a === "Title: my title"), false);
-  assert.equal(flags.some((a) => a === "Task: do it"), false);
+  assert.equal(
+    flags.some((a) => a === "Title: my title"),
+    false,
+  );
+  assert.equal(
+    flags.some((a) => a === "Task: do it"),
+    false,
+  );
   assert.deepEqual(child.stdin.commands()[0], {
     id: "subagent-1",
     type: "prompt",
@@ -558,7 +599,7 @@ test("runSubagent: forwards allowlisted package extensions and ignores relative 
   await result;
 
   const flags = calls[0]!.args.slice(1);
-  const extensionValues = flags.flatMap((flag, index) => flag === "--extension" ? [flags[index + 1]] : []);
+  const extensionValues = flags.flatMap((flag, index) => (flag === "--extension" ? [flags[index + 1]] : []));
   assert.deepEqual(extensionValues, [BRIDGE_EXTENSION, "/packages/pi-claude-bridge/src/index.ts"]);
   assert.ok(flags.includes("--no-extensions"));
 });
@@ -589,7 +630,7 @@ test("runSubagent: ignores obsolete workspace guard extension configuration", as
 
   const { args, options } = calls[0]!;
   const flags = args.slice(1);
-  const extensionValues = flags.flatMap((flag, index) => flag === "--extension" ? [flags[index + 1]] : []);
+  const extensionValues = flags.flatMap((flag, index) => (flag === "--extension" ? [flags[index + 1]] : []));
   assert.deepEqual(extensionValues, [BRIDGE_EXTENSION]);
   assert.ok(flags.includes("--no-extensions"));
   assert.equal(options.cwd, "/tmp");
@@ -621,7 +662,7 @@ test("runSubagent: preserves inherited environment without activating obsolete w
 
       assert.ok(call);
       const flags = call.args.slice(1);
-      const extensionValues = flags.flatMap((flag, index) => flag === "--extension" ? [flags[index + 1]] : []);
+      const extensionValues = flags.flatMap((flag, index) => (flag === "--extension" ? [flags[index + 1]] : []));
       assert.deepEqual(extensionValues, [BRIDGE_EXTENSION]);
       assert.equal((call.options.env as { PI_WORKSPACE_GUARD_CHILD?: string }).PI_WORKSPACE_GUARD_CHILD, "parent");
       assert.equal((call.options.env as { PI_WORKSPACE_GUARD_OTHER?: string }).PI_WORKSPACE_GUARD_OTHER, "keep");
@@ -678,24 +719,35 @@ test("runSubagent: process error preserves partial JSONL output", async () => {
   const { result } = await runSubagent(agent, "t", "/tmp", "m", {
     spawnFn: fakeSpawn(child),
   });
-  child.stdout.emit("data", Buffer.from(JSON.stringify({
-    type: "message_end",
-    message: {
-      role: "assistant",
-      content: [
-        { type: "text", text: "partial answer" },
-        { type: "toolCall", name: "read", arguments: { path: "README.md" } },
-      ],
-      usage: { input: 5, output: 3, totalTokens: 8, cost: 0.0001 },
-    },
-  })));
+  child.stdout.emit(
+    "data",
+    Buffer.from(
+      JSON.stringify({
+        type: "message_end",
+        message: {
+          role: "assistant",
+          content: [
+            { type: "text", text: "partial answer" },
+            { type: "toolCall", name: "read", arguments: { path: "README.md" } },
+          ],
+          usage: { input: 5, output: 3, totalTokens: 8, cost: 0.0001 },
+        },
+      }),
+    ),
+  );
   child.emit("error");
 
   const r = await result;
   assert.equal(r.exitCode, 1);
   assert.equal(r.text, "partial answer");
   assert.deepEqual(r.usage, {
-    turns: 1, input: 5, output: 3, cacheRead: 0, cacheWrite: 0, cost: 0.0001, contextTokens: 8,
+    turns: 1,
+    input: 5,
+    output: 3,
+    cacheRead: 0,
+    cacheWrite: 0,
+    cost: 0.0001,
+    contextTokens: 8,
   });
   assert.deepEqual(r.toolCalls, [{ name: "read", args: { path: "README.md" } }]);
   assert.equal(r.error, "failed to run subagent RPC transport");
@@ -728,35 +780,59 @@ test("runSubagent: emits ordered semantic events without deltas or tool bodies",
 
   emit({ type: "agent_start" });
   emit({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "partial" } });
-  emit({ type: "tool_execution_start", toolName: "write", args: { file_path: "notes.txt", content: "SECRET BODY\nsecond" } });
+  emit({
+    type: "tool_execution_start",
+    toolName: "write",
+    args: { file_path: "notes.txt", content: "SECRET BODY\nsecond" },
+  });
   emit({ type: "tool_execution_end", toolName: "write", isError: false, result: "SECRET BODY\nsecond" });
   emit({ type: "tool_execution_end", toolName: "edit", isError: false, result: "SECRET BODY\nsecond" });
   emit({ type: "tool_execution_end", toolName: "write", isError: true, result: "permission denied\nretry later" });
-  emit({ type: "tool_execution_end", toolName: "edit", isError: true, result: { code: "ENOENT", message: "missing file" } });
+  emit({
+    type: "tool_execution_end",
+    toolName: "edit",
+    isError: true,
+    result: { code: "ENOENT", message: "missing file" },
+  });
   emit({ type: "tool_execution_start", toolName: "bash", args: { command: "npm test" } });
   emit({ type: "tool_execution_end", toolName: "bash", isError: false, result: "ok\nwith whitespace" });
   emit({
     type: "message_end",
-    message: { role: "assistant", content: [{ type: "thinking", thinking: "not emitted" }, { type: "text", text: " final\n answer " }] },
+    message: {
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "not emitted" },
+        { type: "text", text: " final\n answer " },
+      ],
+    },
   });
   emit({ type: "agent_settled" });
   child.finish(0);
   await result;
 
-  assert.deepEqual(events.map(({ kind, summary }) => ({ kind, summary })), [
-    { kind: "state", summary: "started" },
-    { kind: "tool-start", summary: "write notes.txt (2 lines)" },
-    { kind: "tool-end", summary: "write success" },
-    { kind: "tool-end", summary: "edit success" },
-    { kind: "tool-end", summary: "write error: permission denied retry later" },
-    { kind: "tool-end", summary: 'edit error: {"code":"ENOENT","message":"missing file"}' },
-    { kind: "tool-start", summary: "$ npm test" },
-    { kind: "tool-end", summary: "bash success: ok with whitespace" },
-    { kind: "assistant", summary: "final answer" },
-    { kind: "state", summary: "settled" },
-  ]);
-  assert.equal(events.some((event) => event.summary.includes("SECRET BODY")), false);
-  assert.equal(events.every((event) => event.summary.length <= 500 && !/[\r\n\t]/.test(event.summary)), true);
+  assert.deepEqual(
+    events.map(({ kind, summary }) => ({ kind, summary })),
+    [
+      { kind: "state", summary: "started" },
+      { kind: "tool-start", summary: "write notes.txt (2 lines)" },
+      { kind: "tool-end", summary: "write success" },
+      { kind: "tool-end", summary: "edit success" },
+      { kind: "tool-end", summary: "write error: permission denied retry later" },
+      { kind: "tool-end", summary: 'edit error: {"code":"ENOENT","message":"missing file"}' },
+      { kind: "tool-start", summary: "$ npm test" },
+      { kind: "tool-end", summary: "bash success: ok with whitespace" },
+      { kind: "assistant", summary: "final answer" },
+      { kind: "state", summary: "settled" },
+    ],
+  );
+  assert.equal(
+    events.some((event) => event.summary.includes("SECRET BODY")),
+    false,
+  );
+  assert.equal(
+    events.every((event) => event.summary.length <= 500 && !/[\r\n\t]/.test(event.summary)),
+    true,
+  );
 });
 
 test("runSubagent: steps time assistant attempts without restarting on deltas or requiring text", async (t) => {
@@ -777,7 +853,13 @@ test("runSubagent: steps time assistant attempts without restarting on deltas or
   child.stdout.emit("data", Buffer.from(updateEvent("delta")));
   t.mock.timers.tick(20);
   emit({ type: "message_end", message: { role: "assistant", content: [] } });
-  assert.deepEqual(timeline.map(({ at, step }) => [at, step?.phase]), [[10000, "start"], [10060, "end"]]);
+  assert.deepEqual(
+    timeline.map(({ at, step }) => [at, step?.phase]),
+    [
+      [10000, "start"],
+      [10060, "end"],
+    ],
+  );
 
   for (const content of [[{ type: "thinking", thinking: "private" }], []]) {
     emit({ type: "message_start", message: { role: "assistant" } });
@@ -787,7 +869,7 @@ test("runSubagent: steps time assistant attempts without restarting on deltas or
   child.stdout.emit("data", Buffer.from(updateEvent("fallback")));
   t.mock.timers.tick(10);
   child.stdout.emit("data", Buffer.from(endEvent("answer")));
-  const steps = timeline.flatMap(({ step }) => step ? [step] : []);
+  const steps = timeline.flatMap(({ step }) => (step ? [step] : []));
   assert.equal(steps.length, 8);
   for (let index = 0; index < steps.length; index += 2) {
     const start = steps[index]!;
@@ -814,18 +896,39 @@ test("runSubagent: steps pair concurrent same-name tools by call ID and sanitize
   });
   const emit = (event: Record<string, unknown>) => child.stdout.emit("data", Buffer.from(`${JSON.stringify(event)}\n`));
   for (const id of ["a", "b"]) {
-    emit({ type: "tool_execution_start", toolCallId: `private-call-${id}`, toolName: "write", args: { path: `${id}.txt`, content: "SECRET BODY" } });
+    emit({
+      type: "tool_execution_start",
+      toolCallId: `private-call-${id}`,
+      toolName: "write",
+      args: { path: `${id}.txt`, content: "SECRET BODY" },
+    });
     t.mock.timers.tick(10);
   }
-  emit({ type: "tool_execution_start", toolCallId: "private-call-a", toolName: "write", args: { path: "a.txt", content: "SECRET BODY" } });
-  emit({ type: "tool_execution_update", toolCallId: "private-call-a", toolName: "write", partialResult: "SECRET BODY" });
-  for (const id of ["b", "a"]) emit({ type: "tool_execution_end", toolCallId: `private-call-${id}`, toolName: "write", result: "SECRET BODY" });
+  emit({
+    type: "tool_execution_start",
+    toolCallId: "private-call-a",
+    toolName: "write",
+    args: { path: "a.txt", content: "SECRET BODY" },
+  });
+  emit({
+    type: "tool_execution_update",
+    toolCallId: "private-call-a",
+    toolName: "write",
+    partialResult: "SECRET BODY",
+  });
+  for (const id of ["b", "a"])
+    emit({ type: "tool_execution_end", toolCallId: `private-call-${id}`, toolName: "write", result: "SECRET BODY" });
   emit({ type: "tool_execution_end", toolName: "write" });
   emit({ type: "tool_execution_end", toolCallId: "unknown", toolName: "write" });
-  const starts = timeline.filter((entry): entry is Extract<JobStepInput, { phase: "start" }> => "phase" in entry && entry.phase === "start");
+  const starts = timeline.filter(
+    (entry): entry is Extract<JobStepInput, { phase: "start" }> => "phase" in entry && entry.phase === "start",
+  );
   assert.equal(starts.length, 2);
   assert.notEqual(starts[0]!.id, starts[1]!.id);
-  assert.deepEqual(starts[0]!.toolCall, { name: "write", args: { path: "a.txt", content: undefined, contentLines: 1 } });
+  assert.deepEqual(starts[0]!.toolCall, {
+    name: "write",
+    args: { path: "a.txt", content: undefined, contentLines: 1 },
+  });
   assert.deepEqual(timeline[4], { kind: "tool-start", summary: "write a.txt", stepId: starts[0]!.id });
   assert.deepEqual(timeline.slice(5, 9), [
     { phase: "end", id: starts[1]!.id },
@@ -834,7 +937,8 @@ test("runSubagent: steps pair concurrent same-name tools by call ID and sanitize
     { kind: "tool-end", summary: "write success", stepId: starts[0]!.id },
   ]);
   assert.deepEqual(timeline.slice(9), [
-    { kind: "tool-end", summary: "write success" }, { kind: "tool-end", summary: "write success" },
+    { kind: "tool-end", summary: "write success" },
+    { kind: "tool-end", summary: "write success" },
   ]);
   for (let index = 0; index < 4; index += 2) {
     assert.equal((timeline[index] as JobStepInput).phase, "start");
@@ -842,7 +946,12 @@ test("runSubagent: steps pair concurrent same-name tools by call ID and sanitize
   }
   emit({ type: "turn_start" });
   emit({ type: "message_end", message: { role: "assistant", content: [] } });
-  emit({ type: "tool_execution_start", toolCallId: "private-call-a", toolName: "write", args: { path: "a.txt", content: "SECRET BODY" } });
+  emit({
+    type: "tool_execution_start",
+    toolCallId: "private-call-a",
+    toolName: "write",
+    args: { path: "a.txt", content: "SECRET BODY" },
+  });
   emit({ type: "tool_execution_end", toolCallId: "private-call-a", toolName: "write", result: "SECRET BODY" });
   const reused = timeline.at(-4) as Extract<JobStepInput, { phase: "start" }>;
   assert.equal(reused.phase, "start");
@@ -877,8 +986,13 @@ test("runSubagent: retry steps close on retry end or the next attempt and use un
     emit({ type: "auto_retry_start", attempt: 1, errorMessage: "private provider error" });
     emit({ type: "auto_retry_end", attempt: 1, success: false });
   }
-  const starts = timeline.filter((entry): entry is Extract<JobStepInput, { phase: "start" }> => "phase" in entry && entry.phase === "start");
-  assert.deepEqual(starts.map((step) => step.kind), ["assistant", "retry", "assistant", "retry"]);
+  const starts = timeline.filter(
+    (entry): entry is Extract<JobStepInput, { phase: "start" }> => "phase" in entry && entry.phase === "start",
+  );
+  assert.deepEqual(
+    starts.map((step) => step.kind),
+    ["assistant", "retry", "assistant", "retry"],
+  );
   assert.equal(new Set(starts.map((step) => step.id)).size, 4);
   for (let index = 0; index < timeline.length; index += 6) {
     const assistant = timeline[index] as JobStepInput;
@@ -911,7 +1025,9 @@ test("runSubagent: retry steps close on retry end or the next attempt and use un
     emit({ type: "message_end", message: { role: "assistant", content: [] } });
     assert.deepEqual(timeline.at(-1), { phase: "end", id: assistant.id });
   }
-  const allStarts = timeline.filter((entry): entry is Extract<JobStepInput, { phase: "start" }> => "phase" in entry && entry.phase === "start");
+  const allStarts = timeline.filter(
+    (entry): entry is Extract<JobStepInput, { phase: "start" }> => "phase" in entry && entry.phase === "start",
+  );
   assert.equal(new Set(allStarts.map((step) => step.id)).size, allStarts.length);
   child.finish(0);
   await launched.result;
@@ -922,8 +1038,12 @@ test("runSubagent: event and step callback exceptions do not interrupt processin
   const child = new FakeChild();
   const { result } = await runSubagent(agent, "t", "/tmp", "m", {
     spawnFn: fakeSpawn(child),
-    onEvent: () => { throw new Error("event callback failed"); },
-    onStep: () => { throw new Error("step callback failed"); },
+    onEvent: () => {
+      throw new Error("event callback failed");
+    },
+    onStep: () => {
+      throw new Error("step callback failed");
+    },
   });
   child.stdout.emit("data", Buffer.from(updateEvent("partial")));
   child.stdout.emit("data", Buffer.from(endEvent("final answer")));

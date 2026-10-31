@@ -1,14 +1,14 @@
-import { test } from "node:test";
 import assert from "node:assert/strict";
+import { test } from "node:test";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
 import { Check } from "typebox/value";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { parseSubagentSettings, SESSION_PROFILE_NAME } from "../../src/subagents/agents.ts";
 import type { AgentConfig } from "../../src/subagents/agents.ts";
+import { EMPTY_USAGE, PROFILE_ENTRY_TYPE } from "../../src/subagents/constants.ts";
 import { confirmSubagentProfile } from "../../src/subagents/profile-ui.ts";
 import { createJobRegistry } from "../../src/subagents/registry.ts";
-import { formatLocalTime } from "../../src/subagents/tail.ts";
 import {
   createCancelTool,
   createPeekTool,
@@ -17,10 +17,10 @@ import {
   createStatusTool,
   registerStatusCommands,
 } from "../../src/subagents/status-tools.ts";
-import { EMPTY_USAGE, PROFILE_ENTRY_TYPE } from "../../src/subagents/constants.ts";
-import { responseEvent } from "./fake-child.ts";
+import { formatLocalTime } from "../../src/subagents/tail.ts";
 import { fakeTheme, taggedTheme as createTaggedTheme } from "../helpers/theme.ts";
 import { sleep, waitFor } from "../helpers/wait.ts";
+import { responseEvent } from "./fake-child.ts";
 import { AGENT, makeTool, customProfilePicker, renderAtWidth, renderText } from "./helpers.ts";
 
 test("subagent status includes compact model and effort", async () => {
@@ -65,39 +65,90 @@ test("subagent peek returns bounded incremental semantic events", async () => {
     { seq: 3, timestamp: first.details.events[1]!.timestamp, kind: "assistant", summary: "Found the auth module." },
   ]);
   assert.equal(first.details.nextCursor, 3);
-  assert.equal((first.content[0] as { text: string }).text, "subagent peek #1 scout · running task\n[2] 12:34:56 read src/auth.ts\n[3] 12:34:56 Found the auth module.\nnextCursor: 3");
+  assert.equal(
+    (first.content[0] as { text: string }).text,
+    "subagent peek #1 scout · running task\n[2] 12:34:56 read src/auth.ts\n[3] 12:34:56 Found the auth module.\nnextCursor: 3",
+  );
 
-  const next = await tool.execute("peek2", { jobId: runningId, since: first.details.nextCursor }, undefined, undefined, {} as never);
+  const next = await tool.execute(
+    "peek2",
+    { jobId: runningId, since: first.details.nextCursor },
+    undefined,
+    undefined,
+    {} as never,
+  );
   assert.deepEqual(next.details.events, []);
   assert.equal(next.details.nextCursor, 3);
 
-  const fromStart = await tool.execute("peek3", { jobId: runningId, since: 0, limit: 2 }, undefined, undefined, {} as never);
-  assert.deepEqual(fromStart.details.events.map((event) => event.seq), [1, 2]);
+  const fromStart = await tool.execute(
+    "peek3",
+    { jobId: runningId, since: 0, limit: 2 },
+    undefined,
+    undefined,
+    {} as never,
+  );
+  assert.deepEqual(
+    fromStart.details.events.map((event) => event.seq),
+    [1, 2],
+  );
   assert.equal(fromStart.details.nextCursor, 2);
 
-  const capped = await tool.execute("peek4", { jobId: runningId, since: 0, maxChars: 21 }, undefined, undefined, {} as never);
-  assert.deepEqual(capped.details.events.map((event) => event.seq), [1]);
+  const capped = await tool.execute(
+    "peek4",
+    { jobId: runningId, since: 0, maxChars: 21 },
+    undefined,
+    undefined,
+    {} as never,
+  );
+  assert.deepEqual(
+    capped.details.events.map((event) => event.seq),
+    [1],
+  );
   assert.equal(capped.details.nextCursor, 1);
   assert.ok((capped.content[0] as { text: string }).text.length <= 21);
-  await assert.rejects(tool.execute("peek5", { jobId: runningId, since: 99 }, undefined, undefined, {} as never), /ahead of current sequence/);
-  await assert.rejects(tool.execute("peek6", { jobId: 999 }, undefined, undefined, {} as never), /Unknown subagent job ID: 999/);
+  await assert.rejects(
+    tool.execute("peek5", { jobId: runningId, since: 99 }, undefined, undefined, {} as never),
+    /ahead of current sequence/,
+  );
+  await assert.rejects(
+    tool.execute("peek6", { jobId: 999 }, undefined, undefined, {} as never),
+    /Unknown subagent job ID: 999/,
+  );
 
   registry.complete(runningId, { agent: "scout", task: "running task", text: "done", exitCode: 0, error: "" });
   const terminal = await tool.execute("peek7", { jobId: runningId }, undefined, undefined, {} as never);
   assert.equal(terminal.details.status, "completed");
-  assert.deepEqual(terminal.details.events.map((event) => event.seq), [1, 2, 3]);
+  assert.deepEqual(
+    terminal.details.events.map((event) => event.seq),
+    [1, 2, 3],
+  );
 
   const longTaskId = registry.add("worker", "t".repeat(900));
   registry.appendEvent(longTaskId, { kind: "assistant", summary: "event still fits" });
-  const longTask = await tool.execute("peek-long-task", { jobId: longTaskId, maxChars: 2000 }, undefined, undefined, {} as never);
-  assert.deepEqual(longTask.details.events.map((event) => event.seq), [1]);
+  const longTask = await tool.execute(
+    "peek-long-task",
+    { jobId: longTaskId, maxChars: 2000 },
+    undefined,
+    undefined,
+    {} as never,
+  );
+  assert.deepEqual(
+    longTask.details.events.map((event) => event.seq),
+    [1],
+  );
   assert.equal(longTask.details.nextCursor, 1);
   assert.match((longTask.content[0] as { text: string }).text, /\[1\] 12:34:56 event still fits/);
   assert.ok((longTask.content[0] as { text: string }).text.length <= 2000);
 
   const ringId = registry.add("worker", "ring task");
   for (let i = 0; i < 101; i++) registry.appendEvent(ringId, { kind: "state", summary: String(i) });
-  const dropped = await tool.execute("peek8", { jobId: ringId, since: 0, limit: 100 }, undefined, undefined, {} as never);
+  const dropped = await tool.execute(
+    "peek8",
+    { jobId: ringId, since: 0, limit: 100 },
+    undefined,
+    undefined,
+    {} as never,
+  );
   assert.equal(dropped.details.droppedBefore, 2);
   assert.equal(dropped.details.events[0]?.seq, 2);
 
@@ -107,11 +158,16 @@ test("subagent peek returns bounded incremental semantic events", async () => {
   now = timestamp;
   registry.recordStep(rawId, { phase: "end", id: "read-1" });
   registry.appendEvent(rawId, {
-    kind: "tool-end", stepId: "read-1",
-    summary: 'read success: {"content":[{"type":"text","text":"\\u001b]52;c;cHduZWQ=\\u0007\\u001b[31mone\\u001b[0m\\ntwo"}]}',
+    kind: "tool-end",
+    stepId: "read-1",
+    summary:
+      'read success: {"content":[{"type":"text","text":"\\u001b]52;c;cHduZWQ=\\u0007\\u001b[31mone\\u001b[0m\\ntwo"}]}',
   });
   const raw = await tool.execute("peek9", { jobId: rawId }, undefined, undefined, {} as never);
-  assert.equal((raw.content[0] as { text: string }).text, "subagent peek #4 worker · structured result\n[1] 12:34:56 read success: one · 2 lines · 3s\nnextCursor: 1");
+  assert.equal(
+    (raw.content[0] as { text: string }).text,
+    "subagent peek #4 worker · structured result\n[1] 12:34:56 read success: one · 2 lines · 3s\nnextCursor: 1",
+  );
   assert.ok(tool.outputSchema);
   assert.equal(tool.exposure ?? "direct", "direct");
   for (const result of [first, next, fromStart, capped, terminal, dropped, raw]) {
@@ -123,14 +179,34 @@ test("subagent peek returns bounded incremental semantic events", async () => {
     ...raw.details,
     events: [{ ...raw.details.events[0]!, summary: "read success: one · 2 lines" }],
   });
-  const tiny = await tool.execute("tiny", { jobId: runningId, since: 0, maxChars: 1 }, undefined, undefined, {} as never);
+  const tiny = await tool.execute(
+    "tiny",
+    { jobId: runningId, since: 0, maxChars: 1 },
+    undefined,
+    undefined,
+    {} as never,
+  );
   assert.ok(Check(tool.outputSchema, tiny.structuredContent));
-  assert.deepEqual(tiny.structuredContent, { jobId: runningId, agent: "scout", task: "running task", status: "completed", events: [], nextCursor: 0 });
+  assert.deepEqual(tiny.structuredContent, {
+    jobId: runningId,
+    agent: "scout",
+    task: "running task",
+    status: "completed",
+    events: [],
+    nextCursor: 0,
+  });
   assert.deepEqual(tiny.content, [{ type: "text", text: "" }]);
   const emptyId = registry.add("worker", "no events");
   const empty = await tool.execute("empty", { jobId: emptyId }, undefined, undefined, {} as never);
   assert.ok(Check(tool.outputSchema, empty.structuredContent));
-  assert.deepEqual(empty.structuredContent, { jobId: emptyId, agent: "worker", task: "no events", status: "running", events: [], nextCursor: 0 });
+  assert.deepEqual(empty.structuredContent, {
+    jobId: emptyId,
+    agent: "worker",
+    task: "no events",
+    status: "running",
+    events: [],
+    nextCursor: 0,
+  });
   assert.deepEqual(empty.content, [{ type: "text", text: "subagent peek #5 worker · no events\nnextCursor: 0" }]);
 });
 
@@ -139,13 +215,17 @@ test("subagent peek structured summaries share the bounded human preview without
   const jobId = registry.add("worker", "bounded tool results");
   registry.appendEvent(jobId, { kind: "state", summary: "started" });
   const prefix = "read success: ";
-  const large = prefix + JSON.stringify({
-    content: [{ type: "text", text: `\u001b]2;pwned\u0007${"x".repeat(100000)}\nRAW_TOOL_BODY` }],
-  });
+  const large =
+    prefix +
+    JSON.stringify({
+      content: [{ type: "text", text: `\u001b]2;pwned\u0007${"x".repeat(100000)}\nRAW_TOOL_BODY` }],
+    });
   const wrapper = JSON.stringify({ content: [{ type: "text", text: "" }] });
-  const runnerSummary = prefix + JSON.stringify({
-    content: [{ type: "text", text: "y".repeat(500 - prefix.length - wrapper.length) }],
-  });
+  const runnerSummary =
+    prefix +
+    JSON.stringify({
+      content: [{ type: "text", text: "y".repeat(500 - prefix.length - wrapper.length) }],
+    });
   assert.equal(runnerSummary.length, 500);
   registry.appendEvent(jobId, { kind: "tool-end", summary: large });
   registry.appendEvent(jobId, { kind: "tool-end", summary: runnerSummary });
@@ -153,22 +233,29 @@ test("subagent peek structured summaries share the bounded human preview without
   for (let i = 0; i < 97; i++) registry.appendEvent(jobId, { kind: "state", summary: "running" });
   const tool = createPeekTool({ registry });
   const maxChars = 380;
-  const result = await tool.execute("bounded", { jobId, since: 0, limit: 100, maxChars }, undefined, undefined, {} as never);
-  const summaries = [
-    `${prefix}${"x".repeat(119)}… · 2 lines`,
-    `${prefix}${"y".repeat(119)}… · 1 line`,
-  ];
+  const result = await tool.execute(
+    "bounded",
+    { jobId, since: 0, limit: 100, maxChars },
+    undefined,
+    undefined,
+    {} as never,
+  );
+  const summaries = [`${prefix}${"x".repeat(119)}… · 2 lines`, `${prefix}${"y".repeat(119)}… · 1 line`];
   const clock = formatLocalTime(1234);
   const preview = `[history dropped before 2]\n[2] ${clock} ${summaries[0]}\n[3] ${clock} ${summaries[1]}`;
   assert.deepEqual(result.content, [{ type: "text", text: `${preview}\nnextCursor: 3` }]);
   assert.ok((result.content[0] as { text: string }).text.length <= maxChars);
   assert.deepEqual(result.details, {
-    jobId, agent: "worker", task: "bounded tool results", status: "running",
+    jobId,
+    agent: "worker",
+    task: "bounded tool results",
+    status: "running",
     events: [
       { seq: 2, timestamp: 1234, kind: "tool-end", summary: large },
       { seq: 3, timestamp: 1234, kind: "tool-end", summary: runnerSummary },
     ],
-    nextCursor: 3, droppedBefore: 2,
+    nextCursor: 3,
+    droppedBefore: 2,
   });
   const serialized = JSON.stringify(result.structuredContent);
   const structured = JSON.parse(serialized);
@@ -178,12 +265,21 @@ test("subagent peek structured summaries share the bounded human preview without
     ...result.details,
     events: result.details.events.map((event, index) => ({ ...event, summary: summaries[index]! })),
   });
-  assert.ok(structured.events.reduce((length: number, event: { summary: string }) => length + event.summary.length, 0) <= maxChars);
+  assert.ok(
+    structured.events.reduce((length: number, event: { summary: string }) => length + event.summary.length, 0) <=
+      maxChars,
+  );
   assert.ok(serialized.length < 1000);
   assert.doesNotMatch(serialized, /RAW_TOOL_BODY|pwned|content|\\u001b/);
   assert.deepEqual(registry.readEvents(jobId, { since: 0, limit: 2 })?.events[0], result.details.events[0]);
 
-  const next = await tool.execute("next", { jobId, since: structured.nextCursor, limit: 1, maxChars: 600 }, undefined, undefined, {} as never);
+  const next = await tool.execute(
+    "next",
+    { jobId, since: structured.nextCursor, limit: 1, maxChars: 600 },
+    undefined,
+    undefined,
+    {} as never,
+  );
   assert.ok(Check(tool.outputSchema, JSON.parse(JSON.stringify(next.structuredContent))));
   const nextSummary = "z".repeat(500);
   assert.deepEqual(next.details.events, [{ seq: 4, timestamp: 1234, kind: "assistant", summary: nextSummary }]);
@@ -193,7 +289,12 @@ test("subagent peek structured summaries share the bounded human preview without
   });
   assert.equal(next.details.nextCursor, 4);
   assert.equal(next.details.droppedBefore, undefined);
-  assert.deepEqual(next.content, [{ type: "text", text: `subagent peek #1 worker · bounded tool results\n[4] ${clock} ${nextSummary}\nnextCursor: 4` }]);
+  assert.deepEqual(next.content, [
+    {
+      type: "text",
+      text: `subagent peek #1 worker · bounded tool results\n[4] ${clock} ${nextSummary}\nnextCursor: 4`,
+    },
+  ]);
 });
 
 test("subagent status structured results preserve empty, filtered, and unknown snapshots", async () => {
@@ -241,7 +342,10 @@ test("subagent status structured results preserve empty, filtered, and unknown s
   const unknown = await tool.execute("unknown", { jobId: 999 }, undefined, undefined, {} as never);
   assert.ok(Check(tool.outputSchema, unknown.structuredContent));
   assert.deepEqual(unknown.structuredContent, {
-    text: "subagent status #999: Unknown subagent job ID: 999", jobId: 999, jobs: [], error: "subagent status #999: Unknown subagent job ID: 999",
+    text: "subagent status #999: Unknown subagent job ID: 999",
+    jobId: 999,
+    jobs: [],
+    error: "subagent status #999: Unknown subagent job ID: 999",
   });
   assert.deepEqual(unknown.content, [{ type: "text", text: "subagent status #999: Unknown subagent job ID: 999" }]);
   assert.equal(unknown.isError, undefined);
@@ -250,25 +354,37 @@ test("subagent status structured results preserve empty, filtered, and unknown s
 test("subagent peek renderer labels events and compacts structured results", () => {
   const { renderResult } = createPeekTool({ registry: createJobRegistry() });
   const theme = createTaggedTheme() as never;
-  const rendered = renderText(renderResult!({
-    content: [{ type: "text", text: "legacy peek text" }],
-    details: {
-      jobId: 1,
-      agent: "scout",
-      status: "running",
-      events: [
-        {
-          seq: 1,
-          timestamp: new Date(2026, 0, 2, 12, 34, 56).getTime(),
-          durationMs: 3000,
-          kind: "tool-end",
-          summary: 'read success: {"content":[{"type":"text","text":"one\\ntwo"}]}',
+  const rendered = renderText(
+    renderResult!(
+      {
+        content: [{ type: "text", text: "legacy peek text" }],
+        details: {
+          jobId: 1,
+          agent: "scout",
+          status: "running",
+          events: [
+            {
+              seq: 1,
+              timestamp: new Date(2026, 0, 2, 12, 34, 56).getTime(),
+              durationMs: 3000,
+              kind: "tool-end",
+              summary: 'read success: {"content":[{"type":"text","text":"one\\ntwo"}]}',
+            },
+            {
+              seq: 2,
+              timestamp: Date.now(),
+              kind: "assistant",
+              summary: "\u001b]2;pwned\u0007Found \u001b[31mit\u001b[0m.",
+            },
+          ],
+          nextCursor: 2,
         },
-        { seq: 2, timestamp: Date.now(), kind: "assistant", summary: "\u001b]2;pwned\u0007Found \u001b[31mit\u001b[0m." },
-      ],
-      nextCursor: 2,
-    },
-  } as never, {} as never, theme, {} as never));
+      } as never,
+      {} as never,
+      theme,
+      {} as never,
+    ),
+  );
   assert.match(rendered, /\[success\]result/);
   assert.match(rendered, /12:34:56/);
   assert.match(rendered, /read success: one · 2 lines · 3s/);
@@ -290,7 +406,12 @@ test("subagent peek shows live linked-step elapsed time and freezes it when the 
   assert.match((result.content[0] as { text: string }).text, /\[1\] 12:34:56 read src\/auth\.ts · 3s elapsed/);
   assert.equal(result.details.events[0]?.summary, "read src/auth.ts");
   assert.deepEqual(result.structuredContent, result.details);
-  const rendered = tool.renderResult!(result, { expanded: false, isPartial: false }, fakeTheme() as never, { args: { jobId } } as never);
+  const rendered = tool.renderResult!(
+    result,
+    { expanded: false, isPartial: false },
+    fakeTheme() as never,
+    { args: { jobId } } as never,
+  );
   assert.match(renderText(rendered), /12:34:56 tool\s+read src\/auth\.ts · 3s elapsed/);
 
   t.mock.timers.tick(2000);
@@ -316,8 +437,19 @@ test("subagent status supports individual and unknown job IDs", async (t) => {
     model: "p/m",
     thinkingLevel: "minimal",
   });
-  registry.recordStep(runningId, { phase: "start", id: "assistant-1", kind: "assistant", summary: "Thinking through the API" });
-  registry.recordStep(runningId, { phase: "start", id: "bash-1", kind: "tool", summary: "bash npm test", toolCall: { name: "bash", args: { command: "npm test" } } });
+  registry.recordStep(runningId, {
+    phase: "start",
+    id: "assistant-1",
+    kind: "assistant",
+    summary: "Thinking through the API",
+  });
+  registry.recordStep(runningId, {
+    phase: "start",
+    id: "bash-1",
+    kind: "tool",
+    summary: "bash npm test",
+    toolCall: { name: "bash", args: { command: "npm test" } },
+  });
   registry.recordStep(runningId, { phase: "start", id: "retry-1", kind: "retry", summary: "Retrying provider" });
   t.mock.timers.tick(3000);
   const completedId = registry.add("worker", "completed task");
@@ -344,7 +476,14 @@ test("subagent status supports individual and unknown job IDs", async (t) => {
   assert.match(individualText, /- 12:34:56 · 3s elapsed · tool: bash npm test/);
   assert.match(individualText, /- 12:34:56 · 3s elapsed · retry: Retrying provider/);
   assert.match(individualText, /Tool calls \(1\):\n- 12:34:56 · 3s elapsed · \$ npm test/);
-  const rendered = renderText(tool.renderResult!(individual, { expanded: false, isPartial: false }, fakeTheme() as never, { args: { jobId: runningId } } as never));
+  const rendered = renderText(
+    tool.renderResult!(
+      individual,
+      { expanded: false, isPartial: false },
+      fakeTheme() as never,
+      { args: { jobId: runningId } } as never,
+    ),
+  );
   assert.match(rendered, /12:34:56 · 3s elapsed · assistant: Thinking through the API/);
   assert.match(rendered, /12:34:56 · 3s elapsed · tool: bash npm test/);
   assert.match(rendered, /12:34:56 · 3s elapsed · retry: Retrying provider/);
@@ -373,14 +512,22 @@ test("subagent status tool previews use render width without enlarging model sum
   registry.updateLive(jobId, {
     toolCalls: [
       { name: "bash", args: { command: `echo ${"argument ".repeat(10)}useful trailing details` } },
-      { name: "read", args: { path: "/Users/jared/project/pi/.pi/agent/extensions/subagents/status-tools.ts", offset: 10, limit: 20 } },
+      {
+        name: "read",
+        args: { path: "/Users/jared/project/pi/.pi/agent/extensions/subagents/status-tools.ts", offset: 10, limit: 20 },
+      },
     ],
   });
   const tool = createStatusTool({ registry });
   const result = await tool.execute("status", { jobId }, undefined, undefined, {} as never);
   assert.doesNotMatch((result.content[0] as { text: string }).text, /useful trailing details/);
   registry.updateLive(jobId, { toolCalls: [] });
-  const component = tool.renderResult!(result, { expanded: false, isPartial: false }, fakeTheme() as never, { args: { jobId } } as never)!;
+  const component = tool.renderResult!(
+    result,
+    { expanded: false, isPartial: false },
+    fakeTheme() as never,
+    { args: { jobId } } as never,
+  )!;
   const narrow = component.render(70);
   const wide = component.render(180);
   assert.ok(narrow.every((line) => visibleWidth(line) <= 70));
@@ -407,16 +554,24 @@ test("status, cancel, and send tools render job-aware output", async () => {
   const theme = fakeTheme() as never;
 
   const statusTool = createStatusTool({ registry });
-  assert.equal(renderText(statusTool.renderCall!({ jobId }, theme, {} as never)).trim(), "subagent status #1 scout · Inspect the error path");
+  assert.equal(
+    renderText(statusTool.renderCall!({ jobId }, theme, {} as never)).trim(),
+    "subagent status #1 scout · Inspect the error path",
+  );
   const statusResult = await statusTool.execute("status", { jobId }, undefined, undefined, {} as never);
   assert.match(statusResult.details.text, /Subagent #1/);
   const statusColors: string[] = [];
   const statusTheme = {
     ...fakeTheme(),
-    fg: (color: string, text: string) => { statusColors.push(color); return text; },
+    fg: (color: string, text: string) => {
+      statusColors.push(color);
+      return text;
+    },
   } as never;
   const renderedStatus = renderText(
-    statusTool.renderResult!(statusResult, { expanded: false, isPartial: false }, statusTheme, { args: { jobId } } as never),
+    statusTool.renderResult!(statusResult, { expanded: false, isPartial: false }, statusTheme, {
+      args: { jobId },
+    } as never),
   );
   assert.doesNotMatch(renderedStatus, /Subagent #1/);
   assert.doesNotMatch(renderedStatus, /\*\*Subagent #1\*\*/);
@@ -425,7 +580,9 @@ test("status, cancel, and send tools render job-aware output", async () => {
 
   const taggedStatusTheme = createTaggedTheme() as never;
   const taggedStatus = renderText(
-    statusTool.renderResult!(statusResult, { expanded: false, isPartial: false }, taggedStatusTheme, { args: { jobId } } as never),
+    statusTool.renderResult!(statusResult, { expanded: false, isPartial: false }, taggedStatusTheme, {
+      args: { jobId },
+    } as never),
   );
   assert.doesNotMatch(taggedStatus, /\[dim\] Inspect the error path/);
   assert.match(taggedStatus, /\[dim\]- Which path\?/);
@@ -454,7 +611,10 @@ test("status, cancel, and send tools render job-aware output", async () => {
   const sendTool = createSendTool({ registry });
   const sendArgs = { jobId, message: "Check the failure path", deliverAs: "steer" as const };
   const sendCall = renderText(sendTool.renderCall!(sendArgs, theme, {} as never))
-    .split("\n").map((line) => line.trimEnd()).join("\n").trim();
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .join("\n")
+    .trim();
   assert.equal(sendCall, "subagent send #1 scout · Inspect the error path · steering\n  Check the failure path");
   const longMessage = `first\n${"x".repeat(140)} trailing-message`;
   const widePreview = renderAtWidth(
@@ -473,7 +633,11 @@ test("status, cancel, and send tools render job-aware output", async () => {
   const sendResult = await sendTool.execute("send", sendArgs, undefined, undefined, {} as never);
   const renderedSendResult = renderText(
     sendTool.renderResult!(sendResult, { expanded: false, isPartial: false }, theme, { args: sendArgs } as never),
-  ).split("\n").map((line) => line.trimEnd()).join("\n").trim();
+  )
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .join("\n")
+    .trim();
   assert.equal(renderedSendResult, "✓ delivered");
   const combinedSendPreview = `${sendCall}\n${renderedSendResult}`;
   assert.equal(combinedSendPreview.match(/Check the failure path/g)?.length, 1);
@@ -509,15 +673,27 @@ test("status, cancel, and send tools render job-aware output", async () => {
   assert.equal(renderTrimmed(peekFallback), "peek failed");
 
   const cancelTool = createCancelTool({ registry });
-  assert.equal(renderText(cancelTool.renderCall!({ jobId }, theme, {} as never)).trim(), "subagent cancel #1 scout · Inspect the error path");
+  assert.equal(
+    renderText(cancelTool.renderCall!({ jobId }, theme, {} as never)).trim(),
+    "subagent cancel #1 scout · Inspect the error path",
+  );
   const cancelResult = await cancelTool.execute("cancel", { jobId }, undefined, undefined, {} as never);
   assert.equal(
-    renderText(cancelTool.renderResult!(cancelResult, { expanded: false, isPartial: false }, theme, { args: { jobId } } as never))
-      .split("\n").map((line) => line.trimEnd()).join("\n").trim(),
+    renderText(
+      cancelTool.renderResult!(cancelResult, { expanded: false, isPartial: false }, theme, {
+        args: { jobId },
+      } as never),
+    )
+      .split("\n")
+      .map((line) => line.trimEnd())
+      .join("\n")
+      .trim(),
     "⊘ cancelling 1 subagent",
   );
   const taggedCancelResult = renderText(
-    cancelTool.renderResult!(cancelResult, { expanded: false, isPartial: false }, taggedTheme, { args: { jobId } } as never),
+    cancelTool.renderResult!(cancelResult, { expanded: false, isPartial: false }, taggedTheme, {
+      args: { jobId },
+    } as never),
   );
   assert.match(taggedCancelResult, /\[warning\]⊘ /);
   assert.match(taggedCancelResult, /\[muted\]cancelling /);
@@ -550,12 +726,14 @@ test("resolved status and peek results omit only duplicated identity", async () 
   const statusArgs = { jobId };
   const statusCall = renderText(statusTool.renderCall!(statusArgs, fakeTheme() as never, {} as never));
   const statusResult = await statusTool.execute("status", statusArgs, undefined, undefined, {} as never);
-  const statusText = renderText(statusTool.renderResult!(
-    statusResult,
-    { expanded: false, isPartial: false },
-    fakeTheme() as never,
-    { args: statusArgs } as never,
-  ));
+  const statusText = renderText(
+    statusTool.renderResult!(
+      statusResult,
+      { expanded: false, isPartial: false },
+      fakeTheme() as never,
+      { args: statusArgs } as never,
+    ),
+  );
   const combinedStatus = `${statusCall}\n${statusText}`;
   assert.equal(combinedStatus.match(/#1 scout · Displayed title/g)?.length, 1);
   assert.doesNotMatch(statusText, /Subagent #1|Agent: scout|Title: Displayed title/);
@@ -581,12 +759,14 @@ test("resolved status and peek results omit only duplicated identity", async () 
       nextCursor: 5,
     },
   };
-  const peekText = renderText(peekTool.renderResult!(
-    peekResult as never,
-    { expanded: false, isPartial: false },
-    fakeTheme() as never,
-    { args: peekArgs } as never,
-  ));
+  const peekText = renderText(
+    peekTool.renderResult!(
+      peekResult as never,
+      { expanded: false, isPartial: false },
+      fakeTheme() as never,
+      { args: peekArgs } as never,
+    ),
+  );
   const combinedPeek = `${peekCall}\n${peekText}`;
   assert.equal(combinedPeek.match(/#1 scout · Displayed title/g)?.length, 1);
   assert.doesNotMatch(peekText, /subagent peek #1 scout|Title: Displayed title/);
@@ -595,23 +775,27 @@ test("resolved status and peek results omit only duplicated identity", async () 
   assert.match(peekText, /event body/);
   assert.match(peekText, /cursor: 5/);
 
-  const legacyPeek = renderText(peekTool.renderResult!(
-    peekResult as never,
-    { expanded: false, isPartial: false },
-    fakeTheme() as never,
-    {} as never,
-  ));
+  const legacyPeek = renderText(
+    peekTool.renderResult!(
+      peekResult as never,
+      { expanded: false, isPartial: false },
+      fakeTheme() as never,
+      {} as never,
+    ),
+  );
   assert.match(legacyPeek, /subagent peek #1 scout · Displayed title/);
   assert.match(legacyPeek, /Task: actual task/);
   assert.match(legacyPeek, /Title: Displayed title/);
 
   registry.jobs.delete(jobId);
-  const archivedPeek = renderText(peekTool.renderResult!(
-    peekResult as never,
-    { expanded: false, isPartial: false },
-    fakeTheme() as never,
-    { args: peekArgs } as never,
-  ));
+  const archivedPeek = renderText(
+    peekTool.renderResult!(
+      peekResult as never,
+      { expanded: false, isPartial: false },
+      fakeTheme() as never,
+      { args: peekArgs } as never,
+    ),
+  );
   assert.match(archivedPeek, /subagent peek #1 scout · Displayed title/);
   assert.match(archivedPeek, /Task: actual task/);
   assert.match(archivedPeek, /Title: Displayed title/);
@@ -626,12 +810,9 @@ test("send and reply receipts keep identity only for fallback cases", async () =
     const args = { jobId: sendId, message: `${deliverAs} message`, deliverAs };
     const call = renderText(sendTool.renderCall!(args, fakeTheme() as never, {} as never));
     const result = await sendTool.execute(`send-${deliverAs}`, args, undefined, undefined, {} as never);
-    const receipt = renderTrimmed(sendTool.renderResult!(
-      result,
-      { expanded: false, isPartial: false },
-      fakeTheme() as never,
-      { args } as never,
-    ));
+    const receipt = renderTrimmed(
+      sendTool.renderResult!(result, { expanded: false, isPartial: false }, fakeTheme() as never, { args } as never),
+    );
     const combined = `${call}\n${receipt}`;
     assert.equal(combined.match(/#1 scout · Send title/g)?.length, 1);
     assert.equal(combined.match(new RegExp(`${deliverAs} message`, "g"))?.length, 1);
@@ -639,31 +820,45 @@ test("send and reply receipts keep identity only for fallback cases", async () =
   }
 
   registry.jobs.delete(sendId);
-  const archivedSend = renderTrimmed(sendTool.renderResult!(
-    {
-      content: [{ type: "text", text: "Sent steering message to subagent #1 scout · Send title." }],
-      details: {
-        jobId: sendId, agent: "scout", task: "hidden send task", title: "Send title", label: "Send title",
-        message: "archived message", deliverAs: "steer",
-      },
-    } as never,
-    { expanded: false, isPartial: false },
-    fakeTheme() as never,
-    { args: { jobId: sendId, message: "archived message", deliverAs: "steer" } } as never,
-  ));
+  const archivedSend = renderTrimmed(
+    sendTool.renderResult!(
+      {
+        content: [{ type: "text", text: "Sent steering message to subagent #1 scout · Send title." }],
+        details: {
+          jobId: sendId,
+          agent: "scout",
+          task: "hidden send task",
+          title: "Send title",
+          label: "Send title",
+          message: "archived message",
+          deliverAs: "steer",
+        },
+      } as never,
+      { expanded: false, isPartial: false },
+      fakeTheme() as never,
+      { args: { jobId: sendId, message: "archived message", deliverAs: "steer" } } as never,
+    ),
+  );
   assert.equal(archivedSend, "✓ delivered to #1 scout · Send title");
-  const noArgsSend = renderTrimmed(sendTool.renderResult!(
-    {
-      content: [{ type: "text", text: "legacy send success" }],
-      details: {
-        jobId: sendId, agent: "scout", task: "hidden send task", title: "Send title", label: "Send title",
-        message: "archived message", deliverAs: "steer",
-      },
-    } as never,
-    { expanded: false, isPartial: false },
-    fakeTheme() as never,
-    {} as never,
-  ));
+  const noArgsSend = renderTrimmed(
+    sendTool.renderResult!(
+      {
+        content: [{ type: "text", text: "legacy send success" }],
+        details: {
+          jobId: sendId,
+          agent: "scout",
+          task: "hidden send task",
+          title: "Send title",
+          label: "Send title",
+          message: "archived message",
+          deliverAs: "steer",
+        },
+      } as never,
+      { expanded: false, isPartial: false },
+      fakeTheme() as never,
+      {} as never,
+    ),
+  );
   assert.equal(noArgsSend, "✓ delivered to #1 scout · Send title");
 
   const replyRegistry = createJobRegistry();
@@ -674,12 +869,14 @@ test("send and reply receipts keep identity only for fallback cases", async () =
   const replyArgs = { jobId: replyId, questionId: "question-1", answer: "yes" };
   const replyCall = renderText(replyTool.renderCall!(replyArgs, fakeTheme() as never, {} as never));
   const replyResult = await replyTool.execute("reply", replyArgs, undefined, undefined, {} as never);
-  const replyReceipt = renderTrimmed(replyTool.renderResult!(
-    replyResult,
-    { expanded: false, isPartial: false },
-    fakeTheme() as never,
-    { args: replyArgs } as never,
-  ));
+  const replyReceipt = renderTrimmed(
+    replyTool.renderResult!(
+      replyResult,
+      { expanded: false, isPartial: false },
+      fakeTheme() as never,
+      { args: replyArgs } as never,
+    ),
+  );
   const combinedReply = `${replyCall}\n${replyReceipt}`;
   assert.equal(combinedReply.match(/#1 worker · Reply title/g)?.length, 1);
   assert.equal(combinedReply.match(/Continue\?/g)?.length, 1);
@@ -687,31 +884,45 @@ test("send and reply receipts keep identity only for fallback cases", async () =
   assert.equal(replyReceipt, "✓ answered\n  Q: Continue?\n  A: yes");
 
   replyRegistry.jobs.delete(replyId);
-  const archivedReply = renderTrimmed(replyTool.renderResult!(
-    {
-      content: [{ type: "text", text: "Answered subagent #1 worker · Reply title." }],
-      details: {
-        jobId: replyId, agent: "worker", task: "hidden reply task", title: "Reply title",
-        questionId: "question-1", question: "Continue?", answer: "yes",
-      },
-    } as never,
-    { expanded: false, isPartial: false },
-    fakeTheme() as never,
-    { args: replyArgs } as never,
-  ));
+  const archivedReply = renderTrimmed(
+    replyTool.renderResult!(
+      {
+        content: [{ type: "text", text: "Answered subagent #1 worker · Reply title." }],
+        details: {
+          jobId: replyId,
+          agent: "worker",
+          task: "hidden reply task",
+          title: "Reply title",
+          questionId: "question-1",
+          question: "Continue?",
+          answer: "yes",
+        },
+      } as never,
+      { expanded: false, isPartial: false },
+      fakeTheme() as never,
+      { args: replyArgs } as never,
+    ),
+  );
   assert.equal(archivedReply, "✓ answered · #1 worker · Reply title\n  Q: Continue?\n  A: yes");
-  const noArgsReply = renderTrimmed(replyTool.renderResult!(
-    {
-      content: [{ type: "text", text: "legacy reply success" }],
-      details: {
-        jobId: replyId, agent: "worker", task: "hidden reply task", title: "Reply title",
-        questionId: "question-1", question: "Continue?", answer: "yes",
-      },
-    } as never,
-    { expanded: false, isPartial: false },
-    fakeTheme() as never,
-    {} as never,
-  ));
+  const noArgsReply = renderTrimmed(
+    replyTool.renderResult!(
+      {
+        content: [{ type: "text", text: "legacy reply success" }],
+        details: {
+          jobId: replyId,
+          agent: "worker",
+          task: "hidden reply task",
+          title: "Reply title",
+          questionId: "question-1",
+          question: "Continue?",
+          answer: "yes",
+        },
+      } as never,
+      { expanded: false, isPartial: false },
+      fakeTheme() as never,
+      {} as never,
+    ),
+  );
   assert.equal(noArgsReply, "✓ answered · #1 worker · Reply title\n  Q: Continue?\n  A: yes");
 });
 
@@ -723,32 +934,37 @@ test("cancel results keep all targets but compact a resolved single target", asy
   const firstArgs = { jobId: first };
   const call = renderText(tool.renderCall!(firstArgs, fakeTheme() as never, {} as never));
   const firstResult = await tool.execute("cancel-one", firstArgs, undefined, undefined, {} as never);
-  const compact = renderText(tool.renderResult!(
-    firstResult,
-    { expanded: false, isPartial: false },
-    fakeTheme() as never,
-    { args: firstArgs } as never,
-  ));
+  const compact = renderText(
+    tool.renderResult!(
+      firstResult,
+      { expanded: false, isPartial: false },
+      fakeTheme() as never,
+      { args: firstArgs } as never,
+    ),
+  );
   assert.equal(`${call}\n${compact}`.match(/#1 scout · First title/g)?.length, 1);
   assert.match(compact, /⊘ cancelling 1 subagent/);
   assert.doesNotMatch(compact, /First title/);
 
-  registry.complete(first, { agent: "scout", task: "first task", title: "First title", text: "", exitCode: 130, error: "Cancelled (manual).", cancelled: true, cancellationReason: "manual" });
+  registry.complete(first, {
+    agent: "scout",
+    task: "first task",
+    title: "First title",
+    text: "",
+    exitCode: 130,
+    error: "Cancelled (manual).",
+    cancelled: true,
+    cancellationReason: "manual",
+  });
   const zero = await tool.execute("cancel-zero", firstArgs, undefined, undefined, {} as never);
-  const zeroText = renderTrimmed(tool.renderResult!(
-    zero,
-    { expanded: false, isPartial: false },
-    fakeTheme() as never,
-    { args: firstArgs } as never,
-  ));
+  const zeroText = renderTrimmed(
+    tool.renderResult!(zero, { expanded: false, isPartial: false }, fakeTheme() as never, { args: firstArgs } as never),
+  );
   assert.match(zeroText, /no running subagent/i);
   assert.doesNotMatch(zeroText, /First title/);
-  const zeroLegacy = renderTrimmed(tool.renderResult!(
-    zero,
-    { expanded: false, isPartial: false },
-    fakeTheme() as never,
-    {} as never,
-  ));
+  const zeroLegacy = renderTrimmed(
+    tool.renderResult!(zero, { expanded: false, isPartial: false }, fakeTheme() as never, {} as never),
+  );
   assert.match(zeroLegacy, /subagent cancel all/);
   assert.match(zeroLegacy, /no running subagent/i);
 
@@ -758,12 +974,14 @@ test("cancel results keep all targets but compact a resolved single target", asy
   registry.registerControl(third, { cancel: () => {}, send: async () => {}, reply: async () => {} });
   const allArgs = { all: true };
   const allResult = await tool.execute("cancel-all", allArgs, undefined, undefined, {} as never);
-  const allText = renderTrimmed(tool.renderResult!(
-    allResult,
-    { expanded: false, isPartial: false },
-    fakeTheme() as never,
-    { args: allArgs } as never,
-  ));
+  const allText = renderTrimmed(
+    tool.renderResult!(
+      allResult,
+      { expanded: false, isPartial: false },
+      fakeTheme() as never,
+      { args: allArgs } as never,
+    ),
+  );
   assert.match(allText, /⊘ cancelling 2 subagents/);
   assert.match(allText, /#2 worker · Second title/);
   assert.match(allText, /#3 builder · Third title/);
@@ -811,7 +1029,10 @@ test("/subagent-profile and its ctrl+shift+l shortcut preview, validate, and per
         agents: {
           scout: { thinkingLevel: "high" },
           worker: { model: "worker/model" },
-          "調査-agent-with-a-very-long-name": { model: "openai-codex/provider-model-with-a-long-識別子", thinkingLevel: "max" },
+          "調査-agent-with-a-very-long-name": {
+            model: "openai-codex/provider-model-with-a-long-識別子",
+            thinkingLevel: "max",
+          },
           ghost: { model: "missing/model", thinkingLevel: "xhigh" },
         },
       },
@@ -839,16 +1060,23 @@ test("/subagent-profile and its ctrl+shift+l shortcut preview, validate, and per
       assert.equal(options, undefined);
       agentNotes.push(message.content);
     },
-    registerCommand: (name: string, command: { handler: (args: string, ctx: unknown) => Promise<void> }) => commands.set(name, command),
-    registerShortcut: (key: string, shortcut: { handler: (ctx: unknown) => Promise<void> | void }) => shortcuts.set(key, shortcut),
+    registerCommand: (name: string, command: { handler: (args: string, ctx: unknown) => Promise<void> }) =>
+      commands.set(name, command),
+    registerShortcut: (key: string, shortcut: { handler: (ctx: unknown) => Promise<void> | void }) =>
+      shortcuts.set(key, shortcut),
   } as unknown as ExtensionAPI;
   registerStatusCommands(pi, {
     registry: createJobRegistry(),
     profiles: {
       settings,
-      discover: async () => { discoveries += 1; return agents; },
+      discover: async () => {
+        discoveries += 1;
+        return agents;
+      },
       getActiveProfile: () => activeProfile,
-      setActiveProfile: (name) => { activeProfile = name; },
+      setActiveProfile: (name) => {
+        activeProfile = name;
+      },
     },
   });
   const command = commands.get("subagent-profile");
@@ -866,13 +1094,16 @@ test("/subagent-profile and its ctrl+shift+l shortcut preview, validate, and per
         assert.match(initial, /→ backup \(active\)/);
         assert.match(initial, /Resolved settings: backup/);
         const table = initial.split("\n").filter((line) => /^(Agent|scout|worker|調査-|helper|ghost)/.test(line));
-        assert.deepEqual(table.map((line) => line.trim().split(/\s+/)), [
-          ["Agent", "Model", "Thinking"],
-          ["scout", "frontmatter/scout", "high"],
-          ["worker", "worker/model", "off"],
-          ["調査-agent-with-a-very-long-name", "openai-codex/provider-model-with-a-long-識別子", "max"],
-          ["helper", "parent/model", "minimal"],
-        ]);
+        assert.deepEqual(
+          table.map((line) => line.trim().split(/\s+/)),
+          [
+            ["Agent", "Model", "Thinking"],
+            ["scout", "frontmatter/scout", "high"],
+            ["worker", "worker/model", "off"],
+            ["調査-agent-with-a-very-long-name", "openai-codex/provider-model-with-a-long-識別子", "max"],
+            ["helper", "parent/model", "minimal"],
+          ],
+        );
         for (const width of [24, 80, 160]) {
           const lines = component.render(width);
           assert.ok(lines.every((line) => visibleWidth(line) <= width));
@@ -948,7 +1179,7 @@ test("/subagent-profile and its ctrl+shift+l shortcut preview, validate, and per
   await command.handler("", { ...ctx, mode: "print" });
   assert.match(notices.at(-1)?.text ?? "", /Active subagent profile: primary/);
 
-  agents = agents.map((agent) => agent.name === "worker" ? { ...agent, model: "edited/model" } : agent);
+  agents = agents.map((agent) => (agent.name === "worker" ? { ...agent, model: "edited/model" } : agent));
   const shortcut = shortcuts.get("ctrl+shift+l");
   assert.ok(shortcut);
   await shortcut.handler({
@@ -991,7 +1222,10 @@ test("/subagent-profile and its ctrl+shift+l shortcut preview, validate, and per
 test("subagent-profile picker shows one usage line per distinct provider, requested once", async () => {
   const settings = parseSubagentSettings({
     profiles: {
-      mixed: { defaults: { model: "anthropic/a" }, agents: { worker: { model: "openai-codex/b" }, helper: { model: "untracked/c" } } },
+      mixed: {
+        defaults: { model: "anthropic/a" },
+        agents: { worker: { model: "openai-codex/b" }, helper: { model: "untracked/c" } },
+      },
       other: { defaults: { model: "openai-codex/x" }, agents: {} },
     },
   });
@@ -1000,23 +1234,27 @@ test("subagent-profile picker shows one usage line per distinct provider, reques
   const replies = new Map<string, (text: string | undefined) => void>();
   let renders = 0;
   const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
-  registerStatusCommands({
-    appendEntry: () => {},
-    registerCommand: (name: string, command: { handler: (args: string, ctx: unknown) => Promise<void> }) => commands.set(name, command),
-    registerShortcut: () => {},
-  } as unknown as ExtensionAPI, {
-    registry: createJobRegistry(),
-    profiles: {
-      settings,
-      discover: async () => agents,
-      getActiveProfile: () => "mixed",
-      setActiveProfile: () => {},
-      requestUsage: (provider) => {
-        requests.push(provider);
-        return new Promise((resolve) => replies.set(provider, resolve));
+  registerStatusCommands(
+    {
+      appendEntry: () => {},
+      registerCommand: (name: string, command: { handler: (args: string, ctx: unknown) => Promise<void> }) =>
+        commands.set(name, command),
+      registerShortcut: () => {},
+    } as unknown as ExtensionAPI,
+    {
+      registry: createJobRegistry(),
+      profiles: {
+        settings,
+        discover: async () => agents,
+        getActiveProfile: () => "mixed",
+        setActiveProfile: () => {},
+        requestUsage: (provider) => {
+          requests.push(provider);
+          return new Promise((resolve) => replies.set(provider, resolve));
+        },
       },
     },
-  });
+  );
   const usageLines = (component: Component, width = 120) => {
     const lines = component.render(width);
     return lines.slice(lines.indexOf("Provider usage") + 1, -2).map((line) => line.trimEnd());
@@ -1026,27 +1264,32 @@ test("subagent-profile picker shows one usage line per distinct provider, reques
     hasUI: true,
     ui: {
       notify: () => {},
-      custom: customProfilePicker(async (component) => {
-        assert.deepEqual(usageLines(component), ["anthropic     …", "openai-codex  …", "untracked     …"]);
-        replies.get("anthropic")!("5h 12%(3h)");
-        replies.get("openai-codex")!("b:$4.20");
-        replies.get("untracked")!(undefined);
-        await sleep(0);
-        assert.equal(renders, 3);
-        assert.deepEqual(usageLines(component), ["anthropic     5h 12%(3h)", "openai-codex  b:$4.20"]);
-        for (const width of [12, 20]) assert.ok(component.render(width).every((line) => visibleWidth(line) <= width));
-        component.handleInput!("\u001b[B");
-        assert.deepEqual(usageLines(component), ["openai-codex  b:$4.20"]);
-        component.handleInput!("\u001b[A");
-        assert.match(renderText(component), /Resolved settings: mixed/);
-        component.handleInput!("ot");
-        assert.match(renderText(component), /Resolved settings: other/);
-        assert.deepEqual(usageLines(component), ["openai-codex  b:$4.20"]);
-        component.handleInput!("\u0015");
-        assert.match(renderText(component), /→ other/);
-        assert.deepEqual(requests, ["anthropic", "openai-codex", "untracked"]);
-        component.handleInput!("\u001b");
-      }, () => { renders += 1; }),
+      custom: customProfilePicker(
+        async (component) => {
+          assert.deepEqual(usageLines(component), ["anthropic     …", "openai-codex  …", "untracked     …"]);
+          replies.get("anthropic")!("5h 12%(3h)");
+          replies.get("openai-codex")!("b:$4.20");
+          replies.get("untracked")!(undefined);
+          await sleep(0);
+          assert.equal(renders, 3);
+          assert.deepEqual(usageLines(component), ["anthropic     5h 12%(3h)", "openai-codex  b:$4.20"]);
+          for (const width of [12, 20]) assert.ok(component.render(width).every((line) => visibleWidth(line) <= width));
+          component.handleInput!("\u001b[B");
+          assert.deepEqual(usageLines(component), ["openai-codex  b:$4.20"]);
+          component.handleInput!("\u001b[A");
+          assert.match(renderText(component), /Resolved settings: mixed/);
+          component.handleInput!("ot");
+          assert.match(renderText(component), /Resolved settings: other/);
+          assert.deepEqual(usageLines(component), ["openai-codex  b:$4.20"]);
+          component.handleInput!("\u0015");
+          assert.match(renderText(component), /→ other/);
+          assert.deepEqual(requests, ["anthropic", "openai-codex", "untracked"]);
+          component.handleInput!("\u001b");
+        },
+        () => {
+          renders += 1;
+        },
+      ),
     },
   });
 });
@@ -1065,7 +1308,10 @@ test("confirmSubagentProfile gates the first launch and persists the choice", as
     settings,
     discover: async () => [AGENT],
     getActiveProfile: () => activeProfile,
-    setActiveProfile: (name: string) => { activeProfile = name; confirmed = true; },
+    setActiveProfile: (name: string) => {
+      activeProfile = name;
+      confirmed = true;
+    },
     needsConfirmation: () => !confirmed,
   };
   const ctx = {
@@ -1109,7 +1355,9 @@ test("confirmSubagentProfile returns false when the picker is dismissed", async 
     settings,
     discover: async () => [AGENT],
     getActiveProfile: () => activeProfile,
-    setActiveProfile: (name: string) => { activeProfile = name; },
+    setActiveProfile: (name: string) => {
+      activeProfile = name;
+    },
     needsConfirmation: () => true,
   };
   const ctx = {
@@ -1164,7 +1412,8 @@ test("/subagent-tail opens a live overlay and follows new events", async (t) => 
   registry.recordStep(id, { phase: "end", id: "read-1" });
   registry.appendEvent(id, { kind: "state", summary: "started" });
   registry.appendEvent(id, {
-    kind: "tool-end", stepId: "read-1",
+    kind: "tool-end",
+    stepId: "read-1",
     summary: 'read success: {"content":[{"type":"text","text":"one\\ntwo"}]}',
   });
   registry.recordStep(id, { phase: "start", id: "assistant-1", kind: "assistant", summary: "Thinking" });
@@ -1173,23 +1422,42 @@ test("/subagent-tail opens a live overlay and follows new events", async (t) => 
   const notices: Array<{ text: string; level: string }> = [];
   const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
   const pi = {
-    registerCommand: (name: string, command: { handler: (args: string, ctx: unknown) => Promise<void> }) => commands.set(name, command),
+    registerCommand: (name: string, command: { handler: (args: string, ctx: unknown) => Promise<void> }) =>
+      commands.set(name, command),
   } as unknown as ExtensionAPI;
   registerStatusCommands(pi, { registry });
   const command = commands.get("subagent-tail");
   assert.ok(command);
 
-  type TailComponent = { render(width: number): string[]; handleInput?(data: string): void };
+  interface TailComponent {
+    render(width: number): string[];
+    handleInput?(data: string): void;
+  }
   let component: TailComponent | undefined;
   let overlayOptions: unknown;
   let renderRequests = 0;
   const custom = (
-    factory: (tui: { requestRender: () => void }, theme: ReturnType<typeof fakeTheme>, keybindings: unknown, done: (result: void) => void) => TailComponent,
+    factory: (
+      tui: { requestRender: () => void },
+      theme: ReturnType<typeof fakeTheme>,
+      keybindings: unknown,
+      done: (result: void) => void,
+    ) => TailComponent,
     options: unknown,
-  ) => new Promise<void>((resolve) => {
-    overlayOptions = options;
-    component = factory({ requestRender: () => { renderRequests += 1; } }, fakeTheme(), {}, () => resolve());
-  });
+  ) =>
+    new Promise<void>((resolve) => {
+      overlayOptions = options;
+      component = factory(
+        {
+          requestRender: () => {
+            renderRequests += 1;
+          },
+        },
+        fakeTheme(),
+        {},
+        () => resolve(),
+      );
+    });
   const ctx = {
     mode: "tui",
     hasUI: true,
@@ -1246,13 +1514,18 @@ test("/subagent-cancel validates and targets numeric job IDs", async () => {
   const id = registry.add("scout", "task");
   let cancelled = 0;
   registry.registerControl(id, {
-    cancel: () => { cancelled += 1; },
+    cancel: () => {
+      cancelled += 1;
+    },
     send: async () => {},
     reply: async () => {},
   });
   const notices: string[] = [];
   const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
-  const pi = { registerCommand: (name: string, command: { handler: (args: string, ctx: unknown) => Promise<void> }) => commands.set(name, command) } as unknown as ExtensionAPI;
+  const pi = {
+    registerCommand: (name: string, command: { handler: (args: string, ctx: unknown) => Promise<void> }) =>
+      commands.set(name, command),
+  } as unknown as ExtensionAPI;
   registerStatusCommands(pi, { registry });
   const command = commands.get("subagent-cancel")!;
   const ctx = { ui: { notify: (text: string) => notices.push(text) } };
@@ -1271,13 +1544,16 @@ test("/subagent-send parses steering and follow-up messages", async () => {
   const sent: Array<{ message: string; deliverAs: string }> = [];
   registry.registerControl(id, {
     cancel: () => {},
-    send: async (message, deliverAs) => { sent.push({ message, deliverAs }); },
+    send: async (message, deliverAs) => {
+      sent.push({ message, deliverAs });
+    },
     reply: async () => {},
   });
   const notices: Array<{ text: string; level: string }> = [];
   const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
   const pi = {
-    registerCommand: (name: string, command: { handler: (args: string, ctx: unknown) => Promise<void> }) => commands.set(name, command),
+    registerCommand: (name: string, command: { handler: (args: string, ctx: unknown) => Promise<void> }) =>
+      commands.set(name, command),
   } as unknown as ExtensionAPI;
   registerStatusCommands(pi, { registry });
   const command = commands.get("subagent-send");
@@ -1307,27 +1583,31 @@ test("slash commands guide no-ID selections without implicit cancellation", asyn
   const registry = createJobRegistry();
   const runningId = registry.add("scout", "running task", "Running title");
   const completedId = registry.add("worker", "completed task", "Completed title");
-  registry.complete(completedId, { agent: "worker", task: "completed task", title: "Completed title", text: "done", exitCode: 0, error: "" });
+  registry.complete(completedId, {
+    agent: "worker",
+    task: "completed task",
+    title: "Completed title",
+    text: "done",
+    exitCode: 0,
+    error: "",
+  });
   const guidedSends: Array<{ jobId: number; message: string; deliverAs: string }> = [];
   registry.registerControl(runningId, {
     cancel: () => {},
-    send: async (message, deliverAs) => { guidedSends.push({ jobId: runningId, message, deliverAs }); },
+    send: async (message, deliverAs) => {
+      guidedSends.push({ jobId: runningId, message, deliverAs });
+    },
     reply: async () => {},
   });
   const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
   const selections: string[][] = [];
   const notices: Array<{ text: string; level: string }> = [];
   const pi = {
-    registerCommand: (name: string, command: { handler: (args: string, ctx: unknown) => Promise<void> }) => commands.set(name, command),
+    registerCommand: (name: string, command: { handler: (args: string, ctx: unknown) => Promise<void> }) =>
+      commands.set(name, command),
   } as unknown as ExtensionAPI;
   registerStatusCommands(pi, { registry });
-  const answers = [
-    0,
-    0,
-    0,
-    0,
-    0,
-  ];
+  const answers = [0, 0, 0, 0, 0];
   let selectIndex = 0;
   const ui = {
     select: async (_prompt: string, options: string[]) => {
@@ -1358,7 +1638,8 @@ test("slash commands guide no-ID selections without implicit cancellation", asyn
   const emptyNotices: Array<{ text: string; level: string }> = [];
   const emptyCommands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
   const emptyPi = {
-    registerCommand: (name: string, command: { handler: (args: string, ctx: unknown) => Promise<void> }) => emptyCommands.set(name, command),
+    registerCommand: (name: string, command: { handler: (args: string, ctx: unknown) => Promise<void> }) =>
+      emptyCommands.set(name, command),
   } as unknown as ExtensionAPI;
   registerStatusCommands(emptyPi, { registry: emptyRegistry });
   const emptyCtx = {
@@ -1393,7 +1674,8 @@ test("slash picker rows fit the terminal and prefer titles over full tasks", asy
   registry.add("worker", "Fallback task 界 ".repeat(30));
   const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
   const pi = {
-    registerCommand: (name: string, command: { handler: (args: string, ctx: unknown) => Promise<void> }) => commands.set(name, command),
+    registerCommand: (name: string, command: { handler: (args: string, ctx: unknown) => Promise<void> }) =>
+      commands.set(name, command),
   } as unknown as ExtensionAPI;
   registerStatusCommands(pi, { registry });
   const selections: string[][] = [];
@@ -1437,12 +1719,19 @@ test("slash picker dismissal at job, mode, and input stages is a no-op", async (
     let cancellations = 0;
     let sends = 0;
     registry.registerControl(id, {
-      cancel: () => { cancellations += 1; },
-      send: async () => { sends += 1; },
+      cancel: () => {
+        cancellations += 1;
+      },
+      send: async () => {
+        sends += 1;
+      },
       reply: async () => {},
     });
     const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
-    const pi = { registerCommand: (name: string, command: { handler: (args: string, ctx: unknown) => Promise<void> }) => commands.set(name, command) } as unknown as ExtensionAPI;
+    const pi = {
+      registerCommand: (name: string, command: { handler: (args: string, ctx: unknown) => Promise<void> }) =>
+        commands.set(name, command),
+    } as unknown as ExtensionAPI;
     registerStatusCommands(pi, { registry });
     let selects = 0;
     const ctx = {
@@ -1454,7 +1743,7 @@ test("slash picker dismissal at job, mode, and input stages is a no-op", async (
           if (current.stage === "job" || (current.stage === "mode" && selects === 2)) return undefined;
           return options[0];
         },
-        input: async () => current.stage === "input" ? undefined : "message",
+        input: async () => (current.stage === "input" ? undefined : "message"),
         notify: () => {},
       },
     };
@@ -1470,13 +1759,16 @@ test("/subagent-send reports rejected messages", async () => {
   const id = registry.add("scout", "task");
   registry.registerControl(id, {
     cancel: () => {},
-    send: async () => { throw new Error("RPC prompt rejected"); },
+    send: async () => {
+      throw new Error("RPC prompt rejected");
+    },
     reply: async () => {},
   });
   const notices: Array<{ text: string; level: string }> = [];
   const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
   const pi = {
-    registerCommand: (name: string, command: { handler: (args: string, ctx: unknown) => Promise<void> }) => commands.set(name, command),
+    registerCommand: (name: string, command: { handler: (args: string, ctx: unknown) => Promise<void> }) =>
+      commands.set(name, command),
   } as unknown as ExtensionAPI;
   registerStatusCommands(pi, { registry });
   const command = commands.get("subagent-send");
@@ -1547,10 +1839,15 @@ test("subagent_reply renders a compact call and result", async () => {
     undefined,
     {} as never,
   );
-  const renderedResult = renderText(tool.renderResult!(result, { expanded: false, isPartial: false }, theme, {
-    args: { jobId, questionId: "f7455070-1bdd-4bf8-9806-2647a04b1eba", answer: "yes" },
-  } as never))
-    .split("\n").map((line) => line.trimEnd()).join("\n").trim();
+  const renderedResult = renderText(
+    tool.renderResult!(result, { expanded: false, isPartial: false }, theme, {
+      args: { jobId, questionId: "f7455070-1bdd-4bf8-9806-2647a04b1eba", answer: "yes" },
+    } as never),
+  )
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .join("\n")
+    .trim();
   assert.equal(renderedResult, "✓ answered\n  Q: Continue?\n  A: yes");
   const combinedReply = `${renderText(call)}\n${renderedResult}`;
   assert.equal(combinedReply.split("#1 scout · task").length - 1, 1);
@@ -1592,7 +1889,13 @@ test("subagent messaging tools reject queued, stale, and empty inputs", async ()
   const replyTool = createReplyTool({ registry });
 
   await assert.rejects(
-    sendTool.execute("call1", { jobId: id, message: "message", deliverAs: "followUp" }, undefined, undefined, {} as never),
+    sendTool.execute(
+      "call1",
+      { jobId: id, message: "message", deliverAs: "followUp" },
+      undefined,
+      undefined,
+      {} as never,
+    ),
     /has not started yet/,
   );
   await assert.rejects(
@@ -1615,5 +1918,9 @@ test("subagent messaging tools reject queued, stale, and empty inputs", async ()
 });
 
 function renderTrimmed(value: unknown): string {
-  return renderText(value).split("\n").map((line) => line.trimEnd()).join("\n").trim();
+  return renderText(value)
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .join("\n")
+    .trim();
 }

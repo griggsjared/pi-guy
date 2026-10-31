@@ -3,12 +3,7 @@ import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { StringEnum } from "@earendil-works/pi-ai";
-import {
-  DEFAULT_MAX_BYTES,
-  DEFAULT_MAX_LINES,
-  formatSize,
-  truncateHead,
-} from "@earendil-works/pi-coding-agent";
+import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, truncateHead } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { getFeedback } from "./feedback.ts";
@@ -59,7 +54,8 @@ const GithubPrParams = Type.Object({
   ),
   pr: Type.Optional(
     Type.String({
-      description: "Explicit https://github.com/OWNER/REPO/pull/N URL from any repository, or a number or branch in the local repository. Defaults to the pull request for the current branch.",
+      description:
+        "Explicit https://github.com/OWNER/REPO/pull/N URL from any repository, or a number or branch in the local repository. Defaults to the pull request for the current branch.",
     }),
   ),
   includeResolved: Type.Optional(
@@ -107,23 +103,23 @@ function matchesRepositoryUrl(url: string | undefined, capability: Extract<Capab
   if (!url) return false;
   try {
     const parsed = new URL(url);
-    return parsed.protocol === "https:" && parsed.hostname === capability.hostname &&
-      parsed.pathname.replace(/\/$/, "").toLowerCase() === `/${capability.repo}`.toLowerCase();
+    return (
+      parsed.protocol === "https:" &&
+      parsed.hostname === capability.hostname &&
+      parsed.pathname.replace(/\/$/, "").toLowerCase() === `/${capability.repo}`.toLowerCase()
+    );
   } catch {
     return false;
   }
 }
 
-async function detectCapability(
-  pi: ExtensionAPI,
-  cwd: string,
-  signal?: AbortSignal,
-): Promise<Capability> {
+async function detectCapability(pi: ExtensionAPI, cwd: string, signal?: AbortSignal): Promise<Capability> {
   const remotes = await runCommand(pi, cwd, "git", ["remote", "-v"], signal);
   if (remotes.code !== 0) {
     return { available: false, reason: "The current directory is not a GitHub repository." };
   }
-  const candidates = remotes.stdout.split(/\r?\n/)
+  const candidates = remotes.stdout
+    .split(/\r?\n/)
     .map((line) => line.match(/^(\S+)\s+(\S+)\s+\(fetch\)$/))
     .filter((match): match is RegExpMatchArray => match !== null)
     .sort((a, b) => Number(b[1] === "origin") - Number(a[1] === "origin"));
@@ -143,21 +139,36 @@ async function validateCapability(
 ): Promise<Capability> {
   const auth = await runGh(pi, cwd, ["auth", "status", "--active", "--hostname", capability.hostname], signal);
   if (auth.code !== 0) {
-    return { available: false, reason: `The GitHub CLI is not authenticated for ${capability.hostname}: ${resultText(auth)}` };
+    return {
+      available: false,
+      reason: `The GitHub CLI is not authenticated for ${capability.hostname}: ${resultText(auth)}`,
+    };
   }
   const repository = await runGh(
-    pi, cwd, ["repo", "view", ghRepositoryArg(capability), "--json", "nameWithOwner,url"], signal,
+    pi,
+    cwd,
+    ["repo", "view", ghRepositoryArg(capability), "--json", "nameWithOwner,url"],
+    signal,
   );
   if (repository.code !== 0) {
-    return { available: false, reason: `The GitHub CLI cannot access the target repository: ${resultText(repository)}` };
+    return {
+      available: false,
+      reason: `The GitHub CLI cannot access the target repository: ${resultText(repository)}`,
+    };
   }
   try {
     const info = parseRepositoryInfo(repository.stdout);
-    if (info.nameWithOwner?.toLowerCase() === capability.repo.toLowerCase() && matchesRepositoryUrl(info.url, capability)) {
+    if (
+      info.nameWithOwner?.toLowerCase() === capability.repo.toLowerCase() &&
+      matchesRepositoryUrl(info.url, capability)
+    ) {
       return capability;
     }
   } catch {}
-  return { available: false, reason: "The GitHub CLI returned invalid or mismatched repository data for the target repository." };
+  return {
+    available: false,
+    reason: "The GitHub CLI returned invalid or mismatched repository data for the target repository.",
+  };
 }
 
 function ghRepositoryArg(capability: Extract<Capability, { available: true }>): string {
@@ -210,22 +221,36 @@ function parsePullRequestUrl(url: string): { capability: Extract<Capability, { a
   try {
     const parsed = new URL(url);
     const match = parsed.pathname.match(/^\/([a-z0-9_.-]+)\/([a-z0-9_.-]+)\/pull\/([1-9]\d*)\/?$/i);
-    if (parsed.protocol === "https:" && parsed.hostname === "github.com" && !parsed.port && !parsed.username && !parsed.password && match) {
+    if (
+      parsed.protocol === "https:" &&
+      parsed.hostname === "github.com" &&
+      !parsed.port &&
+      !parsed.username &&
+      !parsed.password &&
+      match
+    ) {
       const number = Number(match[3]);
       if (Number.isSafeInteger(number)) {
         const owner = match[1]!;
         const repository = match[2]!;
-        return { capability: { available: true, hostname: parsed.hostname, repo: `${owner}/${repository}`, owner, repository }, number };
+        return {
+          capability: { available: true, hostname: parsed.hostname, repo: `${owner}/${repository}`, owner, repository },
+          number,
+        };
       }
     }
   } catch {}
-  throw new Error("Pull request URLs must use https://github.com/OWNER/REPO/pull/N with a positive safe integer number and no credentials.");
+  throw new Error(
+    "Pull request URLs must use https://github.com/OWNER/REPO/pull/N with a positive safe integer number and no credentials.",
+  );
 }
 
 function parseChecks(stdout: string): { bucket: string; [key: string]: unknown }[] {
   const parsed: unknown = JSON.parse(stdout);
-  if (!Array.isArray(parsed) || parsed.some((check) => !check ||
-    !["pass", "fail", "pending", "skipping", "cancel"].includes(check.bucket))) {
+  if (
+    !Array.isArray(parsed) ||
+    parsed.some((check) => !check || !["pass", "fail", "pending", "skipping", "cancel"].includes(check.bucket))
+  ) {
     throw new Error("Invalid check data.");
   }
   return parsed;
@@ -238,8 +263,15 @@ async function getChecks(
   prNumber: number,
   signal?: AbortSignal,
 ) {
-  const args = ["pr", "checks", String(prNumber), "--repo", ghRepositoryArg(capability),
-    "--json", "name,state,bucket,workflow,link,description,event,startedAt,completedAt"];
+  const args = [
+    "pr",
+    "checks",
+    String(prNumber),
+    "--repo",
+    ghRepositoryArg(capability),
+    "--json",
+    "name,state,bucket,workflow,link,description,event,startedAt,completedAt",
+  ];
   const result = await runGh(pi, cwd, args, signal);
   if (![0, 1, 8].includes(result.code)) {
     throw new Error(`Unable to load pull request checks: ${resultText(result)}`);
@@ -336,17 +368,15 @@ export default function (pi: ExtensionAPI) {
       }
 
       if (action === "status") {
-        return outputResult(
-          JSON.stringify(capability, null, 2),
-          { action, ...capability },
-        );
+        return outputResult(JSON.stringify(capability, null, 2), { action, ...capability });
       }
 
       if (!capability.available) {
-        return outputResult(
-          JSON.stringify({ action, available: false, reason: capability.reason }, null, 2),
-          { action, available: false, reason: capability.reason },
-        );
+        return outputResult(JSON.stringify({ action, available: false, reason: capability.reason }, null, 2), {
+          action,
+          available: false,
+          reason: capability.reason,
+        });
       }
 
       const pullRequest = await getPullRequest(pi, ctx.cwd, capability, selector, signal);
@@ -380,14 +410,7 @@ export default function (pi: ExtensionAPI) {
         );
       }
 
-      const result = await getFeedback(
-        pi,
-        ctx.cwd,
-        capability,
-        pullRequest,
-        params.includeResolved ?? false,
-        signal,
-      );
+      const result = await getFeedback(pi, ctx.cwd, capability, pullRequest, params.includeResolved ?? false, signal);
       return outputResult(JSON.stringify(result, null, 2), {
         action,
         available: true,

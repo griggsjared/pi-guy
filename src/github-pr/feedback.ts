@@ -134,8 +134,12 @@ function parsePaginatedArray(stdout: string): unknown[] {
 }
 
 function validateCommentConnection(connection: CommentConnection | undefined): CommentConnection {
-  if (!connection || !Array.isArray(connection.nodes) || typeof connection.pageInfo?.hasNextPage !== "boolean" ||
-    connection.nodes.some((comment) => !comment || typeof comment.id !== "string")) {
+  if (
+    !connection ||
+    !Array.isArray(connection.nodes) ||
+    typeof connection.pageInfo?.hasNextPage !== "boolean" ||
+    connection.nodes.some((comment) => !comment || typeof comment.id !== "string")
+  ) {
     throw new Error("Invalid inline thread comment data.");
   }
   return connection;
@@ -172,10 +176,23 @@ async function parseReviewThreadPages(
         const cursor = connection.pageInfo.endCursor;
         if (!cursor || cursors.has(cursor)) throw new Error("Invalid inline comment pagination cursor.");
         cursors.add(cursor);
-        const result = await runGh(pi, cwd, [
-          "api", "--hostname", capability.hostname, "graphql",
-          "-f", `query=${THREAD_COMMENTS_QUERY}`, "-f", `id=${thread.id}`, "-f", `endCursor=${cursor}`,
-        ], signal);
+        const result = await runGh(
+          pi,
+          cwd,
+          [
+            "api",
+            "--hostname",
+            capability.hostname,
+            "graphql",
+            "-f",
+            `query=${THREAD_COMMENTS_QUERY}`,
+            "-f",
+            `id=${thread.id}`,
+            "-f",
+            `endCursor=${cursor}`,
+          ],
+          signal,
+        );
         if (result.code !== 0) throw new Error(`Unable to load inline thread comments: ${resultText(result)}`);
         const next = JSON.parse(result.stdout) as {
           errors?: unknown[];

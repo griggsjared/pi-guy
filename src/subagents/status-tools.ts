@@ -10,11 +10,21 @@ import { chooseProfile } from "./profile-ui.ts";
 import type { ProfileCommandDeps } from "./profile-ui.ts";
 import type { JobRegistry, Job } from "./registry.ts";
 import { openSubagentTail, TruncatedText } from "./render.ts";
-import { eventColor, eventKindLabel, formatEventSummary, formatEventTiming, formatLocalTime, formatStepTiming } from "./tail.ts";
+import {
+  eventColor,
+  eventKindLabel,
+  formatEventSummary,
+  formatEventTiming,
+  formatLocalTime,
+  formatStepTiming,
+} from "./tail.ts";
 import type { JobEvent, ToolCallInfo } from "./types.ts";
 
 const StatusParams = Type.Object({ jobId: Type.Optional(Type.Integer({ minimum: 1 })) });
-const CancelParams = Type.Object({ jobId: Type.Optional(Type.Integer({ minimum: 1 })), all: Type.Optional(Type.Boolean()) });
+const CancelParams = Type.Object({
+  jobId: Type.Optional(Type.Integer({ minimum: 1 })),
+  all: Type.Optional(Type.Boolean()),
+});
 const SendParams = Type.Object({
   jobId: Type.Integer({ minimum: 1 }),
   message: Type.String({ minLength: 1 }),
@@ -33,17 +43,22 @@ const PeekParams = Type.Object({
 });
 
 const JobStatus = Type.Union([
-  Type.Literal("running"), Type.Literal("completed"), Type.Literal("failed"), Type.Literal("cancelled"),
+  Type.Literal("running"),
+  Type.Literal("completed"),
+  Type.Literal("failed"),
+  Type.Literal("cancelled"),
 ]);
 const StatusOutput = Type.Object({
   text: Type.String(),
   jobId: Type.Optional(Type.Integer({ minimum: 1 })),
-  jobs: Type.Array(Type.Object({
-    jobId: Type.Integer({ minimum: 1 }),
-    agent: Type.String(),
-    status: JobStatus,
-    label: Type.String(),
-  })),
+  jobs: Type.Array(
+    Type.Object({
+      jobId: Type.Integer({ minimum: 1 }),
+      agent: Type.String(),
+      status: JobStatus,
+      label: Type.String(),
+    }),
+  ),
   error: Type.Optional(Type.String()),
 });
 const PeekOutput = Type.Object({
@@ -52,18 +67,24 @@ const PeekOutput = Type.Object({
   task: Type.Optional(Type.String()),
   title: Type.Optional(Type.String()),
   status: JobStatus,
-  events: Type.Array(Type.Object({
-    seq: Type.Integer({ minimum: 1 }),
-    timestamp: Type.Number(),
-    stepId: Type.Optional(Type.String()),
-    startedAt: Type.Optional(Type.Number()),
-    durationMs: Type.Optional(Type.Number()),
-    kind: Type.Union([
-      Type.Literal("assistant"), Type.Literal("tool-start"), Type.Literal("tool-end"),
-      Type.Literal("question"), Type.Literal("state"),
-    ]),
-    summary: Type.String(),
-  }), { maxItems: 100 }),
+  events: Type.Array(
+    Type.Object({
+      seq: Type.Integer({ minimum: 1 }),
+      timestamp: Type.Number(),
+      stepId: Type.Optional(Type.String()),
+      startedAt: Type.Optional(Type.Number()),
+      durationMs: Type.Optional(Type.Number()),
+      kind: Type.Union([
+        Type.Literal("assistant"),
+        Type.Literal("tool-start"),
+        Type.Literal("tool-end"),
+        Type.Literal("question"),
+        Type.Literal("state"),
+      ]),
+      summary: Type.String(),
+    }),
+    { maxItems: 100 },
+  ),
   nextCursor: Type.Integer({ minimum: 0 }),
   droppedBefore: Type.Optional(Type.Integer({ minimum: 1 })),
 });
@@ -74,16 +95,40 @@ const DEFAULT_PEEK_CHARS = 2000;
 const MAX_STATUS_TOOL_CALLS = 8;
 
 type StatusJob = Job;
-interface StatusToolDetails { text: string; jobId?: number; outputLines?: number; errorLines?: number; toolCalls?: ToolCallInfo[]; toolCallPrefixes?: string[]; }
-interface CancelTarget { jobId: number; agent: string; label: string; }
-interface CancelToolDetails { count: number; targets: CancelTarget[]; }
+interface StatusToolDetails {
+  text: string;
+  jobId?: number;
+  outputLines?: number;
+  errorLines?: number;
+  toolCalls?: ToolCallInfo[];
+  toolCallPrefixes?: string[];
+}
+interface CancelTarget {
+  jobId: number;
+  agent: string;
+  label: string;
+}
+interface CancelToolDetails {
+  count: number;
+  targets: CancelTarget[];
+}
 interface SendToolDetails {
-  jobId: number; agent: string; task?: string; title?: string; label: string;
-  message: string; deliverAs: "steer" | "followUp";
+  jobId: number;
+  agent: string;
+  task?: string;
+  title?: string;
+  label: string;
+  message: string;
+  deliverAs: "steer" | "followUp";
 }
 interface ReplyToolDetails {
-  jobId: number; agent?: string; task?: string; title?: string;
-  questionId: string; question: string; answer: string;
+  jobId: number;
+  agent?: string;
+  task?: string;
+  title?: string;
+  questionId: string;
+  question: string;
+  answer: string;
 }
 interface PeekToolDetails {
   jobId: number;
@@ -106,7 +151,7 @@ function jobTarget(job: Pick<Job, "id" | "agent" | "title" | "task">): string {
 
 function resultText(result: { content: Array<{ type: string; text?: string }> }): string {
   const text = result.content[0];
-  return text?.type === "text" ? text.text ?? "" : "";
+  return text?.type === "text" ? (text.text ?? "") : "";
 }
 
 function renderFallbackResult(
@@ -119,11 +164,7 @@ function renderFallbackResult(
 ): Component {
   const box = new Container();
   if (showTarget) {
-    box.addChild(new TruncatedText(
-      theme.fg("toolTitle", theme.bold(`${title} `)) + theme.fg("accent", target),
-      0,
-      0,
-    ));
+    box.addChild(new TruncatedText(theme.fg("toolTitle", theme.bold(`${title} `)) + theme.fg("accent", target), 0, 0));
   }
   box.addChild(new TruncatedText(theme.fg("muted", normalizeTitle(text) ?? emptyText), 2, 0));
   return box;
@@ -159,13 +200,15 @@ function renderStatusText(
       waitingForParent = false;
       const color = job[1] === "✓" ? "success" : job[1] === "⊘" ? "warning" : job[1] === "✗" ? "error" : "accent";
       const suffix = job[4].match(/^( \([^)]*\)):\s*(.*?)(\s+—\s+.*)?$/);
-      return theme.fg(color, `${job[1]} `) +
+      return (
+        theme.fg(color, `${job[1]} `) +
         theme.fg("accent", `${job[2]} ${job[3]}`) +
         (suffix
           ? theme.fg("muted", suffix[1] ?? "") +
             theme.fg("dim", `: ${suffix[2] ?? ""}`) +
             theme.fg("muted", suffix[3] ?? "")
-          : theme.fg("muted", job[4]));
+          : theme.fg("muted", job[4]))
+      );
     }
 
     if (waitingForParent && line.startsWith("- ")) {
@@ -188,14 +231,26 @@ function renderStatusText(
       waitingForParent = label.startsWith("Waiting for parent");
       readingToolCalls = label.startsWith("Tool calls (");
       bodyColor = label === "Latest output" ? "toolOutput" : label === "Error" ? "error" : undefined;
-      bodyLines = label === "Latest output" ? sections.outputLines ?? 0 : label === "Error" ? sections.errorLines ?? 0 : 0;
-      const valueColor = label === "State"
-        ? value.includes("completed") ? "success" : value.includes("cancelled") ? "warning" : value.includes("failed") ? "error" : "accent"
-        : label === "Agent" || label === "Profile" ? "accent"
-        : label === "Cancellation" ? "warning"
-        : label === "Error" ? "error"
-        : label === "Usage" || label === "Elapsed" || label === "Task" || label === "Progress" ? "dim"
-        : "muted";
+      bodyLines =
+        label === "Latest output" ? (sections.outputLines ?? 0) : label === "Error" ? (sections.errorLines ?? 0) : 0;
+      const valueColor =
+        label === "State"
+          ? value.includes("completed")
+            ? "success"
+            : value.includes("cancelled")
+              ? "warning"
+              : value.includes("failed")
+                ? "error"
+                : "accent"
+          : label === "Agent" || label === "Profile"
+            ? "accent"
+            : label === "Cancellation"
+              ? "warning"
+              : label === "Error"
+                ? "error"
+                : label === "Usage" || label === "Elapsed" || label === "Task" || label === "Progress"
+                  ? "dim"
+                  : "muted";
       return theme.fg("muted", `${label}:`) + theme.fg(valueColor, value);
     }
 
@@ -207,7 +262,16 @@ function renderStatusText(
     render(width: number) {
       const displayLines = lines.map((line, index) => {
         const row = toolCallRows.get(index);
-        return row ? theme.fg("dim", truncateToWidth(`${row.prefix}${toolCallLabel(row.call.name, row.call.args, Math.max(0, width - visibleWidth(row.prefix)))}`, width, "…")) : line;
+        return row
+          ? theme.fg(
+              "dim",
+              truncateToWidth(
+                `${row.prefix}${toolCallLabel(row.call.name, row.call.args, Math.max(0, width - visibleWidth(row.prefix)))}`,
+                width,
+                "…",
+              ),
+            )
+          : line;
       });
       return new Text(displayLines.join("\n"), 0, 0).render(width);
     },
@@ -217,10 +281,15 @@ function renderStatusText(
 
 function activeStepLines(job: Job, now: number): string[] {
   const steps = job.status === "running" ? job.steps.filter((step) => step.endedAt === undefined) : [];
-  return steps.length === 0 ? [] : [
-    `Active steps (${steps.length}):`,
-    ...steps.map((step) => `- ${formatStepTiming(step, now)} · ${step.kind}: ${formatEventSummary({ kind: "assistant", summary: step.summary })}`),
-  ];
+  return steps.length === 0
+    ? []
+    : [
+        `Active steps (${steps.length}):`,
+        ...steps.map(
+          (step) =>
+            `- ${formatStepTiming(step, now)} · ${step.kind}: ${formatEventSummary({ kind: "assistant", summary: step.summary })}`,
+        ),
+      ];
 }
 
 function statusToolCalls(job: Job, now: number): { call: ToolCallInfo; prefix: string }[] {
@@ -233,11 +302,19 @@ function statusToolCalls(job: Job, now: number): { call: ToolCallInfo; prefix: s
 function formatJob(job: StatusJob, now: number): string {
   if (job.status === "running") {
     const elapsed = formatDuration(Math.max(1000, now - job.startTime));
-    const progress = job.pendingQuestions.length > 0
-      ? " — waiting for parent"
-      : job.steps.some((step) => step.endedAt === undefined) ? "" : job.progress ? ` — ${job.progress}` : "";
+    const progress =
+      job.pendingQuestions.length > 0
+        ? " — waiting for parent"
+        : job.steps.some((step) => step.endedAt === undefined)
+          ? ""
+          : job.progress
+            ? ` — ${job.progress}`
+            : "";
     const metadata = formatUsageStats(undefined, job.model, job.thinkingLevel);
-    return [`- ⊙ #${job.id} ${job.agent} (${formatLocalTime(job.startTime)} · ${elapsed}${metadata ? ` ${metadata}` : ""}): ${jobLabel(job)}${progress}`, ...activeStepLines(job, now)].join("\n");
+    return [
+      `- ⊙ #${job.id} ${job.agent} (${formatLocalTime(job.startTime)} · ${elapsed}${metadata ? ` ${metadata}` : ""}): ${jobLabel(job)}${progress}`,
+      ...activeStepLines(job, now),
+    ].join("\n");
   }
   const duration = job.endTime ? formatDuration(Math.max(1000, job.endTime - job.startTime)) : "?";
   const icon = job.status === "completed" ? "✓" : job.status === "cancelled" ? "⊘" : "✗";
@@ -263,7 +340,8 @@ function formatDetailedStatus(job: Job, now: number): string {
   if (job.pendingQuestions.length > 0) {
     lines.push(`Waiting for parent (${job.pendingQuestions.length}):`);
     for (const question of job.pendingQuestions) lines.push(`- ${question.id}: ${question.question}`);
-  } else if (job.progress && !job.steps.some((step) => step.endedAt === undefined)) lines.push(`Progress: ${job.progress}`);
+  } else if (job.progress && !job.steps.some((step) => step.endedAt === undefined))
+    lines.push(`Progress: ${job.progress}`);
   lines.push(...activeStepLines(job, now));
   const toolCalls = statusToolCalls(job, now);
   if (toolCalls.length > 0) {
@@ -285,34 +363,41 @@ function formatStatus(registry: JobRegistry, jobId?: number, now = Date.now()): 
   }
   const running = registry.running();
   const recent = registry.recent(20).filter((j) => j.endTime && now - j.endTime < 60000);
-  const lines = running.length > 0
-    ? [`**Running (${running.length}):**`, ...running.map((job) => formatJob(job, now))]
-    : ["**Running:** none"];
+  const lines =
+    running.length > 0
+      ? [`**Running (${running.length}):**`, ...running.map((job) => formatJob(job, now))]
+      : ["**Running:** none"];
   if (recent.length > 0) lines.push(`\n**Recent (${recent.length}):**`, ...recent.map((job) => formatJob(job, now)));
   return lines.join("\n");
 }
 
 function formatStatusForDisplay(registry: JobRegistry, jobId: number): string {
   let waitingForParent = false;
-  return formatStatus(registry, jobId).split("\n").map((line) => {
-    if (line.startsWith("Waiting for parent")) {
-      waitingForParent = true;
+  return formatStatus(registry, jobId)
+    .split("\n")
+    .map((line) => {
+      if (line.startsWith("Waiting for parent")) {
+        waitingForParent = true;
+        return line;
+      }
+      if (waitingForParent && line.startsWith("- ")) {
+        const question = line.match(/^- [^:]+:\s*(.*)$/);
+        return question?.[1] ? `- ${question[1]}` : line;
+      }
+      waitingForParent = false;
       return line;
-    }
-    if (waitingForParent && line.startsWith("- ")) {
-      const question = line.match(/^- [^:]+:\s*(.*)$/);
-      return question?.[1] ? `- ${question[1]}` : line;
-    }
-    waitingForParent = false;
-    return line;
-  }).join("\n");
+    })
+    .join("\n");
 }
 
-export function createStatusTool(deps: { registry: JobRegistry }): ToolDefinition<typeof StatusParams, StatusToolDetails> {
+export function createStatusTool(deps: {
+  registry: JobRegistry;
+}): ToolDefinition<typeof StatusParams, StatusToolDetails> {
   return {
     name: "subagent_status",
     label: "Subagent Status",
-    description: "Inspect running and recently completed subagents when needed. Async jobs deliver results automatically; do not poll for normal completion.",
+    description:
+      "Inspect running and recently completed subagents when needed. Async jobs deliver results automatically; do not poll for normal completion.",
     parameters: StatusParams,
     outputSchema: StatusOutput,
     async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
@@ -322,15 +407,26 @@ export function createStatusTool(deps: { registry: JobRegistry }): ToolDefinitio
       const output = job?.text ? capOutput(job.text, MAX_STATUS_OUTPUT) : undefined;
       const error = job?.error ? capOutput(job.error, MAX_STATUS_OUTPUT) : undefined;
       const toolCalls = job ? statusToolCalls(job, now).slice(-MAX_STATUS_TOOL_CALLS) : undefined;
-      const jobs = params.jobId !== undefined
-        ? job ? [job] : []
-        : [...deps.registry.running(), ...deps.registry.recent(20).filter((item) => item.endTime && now - item.endTime < 60000)];
+      const jobs =
+        params.jobId !== undefined
+          ? job
+            ? [job]
+            : []
+          : [
+              ...deps.registry.running(),
+              ...deps.registry.recent(20).filter((item) => item.endTime && now - item.endTime < 60000),
+            ];
       return {
         content: [{ type: "text", text }],
         structuredContent: {
           text,
           ...(params.jobId !== undefined ? { jobId: params.jobId } : {}),
-          jobs: jobs.map((item) => ({ jobId: item.id, agent: item.agent, status: item.status, label: jobLabel(item, params.jobId !== undefined ? 160 : 80) })),
+          jobs: jobs.map((item) => ({
+            jobId: item.id,
+            agent: item.agent,
+            status: item.status,
+            label: jobLabel(item, params.jobId !== undefined ? 160 : 80),
+          })),
           ...(params.jobId !== undefined && !job ? { error: text } : {}),
         },
         details: {
@@ -338,10 +434,12 @@ export function createStatusTool(deps: { registry: JobRegistry }): ToolDefinitio
           jobId: params.jobId,
           outputLines: output?.split("\n").length,
           errorLines: error?.split("\n").length,
-          ...(toolCalls ? {
-            toolCalls: toolCalls.map((row) => row.call),
-            toolCallPrefixes: toolCalls.map((row) => row.prefix),
-          } : {}),
+          ...(toolCalls
+            ? {
+                toolCalls: toolCalls.map((row) => row.call),
+                toolCallPrefixes: toolCalls.map((row) => row.prefix),
+              }
+            : {}),
         },
       };
     },
@@ -365,10 +463,19 @@ export function createStatusTool(deps: { registry: JobRegistry }): ToolDefinitio
       if (context.isError || !details || typeof details.text !== "string") {
         return renderFallbackResult("subagent status", target, text, "(no status)", !context.args, theme);
       }
-      const duplicateLines = job && details.jobId === job.id && text.startsWith(`**Subagent #${job.id}**\n`)
-        ? [`**Subagent #${job.id}**`, `Agent: ${job.agent}`, `Task: ${jobLabel(job, Infinity)}`, `Title: ${jobLabel(job, Infinity)}`]
-        : [];
-      const displayText = text.split("\n").filter((line, index) => index >= 5 || !duplicateLines.includes(line)).join("\n");
+      const duplicateLines =
+        job && details.jobId === job.id && text.startsWith(`**Subagent #${job.id}**\n`)
+          ? [
+              `**Subagent #${job.id}**`,
+              `Agent: ${job.agent}`,
+              `Task: ${jobLabel(job, Infinity)}`,
+              `Title: ${jobLabel(job, Infinity)}`,
+            ]
+          : [];
+      const displayText = text
+        .split("\n")
+        .filter((line, index) => index >= 5 || !duplicateLines.includes(line))
+        .join("\n");
       return renderStatusText(displayText, theme, details);
     },
   };
@@ -397,7 +504,8 @@ export function createPeekTool(deps: { registry: JobRegistry }): ToolDefinition<
       const events: JobEvent[] = [];
       const structuredEvents: JobEvent[] = [];
       const eventLines: string[] = [];
-      const droppedNotice = read.droppedBefore === undefined ? undefined : `[history dropped before ${read.droppedBefore}]`;
+      const droppedNotice =
+        read.droppedBefore === undefined ? undefined : `[history dropped before ${read.droppedBefore}]`;
       if (droppedNotice && droppedNotice.length <= maxChars) eventLines.push(droppedNotice);
       for (const event of read.events) {
         const summary = formatEventSummary(event);
@@ -409,24 +517,30 @@ export function createPeekTool(deps: { registry: JobRegistry }): ToolDefinition<
         structuredEvents.push({ ...event, summary });
         eventLines.push(line);
       }
-      const nextCursor = events.at(-1)?.seq ?? (params.since ?? 0);
+      const nextCursor = events.at(-1)?.seq ?? params.since ?? 0;
       const cursor = `nextCursor: ${nextCursor}`;
       const compactCursor = `cursor:${nextCursor}`;
       const eventBody = eventLines.join("\n");
-      const bodyWithCursor = (body: string): string => !body
-        ? cursor.length <= maxChars ? cursor : compactCursor.length <= maxChars ? compactCursor : ""
-        : body.length + cursor.length + 1 <= maxChars
-          ? `${body}\n${cursor}`
-          : body.length + compactCursor.length + 1 <= maxChars
-            ? `${body}\n${compactCursor}`
-            : body;
+      const bodyWithCursor = (body: string): string =>
+        !body
+          ? cursor.length <= maxChars
+            ? cursor
+            : compactCursor.length <= maxChars
+              ? compactCursor
+              : ""
+          : body.length + cursor.length + 1 <= maxChars
+            ? `${body}\n${cursor}`
+            : body.length + compactCursor.length + 1 <= maxChars
+              ? `${body}\n${compactCursor}`
+              : body;
       const conciseContext = `subagent peek #${job.id} ${job.agent} · ${jobLabel(job, 80)}`;
       const eventText = bodyWithCursor(eventBody);
-      const withContext = eventText && `${conciseContext}\n${eventText}`.length <= maxChars
-        ? `${conciseContext}\n${eventText}`
-        : conciseContext.length <= maxChars && !eventText
-          ? conciseContext
-          : eventText;
+      const withContext =
+        eventText && `${conciseContext}\n${eventText}`.length <= maxChars
+          ? `${conciseContext}\n${eventText}`
+          : conciseContext.length <= maxChars && !eventText
+            ? conciseContext
+            : eventText;
       const text = withContext;
       const details = {
         jobId: job.id,
@@ -447,11 +561,7 @@ export function createPeekTool(deps: { registry: JobRegistry }): ToolDefinition<
     renderCall(args, theme, _context) {
       const job = deps.registry.get(args.jobId);
       const target = job ? jobTarget(job) : `#${args.jobId}`;
-      return new TruncatedText(
-        theme.fg("toolTitle", theme.bold("subagent peek ")) + theme.fg("accent", target),
-        0,
-        0,
-      );
+      return new TruncatedText(theme.fg("toolTitle", theme.bold("subagent peek ")) + theme.fg("accent", target), 0, 0);
     },
     renderResult(result, _options, theme, context) {
       const details = result.details;
@@ -475,8 +585,10 @@ export function createPeekTool(deps: { registry: JobRegistry }): ToolDefinition<
             if (!shownInCall) {
               lines.push(theme.fg("toolTitle", theme.bold("subagent peek ")) + theme.fg("accent", target));
             }
-            if (details.task && (!shownInCall || normalizeTitle(details.task) !== label)) lines.push(theme.fg("dim", `Task: ${details.task}`));
-            if (details.title && (!shownInCall || normalizeTitle(details.title) !== label)) lines.push(theme.fg("dim", `Title: ${details.title}`));
+            if (details.task && (!shownInCall || normalizeTitle(details.task) !== label))
+              lines.push(theme.fg("dim", `Task: ${details.task}`));
+            if (details.title && (!shownInCall || normalizeTitle(details.title) !== label))
+              lines.push(theme.fg("dim", `Title: ${details.title}`));
             if (details.droppedBefore !== undefined) {
               lines.push(theme.fg("warning", `history dropped before event ${details.droppedBefore}`));
             }
@@ -497,12 +609,22 @@ export function createPeekTool(deps: { registry: JobRegistry }): ToolDefinition<
           invalidate() {},
         };
       }
-      return renderFallbackResult("subagent peek", fallbackTarget, resultText(result), "(no result)", !context.args, theme);
+      return renderFallbackResult(
+        "subagent peek",
+        fallbackTarget,
+        resultText(result),
+        "(no result)",
+        !context.args,
+        theme,
+      );
     },
   };
 }
 
-export function createCancelTool(deps: { registry: JobRegistry; activeProcs?: unknown }): ToolDefinition<typeof CancelParams, CancelToolDetails> {
+export function createCancelTool(deps: {
+  registry: JobRegistry;
+  activeProcs?: unknown;
+}): ToolDefinition<typeof CancelParams, CancelToolDetails> {
   return {
     name: "subagent_cancel",
     label: "Subagent Cancel",
@@ -511,17 +633,29 @@ export function createCancelTool(deps: { registry: JobRegistry; activeProcs?: un
     async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
       if (params.all && params.jobId !== undefined) throw new Error("Specify either jobId or all, not both.");
       const requestedJob = params.jobId === undefined ? undefined : deps.registry.get(params.jobId);
-      const jobs = params.all || params.jobId === undefined
-        ? deps.registry.running()
-        : requestedJob ? [requestedJob] : [];
+      const jobs =
+        params.all || params.jobId === undefined ? deps.registry.running() : requestedJob ? [requestedJob] : [];
       const targets = jobs.map((job) => ({ jobId: job.id, agent: job.agent, label: jobLabel(job, Infinity) }));
-      const targetText = targets.length > 0
-        ? targets.map((target) => `#${target.jobId} ${target.agent} · ${target.label}`).join(", ")
-        : params.all || params.jobId === undefined ? "none" : `#${params.jobId}`;
-      const count = params.all || params.jobId === undefined ? deps.registry.cancelAll() : (deps.registry.cancel(params.jobId) ? 1 : 0);
+      const targetText =
+        targets.length > 0
+          ? targets.map((target) => `#${target.jobId} ${target.agent} · ${target.label}`).join(", ")
+          : params.all || params.jobId === undefined
+            ? "none"
+            : `#${params.jobId}`;
+      const count =
+        params.all || params.jobId === undefined
+          ? deps.registry.cancelAll()
+          : deps.registry.cancel(params.jobId)
+            ? 1
+            : 0;
       if (count === 0) {
         return {
-          content: [{ type: "text", text: `subagent cancel ${targetText}: ${params.jobId === undefined ? "no subagents are running" : "no running subagent"}.` }],
+          content: [
+            {
+              type: "text",
+              text: `subagent cancel ${targetText}: ${params.jobId === undefined ? "no subagents are running" : "no running subagent"}.`,
+            },
+          ],
           details: { count, targets },
         };
       }
@@ -533,43 +667,70 @@ export function createCancelTool(deps: { registry: JobRegistry; activeProcs?: un
     renderCall(args, theme, _context) {
       const job = args.jobId === undefined ? undefined : deps.registry.get(args.jobId);
       const target = args.all || args.jobId === undefined ? "all" : job ? jobTarget(job) : `#${args.jobId}`;
-      return new TruncatedText(theme.fg("toolTitle", theme.bold("subagent cancel ")) + theme.fg("accent", target), 0, 0);
+      return new TruncatedText(
+        theme.fg("toolTitle", theme.bold("subagent cancel ")) + theme.fg("accent", target),
+        0,
+        0,
+      );
     },
     renderResult(result, _options, theme, context) {
       const details = result.details;
       const args = context.args ?? {};
       const targetJob = args.jobId === undefined ? undefined : deps.registry.get(args.jobId);
       const target = args.all || args.jobId === undefined ? "all" : targetJob ? jobTarget(targetJob) : `#${args.jobId}`;
-      if (
-        context.isError ||
-        !details ||
-        typeof details.count !== "number" ||
-        !Array.isArray(details.targets)
-      ) {
-        return renderFallbackResult("subagent cancel", target, resultText(result), "No matching subagents.", !context.args, theme);
+      if (context.isError || !details || typeof details.count !== "number" || !Array.isArray(details.targets)) {
+        return renderFallbackResult(
+          "subagent cancel",
+          target,
+          resultText(result),
+          "No matching subagents.",
+          !context.args,
+          theme,
+        );
       }
       if (details.count === 0) {
         if (context.args) {
-          return new Text(theme.fg("muted", args.jobId === undefined ? "no subagents are running" : "no running subagent"), 0, 0);
+          return new Text(
+            theme.fg("muted", args.jobId === undefined ? "no subagents are running" : "no running subagent"),
+            0,
+            0,
+          );
         }
         const box = new Container();
-        box.addChild(new TruncatedText(
-          theme.fg("toolTitle", theme.bold("subagent cancel ")) + theme.fg("accent", target),
-          0,
-          0,
-        ));
-        box.addChild(new TruncatedText(theme.fg("muted", normalizeTitle(resultText(result)) ?? "no running subagents"), 2, 0));
+        box.addChild(
+          new TruncatedText(theme.fg("toolTitle", theme.bold("subagent cancel ")) + theme.fg("accent", target), 0, 0),
+        );
+        box.addChild(
+          new TruncatedText(theme.fg("muted", normalizeTitle(resultText(result)) ?? "no running subagents"), 2, 0),
+        );
         return box;
       }
       const box = new Container();
-      box.addChild(new Text(
-        theme.fg("warning", "⊘ ") + theme.fg("muted", `cancelling ${details.count} subagent${details.count > 1 ? "s" : ""}`),
-        0,
-        0,
-      ));
+      box.addChild(
+        new Text(
+          theme.fg("warning", "⊘ ") +
+            theme.fg("muted", `cancelling ${details.count} subagent${details.count > 1 ? "s" : ""}`),
+          0,
+          0,
+        ),
+      );
       for (const item of details.targets) {
-        if (details.count === 1 && details.targets.length === 1 && !args.all && targetJob && args.jobId === item.jobId && target === `#${item.jobId} ${item.agent} · ${item.label}`) continue;
-        box.addChild(new TruncatedText(theme.fg("accent", `#${item.jobId} ${item.agent}`) + theme.fg("dim", ` · ${item.label}`), 2, 0));
+        if (
+          details.count === 1 &&
+          details.targets.length === 1 &&
+          !args.all &&
+          targetJob &&
+          args.jobId === item.jobId &&
+          target === `#${item.jobId} ${item.agent} · ${item.label}`
+        )
+          continue;
+        box.addChild(
+          new TruncatedText(
+            theme.fg("accent", `#${item.jobId} ${item.agent}`) + theme.fg("dim", ` · ${item.label}`),
+            2,
+            0,
+          ),
+        );
       }
       return box;
     },
@@ -582,7 +743,7 @@ export function createSendTool(deps: { registry: JobRegistry }): ToolDefinition<
     label: "Subagent Send",
     description: "Send a steering or follow-up message to a running subagent.",
     promptGuidelines: [
-      "Use subagent_send only for running jobs. deliverAs must be \"steer\" to adjust the current run or \"followUp\" to queue another child turn.",
+      'Use subagent_send only for running jobs. deliverAs must be "steer" to adjust the current run or "followUp" to queue another child turn.',
       "subagent_send does not answer ask_parent questions; use subagent_reply for those.",
     ],
     parameters: SendParams,
@@ -610,13 +771,15 @@ export function createSendTool(deps: { registry: JobRegistry }): ToolDefinition<
       const mode = args.deliverAs === "followUp" ? "follow-up" : "steering";
       const target = job ? jobTarget(job) : `#${args.jobId}`;
       const box = new Container();
-      box.addChild(new TruncatedText(
-        theme.fg("toolTitle", theme.bold("subagent send ")) +
-          theme.fg("accent", target) +
-          theme.fg("muted", ` · ${mode}`),
-        0,
-        0,
-      ));
+      box.addChild(
+        new TruncatedText(
+          theme.fg("toolTitle", theme.bold("subagent send ")) +
+            theme.fg("accent", target) +
+            theme.fg("muted", ` · ${mode}`),
+          0,
+          0,
+        ),
+      );
       box.addChild(new TruncatedText(theme.fg("dim", normalizeTitle(args.message) ?? ""), 2, 0));
       return box;
     },
@@ -625,9 +788,10 @@ export function createSendTool(deps: { registry: JobRegistry }): ToolDefinition<
       const args = context.args ?? {};
       const job = args.jobId === undefined ? undefined : deps.registry.get(args.jobId);
       const targetInCall = job ? jobTarget(job) : `#${args.jobId ?? "?"}`;
-      const target = details && typeof details.jobId === "number"
-        ? `#${details.jobId} ${details.agent ?? job?.agent ?? "subagent"} · ${details.label ?? jobLabel(job ?? { title: undefined, task: "..." }, Infinity)}`
-        : targetInCall;
+      const target =
+        details && typeof details.jobId === "number"
+          ? `#${details.jobId} ${details.agent ?? job?.agent ?? "subagent"} · ${details.label ?? jobLabel(job ?? { title: undefined, task: "..." }, Infinity)}`
+          : targetInCall;
       if (
         context.isError ||
         !details ||
@@ -636,7 +800,14 @@ export function createSendTool(deps: { registry: JobRegistry }): ToolDefinition<
         typeof details.label !== "string" ||
         (details.deliverAs !== "steer" && details.deliverAs !== "followUp")
       ) {
-        return renderFallbackResult("subagent send", target, resultText(result), "(no result)", !context.args || target !== targetInCall, theme);
+        return renderFallbackResult(
+          "subagent send",
+          target,
+          resultText(result),
+          "(no result)",
+          !context.args || target !== targetInCall,
+          theme,
+        );
       }
       return new TruncatedText(
         theme.fg("success", "✓ ") +
@@ -680,20 +851,17 @@ export function createReplyTool(deps: { registry: JobRegistry }): ToolDefinition
     renderCall(args, theme, _context) {
       const job = deps.registry.get(args.jobId);
       const target = job ? jobTarget(job) : `#${args.jobId}`;
-      return new TruncatedText(
-        theme.fg("toolTitle", theme.bold("subagent reply ")) + theme.fg("accent", target),
-        0,
-        0,
-      );
+      return new TruncatedText(theme.fg("toolTitle", theme.bold("subagent reply ")) + theme.fg("accent", target), 0, 0);
     },
     renderResult(result, _options, theme, context) {
       const details = result.details;
       const args = context.args ?? {};
       const job = args.jobId === undefined ? undefined : deps.registry.get(args.jobId);
       const targetInCall = job ? jobTarget(job) : `#${args.jobId ?? "?"}`;
-      const target = details && typeof details.jobId === "number"
-        ? `#${details.jobId} ${details.agent ?? job?.agent ?? "subagent"}${details.title || details.task ? ` · ${shortLabel(normalizeTitle(details.title), normalizeTitle(details.task), Infinity)}` : ""}`
-        : targetInCall;
+      const target =
+        details && typeof details.jobId === "number"
+          ? `#${details.jobId} ${details.agent ?? job?.agent ?? "subagent"}${details.title || details.task ? ` · ${shortLabel(normalizeTitle(details.title), normalizeTitle(details.task), Infinity)}` : ""}`
+          : targetInCall;
       if (
         context.isError ||
         !details ||
@@ -701,17 +869,27 @@ export function createReplyTool(deps: { registry: JobRegistry }): ToolDefinition
         typeof details.question !== "string" ||
         typeof details.answer !== "string"
       ) {
-        return renderFallbackResult("subagent reply", target, resultText(result), "(no result)", !context.args || target !== targetInCall, theme);
+        return renderFallbackResult(
+          "subagent reply",
+          target,
+          resultText(result),
+          "(no result)",
+          !context.args || target !== targetInCall,
+          theme,
+        );
       }
       const question = normalizeTitle(details.question) ?? "(question unavailable)";
       const answer = normalizeTitle(details.answer) ?? "(empty)";
       const box = new Container();
-      box.addChild(new TruncatedText(
-        theme.fg("success", "✓ ") + theme.fg("muted", "answered") +
-          (target === targetInCall ? "" : theme.fg("muted", " · ") + theme.fg("accent", target)),
-        0,
-        0,
-      ));
+      box.addChild(
+        new TruncatedText(
+          theme.fg("success", "✓ ") +
+            theme.fg("muted", "answered") +
+            (target === targetInCall ? "" : theme.fg("muted", " · ") + theme.fg("accent", target)),
+          0,
+          0,
+        ),
+      );
       box.addChild(new TruncatedText(theme.fg("muted", "Q: ") + theme.fg("dim", question), 2, 0));
       box.addChild(new TruncatedText(theme.fg("muted", "A: ") + theme.fg("dim", answer), 2, 0));
       return box;
@@ -752,7 +930,8 @@ export function registerStatusCommands(
     let name: string | undefined = requested.trim();
     if (!name) {
       if (ctx.mode !== "tui") {
-        if (ctx.hasUI) ctx.ui.notify(`Active subagent profile: ${current}. Available: ${names.join(", ") || "none"}`, "info");
+        if (ctx.hasUI)
+          ctx.ui.notify(`Active subagent profile: ${current}. Available: ${names.join(", ") || "none"}`, "info");
         return;
       }
       name = await chooseProfile(pi, profiles, ctx);
@@ -764,17 +943,22 @@ export function registerStatusCommands(
       }
       profiles.setActiveProfile(name);
       pi.appendEntry(PROFILE_ENTRY_TYPE, { name });
-      if (ctx.hasUI) ctx.ui.notify(name === OFF_PROFILE_NAME
-        ? "Subagents turned off. New launches are blocked."
-        : `Subagent profile switched to ${name}. New jobs will use it.`, "info");
+      if (ctx.hasUI)
+        ctx.ui.notify(
+          name === OFF_PROFILE_NAME
+            ? "Subagents turned off. New launches are blocked."
+            : `Subagent profile switched to ${name}. New jobs will use it.`,
+          "info",
+        );
     }
     // A launch-triggered choice reaches the agent through the tool result, so only manual switches send
     // this. It joins the context without starting a turn.
     pi.sendMessage({
       customType: PROFILE_ENTRY_TYPE,
-      content: name === OFF_PROFILE_NAME
-        ? "The user turned subagents off. Do not launch subagents until the user turns them back on."
-        : `The user switched the subagent profile to ${name}. Subagents are available.`,
+      content:
+        name === OFF_PROFILE_NAME
+          ? "The user turned subagents off. Do not launch subagents until the user turns them back on."
+          : `The user switched the subagent profile to ${name}. Subagents are available.`,
       display: true,
     });
   };
@@ -801,7 +985,12 @@ export function registerStatusCommands(
       const value = args.trim();
       let jobId: number;
       if (!value) {
-        const job = await pickJob(ctx, [...deps.registry.running(), ...deps.registry.recent(20)], "Tail subagent", "No subagents are available.");
+        const job = await pickJob(
+          ctx,
+          [...deps.registry.running(), ...deps.registry.recent(20)],
+          "Tail subagent",
+          "No subagents are available.",
+        );
         if (!job) return;
         jobId = job.id;
       } else {
@@ -829,7 +1018,12 @@ export function registerStatusCommands(
           ctx.ui.notify(formatStatus(deps.registry), "info");
           return;
         }
-        const job = await pickJob(ctx, [...deps.registry.running(), ...deps.registry.recent(20)], "Inspect subagent status", "No subagents are available.");
+        const job = await pickJob(
+          ctx,
+          [...deps.registry.running(), ...deps.registry.recent(20)],
+          "Inspect subagent status",
+          "No subagents are available.",
+        );
         if (!job) return;
         ctx.ui.notify(formatStatusForDisplay(deps.registry, job.id), "info");
         return;
@@ -856,17 +1050,26 @@ export function registerStatusCommands(
           if (ctx.hasUI) ctx.ui.notify("Usage: /subagent-cancel <numeric-job-id|all>", "error");
           return;
         }
-        const job = await pickJob(ctx, deps.registry.running(), "Cancel subagent", "No running subagents are available.");
+        const job = await pickJob(
+          ctx,
+          deps.registry.running(),
+          "Cancel subagent",
+          "No running subagents are available.",
+        );
         if (!job) return;
         const count = deps.registry.cancel(job.id);
         ctx.ui.notify(count ? `Cancelling subagent #${job.id} ${job.agent}.` : "No matching running subagent", "info");
         return;
       }
       if (value !== "all" && (!/^\d+$/.test(value) || Number(value) < 1)) {
-        ctx.ui.notify("Usage: /subagent-cancel <numeric-job-id|all>", "error"); return;
+        ctx.ui.notify("Usage: /subagent-cancel <numeric-job-id|all>", "error");
+        return;
       }
-      const count = value === "all" ? deps.registry.cancelAll() : (deps.registry.cancel(Number(value)) ? 1 : 0);
-      ctx.ui.notify(count ? `Cancelling ${count} subagent${count > 1 ? "s" : ""}` : "No matching running subagent", "info");
+      const count = value === "all" ? deps.registry.cancelAll() : deps.registry.cancel(Number(value)) ? 1 : 0;
+      ctx.ui.notify(
+        count ? `Cancelling ${count} subagent${count > 1 ? "s" : ""}` : "No matching running subagent",
+        "info",
+      );
     },
   });
 
@@ -883,16 +1086,20 @@ export function registerStatusCommands(
           ctx.ui.notify("Usage: /subagent-send <numeric-job-id> <steer|followup> <message>", "error");
           return;
         }
-        const job = await pickJob(ctx, deps.registry.running(), "Send to subagent", "No running subagents are available.");
+        const job = await pickJob(
+          ctx,
+          deps.registry.running(),
+          "Send to subagent",
+          "No running subagents are available.",
+        );
         if (!job) return;
         jobId = job.id;
         const selectedMode = await ctx.ui.select("Message mode", ["steering", "follow-up"]);
         if (!selectedMode) return;
         mode = selectedMode === "steering" ? "steer" : "followup";
-        message = (await ctx.ui.input(
-          `${selectedMode} message for #${job.id} ${job.agent}`,
-          "Enter a message",
-        ))?.trim();
+        message = (
+          await ctx.ui.input(`${selectedMode} message for #${job.id} ${job.agent}`, "Enter a message")
+        )?.trim();
         if (!message) return;
       } else {
         const match = raw.match(/^(\d+)\s+(\S+)(?:\s+([\s\S]*))?$/);

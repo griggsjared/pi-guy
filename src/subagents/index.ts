@@ -24,7 +24,9 @@ function restoreActiveProfile(entries: readonly unknown[], settings: SubagentSet
   let choice: unknown;
   let found = false;
   for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const entry = entries[index] as { type?: unknown; customType?: unknown; provider?: unknown; modelId?: unknown; data?: { name?: unknown } } | undefined;
+    const entry = entries[index] as
+      | { type?: unknown; customType?: unknown; provider?: unknown; modelId?: unknown; data?: { name?: unknown } }
+      | undefined;
     if (entry?.type === "model_change") {
       models.add(`${String(entry.provider)}\0${String(entry.modelId)}`);
       if (found) break;
@@ -49,12 +51,12 @@ export default async function (pi: ExtensionAPI) {
     type: "string",
   });
   const agentsDir = join(__dirname, "..", "..", "resources", "subagents");
-  const [agents, settings] = await Promise.all([
-    discoverAgents(agentsDir),
-    loadSubagentSettings(),
-  ]);
+  const [agents, settings] = await Promise.all([discoverAgents(agentsDir), loadSubagentSettings()]);
   // Children run with --no-extensions, so AGENTS.local.md loading must be re-added by path.
-  const extensionPaths = [join(__dirname, "..", "agents-local", "index.ts"), ...await resolveExtensionPaths(settings.extensions)];
+  const extensionPaths = [
+    join(__dirname, "..", "agents-local", "index.ts"),
+    ...(await resolveExtensionPaths(settings.extensions)),
+  ];
   const registry = createJobRegistry();
   const activeTickers = new Set<ReturnType<typeof setInterval>>();
   let activeProfile = restoreActiveProfile([], settings);
@@ -69,35 +71,49 @@ export default async function (pi: ExtensionAPI) {
       if (lastUiContext?.hasUI) lastUiContext.ui.setStatus(PROFILE_ENTRY_TYPE, activeProfile);
     },
     needsConfirmation: () => activeProfile === undefined,
-    requestUsage: (provider: string, theme: Theme) => new Promise<string | undefined>((resolve) =>
-      pi.events.emit(PROVIDER_USAGE_REQUEST_EVENT, { provider, theme, reply: resolve } satisfies ProviderUsageRequest)),
+    requestUsage: (provider: string, theme: Theme) =>
+      new Promise<string | undefined>((resolve) =>
+        pi.events.emit(PROVIDER_USAGE_REQUEST_EVENT, {
+          provider,
+          theme,
+          reply: resolve,
+        } satisfies ProviderUsageRequest),
+      ),
   };
 
   registerRenderers(pi);
 
-  pi.registerTool(createSubagentTool({
-    pi,
-    agents,
-    settings,
-    getActiveProfile: () => activeProfile,
-    confirmProfile: async (ctx, onPause) => {
-      if (activeProfile !== undefined && activeProfile !== OFF_PROFILE_NAME && !Object.hasOwn(settings.profiles, activeProfile)) {
-        throw new Error(`Unknown subagent profile "${activeProfile}". Available: ${Object.keys(settings.profiles).join(", ") || "none"}`);
-      }
-      return confirmSubagentProfile(pi, profileDeps, ctx, onPause);
-    },
-    discover: () => discoverAgents(agentsDir),
-    registry,
-    activeTickers,
-    bridgeExtensionPath: join(__dirname, "child-bridge.ts"),
-    extensionPaths,
-    onUiContext: ({ hasUI, ui }) => {
-      // Only hasUI/ui are used later; keep just that subset so the full
-      // context isn't pinned for the session.
-      lastUiContext = { hasUI, ui };
-    },
-    refresh: (ctx) => refreshUi(ctx, registry),
-  }));
+  pi.registerTool(
+    createSubagentTool({
+      pi,
+      agents,
+      settings,
+      getActiveProfile: () => activeProfile,
+      confirmProfile: async (ctx, onPause) => {
+        if (
+          activeProfile !== undefined &&
+          activeProfile !== OFF_PROFILE_NAME &&
+          !Object.hasOwn(settings.profiles, activeProfile)
+        ) {
+          throw new Error(
+            `Unknown subagent profile "${activeProfile}". Available: ${Object.keys(settings.profiles).join(", ") || "none"}`,
+          );
+        }
+        return confirmSubagentProfile(pi, profileDeps, ctx, onPause);
+      },
+      discover: () => discoverAgents(agentsDir),
+      registry,
+      activeTickers,
+      bridgeExtensionPath: join(__dirname, "child-bridge.ts"),
+      extensionPaths,
+      onUiContext: ({ hasUI, ui }) => {
+        // Only hasUI/ui are used later; keep just that subset so the full
+        // context isn't pinned for the session.
+        lastUiContext = { hasUI, ui };
+      },
+      refresh: (ctx) => refreshUi(ctx, registry),
+    }),
+  );
   pi.registerTool(createStatusTool({ registry }));
   pi.registerTool(createPeekTool({ registry }));
   pi.registerTool(createCancelTool({ registry }));
@@ -110,9 +126,10 @@ export default async function (pi: ExtensionAPI) {
 
   pi.on("session_start", (_event, ctx) => {
     const requested = pi.getFlag("subagent-profile");
-    activeProfile = typeof requested === "string"
-      ? requested
-      : restoreActiveProfile(ctx.mode === "tui" ? ctx.sessionManager.getEntries() : [], settings);
+    activeProfile =
+      typeof requested === "string"
+        ? requested
+        : restoreActiveProfile(ctx.mode === "tui" ? ctx.sessionManager.getEntries() : [], settings);
     const { hasUI, ui } = ctx;
     lastUiContext = { hasUI, ui };
     if (hasUI) ui.setStatus(PROFILE_ENTRY_TYPE, activeProfile);
@@ -121,12 +138,17 @@ export default async function (pi: ExtensionAPI) {
   pi.on("model_select", () => {
     // An explicit --subagent-profile holds for the whole run.
     if (typeof pi.getFlag("subagent-profile") === "string") return;
-    if (activeProfile !== undefined && activeProfile !== OFF_PROFILE_NAME && Object.keys(settings.profiles).length > 1) {
+    if (
+      activeProfile !== undefined &&
+      activeProfile !== OFF_PROFILE_NAME &&
+      Object.keys(settings.profiles).length > 1
+    ) {
       activeProfile = undefined;
       if (lastUiContext?.hasUI) lastUiContext.ui.setStatus(PROFILE_ENTRY_TYPE, undefined);
       pi.sendMessage({
         customType: PROFILE_ENTRY_TYPE,
-        content: "The main model changed, so the subagent profile was cleared. The next subagent launch asks the user to choose one.",
+        content:
+          "The main model changed, so the subagent profile was cleared. The next subagent launch asks the user to choose one.",
         display: true,
       });
     }

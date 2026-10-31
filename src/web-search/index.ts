@@ -18,11 +18,13 @@ const WebSearchParams = Type.Object({
 const WebSearchOutput = Type.Object({
   backend: Type.Union([Type.Literal("duckduckgo-lite"), Type.Literal("tavily")]),
   query: Type.String(),
-  results: Type.Array(Type.Object({
-    title: Type.String(),
-    url: Type.String(),
-    snippet: Type.String(),
-  })),
+  results: Type.Array(
+    Type.Object({
+      title: Type.String(),
+      url: Type.String(),
+      snippet: Type.String(),
+    }),
+  ),
 });
 
 const WebFetchParams = Type.Object({
@@ -251,10 +253,7 @@ function isClearlyBinaryContentType(contentType: string): boolean {
 function looksLikeBinaryContent(bytes: Uint8Array): boolean {
   const sample = bytes.subarray(0, Math.min(bytes.length, 8192));
   if (sample.length === 0) return false;
-  if (
-    (sample[0] === 0xff && sample[1] === 0xfe) ||
-    (sample[0] === 0xfe && sample[1] === 0xff)
-  ) return false;
+  if ((sample[0] === 0xff && sample[1] === 0xfe) || (sample[0] === 0xfe && sample[1] === 0xff)) return false;
   let controlBytes = 0;
   for (const byte of sample) {
     if (byte === 0) return true;
@@ -307,9 +306,7 @@ async function fetchPage(url: string, signal?: AbortSignal): Promise<FetchedPage
   }
   const bytes = new Uint8Array(await response.arrayBuffer());
   if (looksLikeBinaryContent(bytes)) {
-    throw new Error(
-      `Unsupported content type "${mediaType || "unknown"}" — the response appears to be binary.`,
-    );
+    throw new Error(`Unsupported content type "${mediaType || "unknown"}" — the response appears to be binary.`);
   }
   const charset =
     contentType.match(/charset\s*=\s*["']?([^;"'\s]+)/i)?.[1] ??
@@ -322,9 +319,7 @@ async function fetchPage(url: string, signal?: AbortSignal): Promise<FetchedPage
   try {
     body = new TextDecoder(charset).decode(bytes);
   } catch {
-    throw new Error(
-      `Unsupported content type "${mediaType || "unknown"}" — the response is not decodable text.`,
-    );
+    throw new Error(`Unsupported content type "${mediaType || "unknown"}" — the response is not decodable text.`);
   }
   const isHtml =
     mediaType === "text/html" ||
@@ -333,7 +328,9 @@ async function fetchPage(url: string, signal?: AbortSignal): Promise<FetchedPage
   if (isHtml) {
     const extracted = extractReadableContent(body);
     if (isWeakContent(body, extracted.text)) {
-      throw new Error("Page content is not readable (requires JavaScript or is empty). Rely on web_search snippets instead.");
+      throw new Error(
+        "Page content is not readable (requires JavaScript or is empty). Rely on web_search snippets instead.",
+      );
     }
     return { url: response.url || url, ...extracted };
   }

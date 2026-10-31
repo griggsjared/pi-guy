@@ -1,5 +1,5 @@
+import type { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { spawn } from "node:child_process";
 
 const SIGNAL_NUMBERS: Record<string, number> = { SIGTERM: 15, SIGHUP: 1, SIGINT: 2 };
 
@@ -33,7 +33,8 @@ class FakeStdin extends EventEmitter {
   }
 
   commands(): Array<Record<string, unknown>> {
-    return this.writes.flatMap((write) => write.trim().split("\n"))
+    return this.writes
+      .flatMap((write) => write.trim().split("\n"))
       .filter(Boolean)
       .map((line) => JSON.parse(line) as Record<string, unknown>);
   }
@@ -93,44 +94,48 @@ export function fakeSpawnChildren(children: FakeChild[]): { spawnFn: typeof spaw
 }
 
 export function endEvent(text: string, extra: Record<string, unknown> = {}): string {
-  return JSON.stringify({
-    type: "message_end",
-    message: {
-      role: "assistant",
-      content: text,
-      usage: { input: 5, output: 3, totalTokens: 8, cost: 0.0001 },
-      ...extra,
-    },
-  }) + "\n";
+  return (
+    JSON.stringify({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: text,
+        usage: { input: 5, output: 3, totalTokens: 8, cost: 0.0001 },
+        ...extra,
+      },
+    }) + "\n"
+  );
 }
 
 export function updateEvent(text: string): string {
-  return JSON.stringify({
-    type: "message_update",
-    assistantMessageEvent: { type: "text_delta", delta: text },
-  }) + "\n";
+  return (
+    JSON.stringify({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: text },
+    }) + "\n"
+  );
 }
 
-export function responseEvent(
-  command: Record<string, unknown>,
-  success = true,
-  error?: string,
-): string {
-  return JSON.stringify({
-    id: command.id,
-    type: "response",
-    command: command.type,
-    success,
-    ...(error ? { error } : {}),
-  }) + "\n";
+export function responseEvent(command: Record<string, unknown>, success = true, error?: string): string {
+  return (
+    JSON.stringify({
+      id: command.id,
+      type: "response",
+      command: command.type,
+      success,
+      ...(error ? { error } : {}),
+    }) + "\n"
+  );
 }
 
 export function questionEvent(id: string, question: string, context?: string): string {
-  return JSON.stringify({
-    type: "extension_ui_request",
-    id,
-    method: "input",
-    title: `subagents:ask-parent:${question}`,
-    ...(context ? { placeholder: context } : {}),
-  }) + "\n";
+  return (
+    JSON.stringify({
+      type: "extension_ui_request",
+      id,
+      method: "input",
+      title: `subagents:ask-parent:${question}`,
+      ...(context ? { placeholder: context } : {}),
+    }) + "\n"
+  );
 }

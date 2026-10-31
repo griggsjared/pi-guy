@@ -20,22 +20,22 @@ function tui(screens: string[][], rendered: string[][] = []): ExtensionContext {
     hasUI: true,
     mode: "tui",
     ui: {
-      custom: async (factory: (
-        tui: unknown,
-        theme: unknown,
-        kb: unknown,
-        done: (value: unknown) => void,
-      ) => { render(width: number): string[]; handleInput(data: string): void }) => {
+      custom: async (
+        factory: (
+          tui: unknown,
+          theme: unknown,
+          kb: unknown,
+          done: (value: unknown) => void,
+        ) => { render(width: number): string[]; handleInput(data: string): void },
+      ) => {
         const keys = screens.shift();
         assert.ok(keys, "unexpected picker");
         let settled = false;
         let result: unknown;
-        const component = factory(
-          { requestRender() {} },
-          fakeTheme(),
-          undefined,
-          (value: unknown) => { settled = true; result = value; },
-        );
+        const component = factory({ requestRender() {} }, fakeTheme(), undefined, (value: unknown) => {
+          settled = true;
+          result = value;
+        });
         const lines = component.render(80);
         rendered.push(lines);
         for (const key of keys) {
@@ -49,7 +49,10 @@ function tui(screens: string[][], rendered: string[][] = []): ExtensionContext {
   } as unknown as ExtensionContext;
 }
 
-function execute(ctx: ExtensionContext, questions: (typeof question & { multiple?: boolean; title?: string })[] = [question]) {
+function execute(
+  ctx: ExtensionContext,
+  questions: (typeof question & { multiple?: boolean; title?: string })[] = [question],
+) {
   const toolCtx: ExtensionToolContext = {
     ...ctx,
     tools: [],
@@ -83,7 +86,9 @@ for (const multiple of [false, true]) {
 }
 
 test("deferring multi-select with space replaces the current checked options", async () => {
-  assertDeferred(await execute(tui([["1", "down", "down", "down", "space"], ["1"]]), [{ ...question, multiple: true }]));
+  assertDeferred(
+    await execute(tui([["1", "down", "down", "down", "space"], ["1"]]), [{ ...question, multiple: true }]),
+  );
 });
 
 test("deferring a question preserves other answers and includes every question in confirmation", async () => {
@@ -93,7 +98,10 @@ test("deferring a question preserves other answers and includes every question i
   const result = await execute(tui([["1"], ["4"], ["2"], ["1"]], rendered), [question, current, last]);
   assert.deepEqual(result.details, {
     answers: [
-      { question: question.question, selected: { label: "First", description: undefined, index: 0, context: undefined } },
+      {
+        question: question.question,
+        selected: { label: "First", description: undefined, index: 0, context: undefined },
+      },
       { question: current.question, selected: { discuss: true } },
       { question: last.question, selected: { label: "Second", description: undefined, index: 1, context: undefined } },
     ],
@@ -116,9 +124,14 @@ for (const multiple of [false, true]) {
     const keys = multiple ? ["1", "5"] : ["1"];
     const result = await execute(tui([["4"], ["2"], keys, ["1"]]), [{ ...question, multiple }]);
     assert.deepEqual(result.details, {
-      answers: [{ question: question.question, selected: multiple
-        ? { items: [{ label: "First", description: undefined, index: 0, context: undefined }] }
-        : { label: "First", description: undefined, index: 0, context: undefined } }],
+      answers: [
+        {
+          question: question.question,
+          selected: multiple
+            ? { items: [{ label: "First", description: undefined, index: 0, context: undefined }] }
+            : { label: "First", description: undefined, index: 0, context: undefined },
+        },
+      ],
       cancelled: false,
     });
     assert.doesNotMatch(result.content[0]?.type === "text" ? result.content[0].text : "", /marked for discussion/);
@@ -127,7 +140,10 @@ for (const multiple of [false, true]) {
 
 for (const stage of ["next question", "confirmation"]) {
   test(`escape at ${stage} cancels deferred questions without requesting discussion`, async () => {
-    const result = await execute(tui([["4"], ["escape"]]), stage === "next question" ? [question, question] : [question]);
+    const result = await execute(
+      tui([["4"], ["escape"]]),
+      stage === "next question" ? [question, question] : [question],
+    );
     assert.deepEqual(result.details, {
       answers: [{ question: question.question, selected: { discuss: true } }],
       cancelled: true,
@@ -145,14 +161,10 @@ test("question progress advances across pickers and keeps its position when re-a
     { ...question, question: "Which features?", multiple: true },
     { ...question, question: "Which database?" },
   ]);
-  assert.deepEqual(rendered.map((lines) => lines.find((line) => line.includes("Question "))?.trim()), [
-    "Question 1/3 · Approach",
-    "Question 2/3",
-    "Question 3/3",
-    undefined,
-    "Question 2/3",
-    undefined,
-  ]);
+  assert.deepEqual(
+    rendered.map((lines) => lines.find((line) => line.includes("Question "))?.trim()),
+    ["Question 1/3 · Approach", "Question 2/3", "Question 3/3", undefined, "Question 2/3", undefined],
+  );
 });
 
 test("simple picker filters discussion options and summarizes answers and deferrals", async () => {
@@ -163,7 +175,10 @@ test("simple picker filters discussion options and summarizes answers and deferr
     ui: {
       select: async (title: string, options: string[]) => {
         if (title.startsWith("Confirm answers")) {
-          assert.equal(title, "Confirm answers\n\n1. Which approach? → Discuss after questions\n2. Which database? → Second");
+          assert.equal(
+            title,
+            "Confirm answers\n\n1. Which approach? → Discuss after questions\n2. Which database? → Second",
+          );
           assert.deepEqual(options, ["Confirm answers", "Re-answer question 1", "Re-answer question 2"]);
           return "Confirm answers";
         }
@@ -174,14 +189,20 @@ test("simple picker filters discussion options and summarizes answers and deferr
       },
     },
   } as unknown as ExtensionContext;
-  const result = await execute(ctx, [{
-    ...question,
-    options: [...question.options, { label: DISCUSS_LABEL }, { label: " Let’s chat about this " }],
-  }, second]);
+  const result = await execute(ctx, [
+    {
+      ...question,
+      options: [...question.options, { label: DISCUSS_LABEL }, { label: " Let’s chat about this " }],
+    },
+    second,
+  ]);
   assert.deepEqual(result.details, {
     answers: [
       { question: question.question, selected: { discuss: true } },
-      { question: second.question, selected: { label: "Second", description: undefined, index: 1, context: undefined } },
+      {
+        question: second.question,
+        selected: { label: "Second", description: undefined, index: 1, context: undefined },
+      },
     ],
     cancelled: false,
   });
@@ -207,7 +228,12 @@ test("normal answers still require confirmation and do not terminate", async () 
   const result = await execute(tui([["1"], ["1"]]));
   assert.equal(result.terminate, undefined);
   assert.deepEqual(result.details, {
-    answers: [{ question: question.question, selected: { label: "First", description: undefined, index: 0, context: undefined } }],
+    answers: [
+      {
+        question: question.question,
+        selected: { label: "First", description: undefined, index: 0, context: undefined },
+      },
+    ],
     cancelled: false,
   });
 });

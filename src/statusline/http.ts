@@ -4,9 +4,7 @@ const MAX_RESPONSE_BYTES = 64 * 1024;
 type ObjectValue = Record<string, unknown>;
 
 export function asObject(value: unknown): ObjectValue | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? value as ObjectValue
-    : undefined;
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as ObjectValue) : undefined;
 }
 
 export function asNumber(value: unknown): number | undefined {

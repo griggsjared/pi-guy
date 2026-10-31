@@ -11,25 +11,36 @@ export const CLAUDE_CACHE_TTL_MS = 300_000;
 function parseReset(reset: string, capturedAt: number): number | undefined {
   const match = /^(\w{3}) (\d{1,2}) at (\d{1,2}):(\d{2})(am|pm) \(([^)]+)\)$/i.exec(reset.trim());
   if (!match) return undefined;
-  const month = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].indexOf(match[1]!.toLowerCase());
+  const month = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].indexOf(
+    match[1]!.toLowerCase(),
+  );
   const day = Number(match[2]);
   const clockHour = Number(match[3]);
   const minute = Number(match[4]);
   if (month < 0 || day < 1 || day > 31 || clockHour < 1 || clockHour > 12 || minute > 59) return undefined;
-  const hour = clockHour % 12 + (match[5]!.toLowerCase() === "pm" ? 12 : 0);
+  const hour = (clockHour % 12) + (match[5]!.toLowerCase() === "pm" ? 12 : 0);
   try {
     const formatter = new Intl.DateTimeFormat("en-US", {
-      timeZone: match[6], year: "numeric", month: "2-digit", day: "2-digit",
-      hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
+      timeZone: match[6],
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
     });
-    const current = Object.fromEntries(formatter.formatToParts(capturedAt).map((part) => [part.type, Number(part.value)]));
+    const current = Object.fromEntries(
+      formatter.formatToParts(capturedAt).map((part) => [part.type, Number(part.value)]),
+    );
     const year = current.year! + (month + 1 - current.month! > 6 ? -1 : current.month! - month - 1 > 6 ? 1 : 0);
     const target = Date.UTC(year, month, day, hour, minute);
     if (new Date(target).getUTCMonth() !== month) return undefined;
     let instant = target;
     for (let attempt = 0; attempt < 3; attempt++) {
       const parts = Object.fromEntries(formatter.formatToParts(instant).map((part) => [part.type, Number(part.value)]));
-      const delta = target - Date.UTC(parts.year!, parts.month! - 1, parts.day!, parts.hour!, parts.minute!, parts.second!);
+      const delta =
+        target - Date.UTC(parts.year!, parts.month! - 1, parts.day!, parts.hour!, parts.minute!, parts.second!);
       if (delta === 0) return instant >= 0 ? instant : undefined;
       instant += delta;
     }
@@ -61,23 +72,38 @@ export async function fetchClaudeUsage(_ctx: ExtensionContext, signal: AbortSign
   signal.throwIfAborted();
   const output = await new Promise<string>((resolve, reject) => {
     // pi.exec lacks per-process env overrides, a 64 KiB output cap, and immediate SIGKILL.
-    const child = childProcess.execFile("claude", [
-      "--settings", JSON.stringify({ remoteControlAtStartup: false, disableAllHooks: true }),
-      "--strict-mcp-config", "--tools", "", "--setting-sources", "", "/usage",
-    ], {
-      env: {
-        ...process.env,
-        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "",
-        DISABLE_TELEMETRY: "1",
-        DISABLE_ERROR_REPORTING: "1",
-        DISABLE_AUTOUPDATER: "1",
+    const child = childProcess.execFile(
+      "claude",
+      [
+        "--settings",
+        JSON.stringify({ remoteControlAtStartup: false, disableAllHooks: true }),
+        "--strict-mcp-config",
+        "--tools",
+        "",
+        "--setting-sources",
+        "",
+        "/usage",
+      ],
+      {
+        env: {
+          ...process.env,
+          CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "",
+          DISABLE_TELEMETRY: "1",
+          DISABLE_ERROR_REPORTING: "1",
+          DISABLE_AUTOUPDATER: "1",
+        },
+        encoding: "utf8",
+        signal,
+        timeout: REQUEST_TIMEOUT_MS,
+        maxBuffer: 64 * 1024,
+        killSignal: "SIGKILL",
       },
-      encoding: "utf8", signal, timeout: REQUEST_TIMEOUT_MS, maxBuffer: 64 * 1024, killSignal: "SIGKILL",
-    }, (error, stdout) => {
-      if (signal.aborted) reject(signal.reason);
-      else if (error) reject(new Error("Claude usage CLI request failed"));
-      else resolve(stdout);
-    });
+      (error, stdout) => {
+        if (signal.aborted) reject(signal.reason);
+        else if (error) reject(new Error("Claude usage CLI request failed"));
+        else resolve(stdout);
+      },
+    );
     child.stdin?.end();
   });
   const usage = normalizeClaudeUsage(output);

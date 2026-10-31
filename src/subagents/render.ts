@@ -1,6 +1,13 @@
 import { getMarkdownTheme } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionContext, Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
-import { Box, Markdown, Spacer, Text, TruncatedText as TuiTruncatedText, truncateToWidth } from "@earendil-works/pi-tui";
+import {
+  Box,
+  Markdown,
+  Spacer,
+  Text,
+  TruncatedText as TuiTruncatedText,
+  truncateToWidth,
+} from "@earendil-works/pi-tui";
 import type { TUI } from "@earendil-works/pi-tui";
 import { formatDuration } from "../lib/format.ts";
 import { ENTRY_TYPE, QUESTION_ENTRY_TYPE } from "./constants.ts";
@@ -31,27 +38,31 @@ function renderWidgetRows(registry: JobRegistry, fg: Fg, width = 80): { jobId?: 
   for (const job of running) {
     const elapsed = formatDuration(Math.max(1000, now - job.startTime));
     const title = job.title ? `: ${job.title}` : "";
-    rows.push({ jobId: job.id, line: truncateToWidth(
-      fg("accent", `⊙ #${job.id} ${job.agent}`) +
-        fg("muted", ` (${elapsed})`) +
-        (title ? fg("dim", title) : ""),
-      maxWidth,
-      "",
-    ) });
+    rows.push({
+      jobId: job.id,
+      line: truncateToWidth(
+        fg("accent", `⊙ #${job.id} ${job.agent}`) + fg("muted", ` (${elapsed})`) + (title ? fg("dim", title) : ""),
+        maxWidth,
+        "",
+      ),
+    });
   }
   for (const job of completed) {
     const duration = job.endTime ? formatDuration(Math.max(1000, job.endTime - job.startTime)) : "?";
     const icon = job.status === "completed" ? "✓" : job.status === "cancelled" ? "⊘" : "✗";
     const color = job.status === "completed" ? "success" : job.status === "cancelled" ? "warning" : "error";
     const label = job.title ? `: ${job.title}` : `: ${shortLabel(undefined, job.task, Infinity)}`;
-    rows.push({ jobId: job.id, line: truncateToWidth(
-      fg(color, `${icon} `) +
-        fg("accent", `#${job.id} ${job.agent}`) +
-        fg("muted", ` (${duration})`) +
-        fg("dim", label),
-      maxWidth,
-      "",
-    ) });
+    rows.push({
+      jobId: job.id,
+      line: truncateToWidth(
+        fg(color, `${icon} `) +
+          fg("accent", `#${job.id} ${job.agent}`) +
+          fg("muted", ` (${duration})`) +
+          fg("dim", label),
+        maxWidth,
+        "",
+      ),
+    });
   }
   if (rows.length > MAX_WIDGET_LINES) {
     rows.length = MAX_WIDGET_LINES - 1;
@@ -60,7 +71,11 @@ function renderWidgetRows(registry: JobRegistry, fg: Fg, width = 80): { jobId?: 
   return rows;
 }
 
-export async function openSubagentTail(ui: ExtensionContext["ui"], registry: JobRegistry, jobId: number): Promise<void> {
+export async function openSubagentTail(
+  ui: ExtensionContext["ui"],
+  registry: JobRegistry,
+  jobId: number,
+): Promise<void> {
   await ui.custom<void>(
     (tui, theme, _keybindings, done) => new SubagentTail(tui, theme, registry, jobId, () => done(undefined)),
     {
@@ -107,7 +122,7 @@ export function refreshUi(ctx: UiContext, registry: JobRegistry): void {
             }
             const margin = width >= 3 ? 1 : 0;
             rows = renderWidgetRows(registry, (color, text) => theme.fg(color, text), Math.max(1, width - margin * 2));
-            return rows.map((row) => margin > 0 ? ` ${row.line} ` : truncateToWidth(row.line, width, ""));
+            return rows.map((row) => (margin > 0 ? ` ${row.line} ` : truncateToWidth(row.line, width, "")));
           },
           handleMouse(event: { type: string; button: string; y: number }): { handled: true } | undefined {
             if (disposed || event.type !== "click" || event.button !== "left") return undefined;
@@ -116,7 +131,9 @@ export function refreshUi(ctx: UiContext, registry: JobRegistry): void {
             if (!tailOpen) {
               tailOpen = true;
               void openSubagentTail(ctx.ui, registry, row.jobId)
-                .finally(() => { tailOpen = false; })
+                .finally(() => {
+                  tailOpen = false;
+                })
                 .catch(() => {});
             }
             return { handled: true };
@@ -135,7 +152,9 @@ export function refreshUi(ctx: UiContext, registry: JobRegistry): void {
       widgetTuis.delete(uiKey);
       ctx.ui.setWidget(WIDGET_KEY, undefined);
     }
-  } catch { /* ctx stale after session change */ }
+  } catch {
+    /* ctx stale after session change */
+  }
 }
 
 interface SubagentResultEntry {
@@ -157,9 +176,10 @@ function renderResult(
   const title = normalizeTitle(details.title);
   const titleText = title ? theme.fg("dim", `: ${title}`) : "";
   const taskFallback = title ? "" : theme.fg("dim", `: ${shortLabel(undefined, details.task, Infinity)}`);
-  const cancellation = details.status === "cancelled" && details.cancellationReason
-    ? theme.fg("warning", ` — cancelled (${details.cancellationReason})`)
-    : "";
+  const cancellation =
+    details.status === "cancelled" && details.cancellationReason
+      ? theme.fg("warning", ` — cancelled (${details.cancellationReason})`)
+      : "";
   const headLine = `${prefix}${theme.fg("muted", ` (${details.duration})`)}${titleText}${taskFallback}${cancellation}`;
   const statsLine = usageStr ? theme.fg("dim", usageStr) : undefined;
 
@@ -169,9 +189,10 @@ function renderResult(
     if (statsLine) box.addChild(new Text(statsLine, 1, 0));
     if (content) {
       const errorPrefix = `subagent launch ${details.agent} · ${shortLabel(title, normalizeTitle(details.task), Infinity)}: `;
-      const displayContent = details.status === "failed" && content.startsWith(errorPrefix)
-        ? `subagent launch: ${content.slice(errorPrefix.length)}`
-        : content;
+      const displayContent =
+        details.status === "failed" && content.startsWith(errorPrefix)
+          ? `subagent launch: ${content.slice(errorPrefix.length)}`
+          : content;
       box.addChild(new Spacer(1));
       box.addChild(new Markdown(displayContent, 0, 0, getMarkdownTheme()));
     }
@@ -182,7 +203,9 @@ function renderResult(
         box.addChild({
           render(width: number) {
             const labelWidth = Math.max(1, width - 4);
-            return new TruncatedText(theme.fg("dim", toolCallLabel(call.name, call.args, labelWidth)), 2, 0).render(width);
+            return new TruncatedText(theme.fg("dim", toolCallLabel(call.name, call.args, labelWidth)), 2, 0).render(
+              width,
+            );
           },
           invalidate() {},
         });
@@ -202,7 +225,9 @@ export function registerRenderers(pi: ExtensionAPI): void {
   pi.registerMessageRenderer<SubagentMessageDetails>(ENTRY_TYPE, (message, { expanded, outputPad }, theme) => {
     const details = message.details;
     const content = typeof message.content === "string" ? message.content : "";
-    return details ? renderResult(content, details, expanded, outputPad, theme) : new Text(theme.fg("toolOutput", content), 0, 0);
+    return details
+      ? renderResult(content, details, expanded, outputPad, theme)
+      : new Text(theme.fg("toolOutput", content), 0, 0);
   });
 
   pi.registerEntryRenderer<SubagentResultEntry>(ENTRY_TYPE, (entry, { expanded }, theme) => {
@@ -210,29 +235,29 @@ export function registerRenderers(pi: ExtensionAPI): void {
     return renderResult(entry.data.content, entry.data.details, expanded, 1, theme);
   });
 
-  pi.registerMessageRenderer<SubagentQuestionMessageDetails>(QUESTION_ENTRY_TYPE, (message, { expanded, outputPad }, theme) => {
-    const details = message.details;
-    if (!details) {
-      const content = typeof message.content === "string" ? message.content : "";
-      return new Text(theme.fg("muted", content), 0, 0);
-    }
-
-    const summary = theme.fg("warning", "? ") +
-      theme.fg("accent", `#${details.jobId} ${details.agent}`) +
-      theme.fg("dim", `: ${shortLabel(undefined, details.question, Infinity)}`);
-    const box = new Box(outputPad, 1, (text) => theme.bg("customMessageBg", text));
-    box.addChild(new TruncatedText(summary, 0, 0));
-    if (expanded) {
-      if (details.context) {
-        box.addChild(new Spacer(1));
-        box.addChild(new Text(
-          theme.fg("muted", "Context: ") + theme.fg("dim", details.context),
-          0,
-          0,
-        ));
+  pi.registerMessageRenderer<SubagentQuestionMessageDetails>(
+    QUESTION_ENTRY_TYPE,
+    (message, { expanded, outputPad }, theme) => {
+      const details = message.details;
+      if (!details) {
+        const content = typeof message.content === "string" ? message.content : "";
+        return new Text(theme.fg("muted", content), 0, 0);
       }
-      box.addChild(new Text(theme.fg("muted", "Waiting for parent reply"), 0, 0));
-    }
-    return box;
-  });
+
+      const summary =
+        theme.fg("warning", "? ") +
+        theme.fg("accent", `#${details.jobId} ${details.agent}`) +
+        theme.fg("dim", `: ${shortLabel(undefined, details.question, Infinity)}`);
+      const box = new Box(outputPad, 1, (text) => theme.bg("customMessageBg", text));
+      box.addChild(new TruncatedText(summary, 0, 0));
+      if (expanded) {
+        if (details.context) {
+          box.addChild(new Spacer(1));
+          box.addChild(new Text(theme.fg("muted", "Context: ") + theme.fg("dim", details.context), 0, 0));
+        }
+        box.addChild(new Text(theme.fg("muted", "Waiting for parent reply"), 0, 0));
+      }
+      return box;
+    },
+  );
 }

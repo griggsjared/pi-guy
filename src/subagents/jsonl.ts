@@ -86,12 +86,12 @@ export function parseParentQuestion(line: string): SubagentQuestion | undefined 
     !request.id.trim() ||
     typeof request.title !== "string" ||
     !request.title.startsWith(ASK_PARENT_TITLE_PREFIX)
-  ) return undefined;
+  )
+    return undefined;
   const question = request.title.slice(ASK_PARENT_TITLE_PREFIX.length).trim();
   if (!question) return undefined;
-  const context = typeof request.placeholder === "string" && request.placeholder.trim()
-    ? request.placeholder.trim()
-    : undefined;
+  const context =
+    typeof request.placeholder === "string" && request.placeholder.trim() ? request.placeholder.trim() : undefined;
   return { id: request.id, question, context };
 }
 
@@ -112,8 +112,10 @@ export function assistantText(content: unknown): string {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
     return content
-      .filter((p): p is { type: "text"; text: unknown } =>
-        !!p && typeof p === "object" && (p as { type?: unknown }).type === "text")
+      .filter(
+        (p): p is { type: "text"; text: unknown } =>
+          !!p && typeof p === "object" && (p as { type?: unknown }).type === "text",
+      )
       .map((p) => (typeof p.text === "string" ? p.text : ""))
       .join("\n");
   }
@@ -123,8 +125,10 @@ export function assistantText(content: unknown): string {
 function thinkingText(content: unknown): string {
   if (!Array.isArray(content)) return "";
   return content
-    .filter((p): p is { thinking?: unknown; text?: unknown } =>
-      !!p && typeof p === "object" && (p as { type?: unknown }).type === "thinking")
+    .filter(
+      (p): p is { thinking?: unknown; text?: unknown } =>
+        !!p && typeof p === "object" && (p as { type?: unknown }).type === "thinking",
+    )
     .map((p) => (typeof p.thinking === "string" ? p.thinking : typeof p.text === "string" ? p.text : ""))
     .join("\n");
 }
@@ -135,7 +139,9 @@ export function normalizeToolArgs(raw: unknown): Record<string, unknown> {
     try {
       const parsed = JSON.parse(raw);
       if (parsed && typeof parsed === "object") return parsed as Record<string, unknown>;
-    } catch { /* not JSON */ }
+    } catch {
+      /* not JSON */
+    }
   }
   return {};
 }

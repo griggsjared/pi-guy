@@ -6,12 +6,7 @@ import { isAbsolute, join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import type { AgentConfig } from "./agents.ts";
 import { normalizeTitle, toolCallLabel } from "./format.ts";
-import {
-  accumulateEvent,
-  createStreamState,
-  extractFinalText,
-  parseParentQuestion,
-} from "./jsonl.ts";
+import { accumulateEvent, createStreamState, extractFinalText, parseParentQuestion } from "./jsonl.ts";
 import { createTimeline } from "./timeline.ts";
 import type {
   CancellationReason,
@@ -63,11 +58,15 @@ export function formatModel(model: { provider: string; id: string } | undefined)
 function killProcess(proc: ChildProcess, delayMs = 5000): void {
   try {
     proc.kill("SIGTERM");
-  } catch { /* already dead */ }
+  } catch {
+    /* already dead */
+  }
   setTimeout(() => {
     try {
       if (proc.exitCode === null && proc.signalCode === null) proc.kill("SIGKILL");
-    } catch { /* already dead */ }
+    } catch {
+      /* already dead */
+    }
   }, delayMs);
 }
 
@@ -107,7 +106,7 @@ export async function runSubagent(
   cwd: string,
   defaultModel: string | undefined,
   options: RunSubagentOptions = {},
- ): Promise<SubagentRun> {
+): Promise<SubagentRun> {
   const tmpDir = await mkdtemp(join(tmpdir(), "subagents-"));
   const promptFile = join(tmpDir, "agent.md");
   try {
@@ -122,10 +121,9 @@ export async function runSubagent(
   const title = normalizeTitle(options.title);
   const bridgeExtension = options.bridgeExtensionPath;
   const hasBridgeExtension = !!bridgeExtension && isAbsolute(bridgeExtension);
-  const tools = [...new Set([
-    ...(agent.tools ?? DEFAULT_TOOLS),
-    ...(hasBridgeExtension ? ["ask_parent"] : []),
-  ])].join(",");
+  const tools = [...new Set([...(agent.tools ?? DEFAULT_TOOLS), ...(hasBridgeExtension ? ["ask_parent"] : [])])].join(
+    ",",
+  );
   const extraExtensions = (options.extensionPaths ?? []).filter(isAbsolute);
   const args = [
     ...base.args,
@@ -205,7 +203,8 @@ export async function runSubagent(
     let transportError: string | undefined;
     let completionWatchdogFired = false;
     let shutdownTimer: ReturnType<typeof setTimeout> | undefined;
-    const inactivityTimeoutMs = options.inactivityTimeoutMs ?? agent.inactivityTimeoutMs ?? DEFAULT_INACTIVITY_TIMEOUT_MS;
+    const inactivityTimeoutMs =
+      options.inactivityTimeoutMs ?? agent.inactivityTimeoutMs ?? DEFAULT_INACTIVITY_TIMEOUT_MS;
     let inactivityTimer: ReturnType<typeof setTimeout> | undefined;
     let inactivityGeneration = 0;
     let lastActivityAt = Date.now();
@@ -218,22 +217,47 @@ export async function runSubagent(
     };
     const monitorInactivity = () => {
       clearInactivity();
-      if (inactivityTimeoutMs <= 0 || settled || cancelled || !accepting || inputEnded || proc.exitCode !== null || proc.signalCode !== null || questions.size > 0 || inactivityNotified) return;
+      if (
+        inactivityTimeoutMs <= 0 ||
+        settled ||
+        cancelled ||
+        !accepting ||
+        inputEnded ||
+        proc.exitCode !== null ||
+        proc.signalCode !== null ||
+        questions.size > 0 ||
+        inactivityNotified
+      )
+        return;
       const generation = inactivityGeneration;
-      inactivityTimer = setTimeout(() => {
-        if (generation !== inactivityGeneration || settled || cancelled || !accepting || inputEnded || proc.exitCode !== null || proc.signalCode !== null || questions.size > 0 || inactivityNotified) return;
-        const detectedAt = Date.now();
-        if (detectedAt < inactivityDeadline) {
-          monitorInactivity();
-          return;
-        }
-        inactivityNotified = true;
-        try {
-          options.onInactivity?.({ lastActivityAt, detectedAt, inactivityTimeoutMs });
-        } catch (err) {
-          console.error("subagents: inactivity callback failed", err);
-        }
-      }, Math.max(0, inactivityDeadline - Date.now()));
+      inactivityTimer = setTimeout(
+        () => {
+          if (
+            generation !== inactivityGeneration ||
+            settled ||
+            cancelled ||
+            !accepting ||
+            inputEnded ||
+            proc.exitCode !== null ||
+            proc.signalCode !== null ||
+            questions.size > 0 ||
+            inactivityNotified
+          )
+            return;
+          const detectedAt = Date.now();
+          if (detectedAt < inactivityDeadline) {
+            monitorInactivity();
+            return;
+          }
+          inactivityNotified = true;
+          try {
+            options.onInactivity?.({ lastActivityAt, detectedAt, inactivityTimeoutMs });
+          } catch (err) {
+            console.error("subagents: inactivity callback failed", err);
+          }
+        },
+        Math.max(0, inactivityDeadline - Date.now()),
+      );
     };
     const recordActivity = () => {
       lastActivityAt = Date.now();
@@ -263,7 +287,9 @@ export async function runSubagent(
       clearInactivity();
       try {
         stdin.end();
-      } catch { /* child already closed */ }
+      } catch {
+        /* child already closed */
+      }
       startShutdownWatchdog();
     };
     const finishSettling = () => {
@@ -297,11 +323,14 @@ export async function runSubagent(
       return new Promise<void>((resolveCommand, rejectCommand) => {
         commands.set(id, { command: "prompt", continuation, resolve: resolveCommand, reject: rejectCommand });
         try {
-          stdin.write(`${JSON.stringify({ id, type: "prompt", message, ...(streamingBehavior ? { streamingBehavior } : {}) })}\n`, (error) => {
-            if (!error || !commands.delete(id)) return;
-            rejectCommand(error);
-            finishSettling();
-          });
+          stdin.write(
+            `${JSON.stringify({ id, type: "prompt", message, ...(streamingBehavior ? { streamingBehavior } : {}) })}\n`,
+            (error) => {
+              if (!error || !commands.delete(id)) return;
+              rejectCommand(error);
+              finishSettling();
+            },
+          );
         } catch (err) {
           commands.delete(id);
           rejectCommand(err instanceof Error ? err : new Error(String(err)));
@@ -365,7 +394,9 @@ export async function runSubagent(
       try {
         const parsed = JSON.parse(line) as unknown;
         if (parsed && typeof parsed === "object") event = parsed as Record<string, unknown>;
-      } catch { /* accumulateEvent ignores malformed lines */ }
+      } catch {
+        /* accumulateEvent ignores malformed lines */
+      }
       if (event && handleResponse(event)) return;
 
       if (!settled && accepting) {
@@ -387,7 +418,8 @@ export async function runSubagent(
         case "message_start":
         case "message_update": {
           const message = event.message as { role?: unknown } | undefined;
-          if (message?.role === "assistant" || (event.type === "message_update" && event.assistantMessageEvent)) timeline.startAssistant();
+          if (message?.role === "assistant" || (event.type === "message_update" && event.assistantMessageEvent))
+            timeline.startAssistant();
           break;
         }
         case "tool_execution_start":
@@ -444,10 +476,9 @@ export async function runSubagent(
       };
       if (!text && stdout.length > 0 && !failedTransport) {
         const lines = stdout.split("\n").filter((line) => line.trim().length > 0);
-        const rawSnippet = stdout.length > 2000
-          ? `...(truncated)\n${stdout.slice(-2000)}`
-          : lines.join("\n");
-        const snippet = rawSnippet.split("\n")
+        const rawSnippet = stdout.length > 2000 ? `...(truncated)\n${stdout.slice(-2000)}` : lines.join("\n");
+        const snippet = rawSnippet
+          .split("\n")
           .filter((line) => line.trim().length > 0)
           .map((line) => `  ${line}`)
           .join("\n");
@@ -466,7 +497,15 @@ export async function runSubagent(
         task,
         title,
         text,
-        exitCode: cancelled ? 130 : failedTransport ? 1 : completionWatchdogFired ? 0 : (signal || (code != null && code >= 128) ? 1 : (code ?? 0)),
+        exitCode: cancelled
+          ? 130
+          : failedTransport
+            ? 1
+            : completionWatchdogFired
+              ? 0
+              : signal || (code != null && code >= 128)
+                ? 1
+                : (code ?? 0),
         error: failedTransport ? stderr || "failed to run subagent RPC transport" : stderr,
         cancelled,
         cancellationReason,
@@ -522,7 +561,8 @@ export async function runSubagent(
     sendMessage = (message, deliverAs) => sendCommand(message, true, deliverAs);
     replyToQuestion = async (questionId, answer) => {
       if (!questions.has(questionId)) throw new Error(`Unknown or answered subagent question: ${questionId}`);
-      if (answeringQuestions.has(questionId)) throw new Error(`Subagent question is already being answered: ${questionId}`);
+      if (answeringQuestions.has(questionId))
+        throw new Error(`Subagent question is already being answered: ${questionId}`);
       answeringQuestions.add(questionId);
       try {
         await writePayload({ type: "extension_ui_response", id: questionId, value: answer });

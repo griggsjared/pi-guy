@@ -11,7 +11,18 @@ import webSearch from "./web-search/index.ts";
 import workingIndicator from "./working-indicator/index.ts";
 
 // Handlers for the same event run in this order.
-const factories: ExtensionFactory[] = [agentsLocal, askUser, btw, context, githubPr, header, webSearch, statusline, subagents, workingIndicator];
+const factories: ExtensionFactory[] = [
+  agentsLocal,
+  askUser,
+  btw,
+  context,
+  githubPr,
+  header,
+  webSearch,
+  statusline,
+  subagents,
+  workingIndicator,
+];
 
 export default async function (pi: ExtensionAPI) {
   for (const factory of factories) await factory(pi);

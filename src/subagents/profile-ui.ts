@@ -1,5 +1,14 @@
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
-import { Container, fuzzyFilter, getKeybindings, Input, SelectList, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import {
+  Container,
+  fuzzyFilter,
+  getKeybindings,
+  Input,
+  SelectList,
+  Text,
+  truncateToWidth,
+  visibleWidth,
+} from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
 import { OFF_PROFILE_NAME, resolveAgentSettings, SESSION_PROFILE_NAME } from "./agents.ts";
 import type { AgentConfig, SubagentSettings } from "./agents.ts";
@@ -21,33 +30,53 @@ export async function chooseProfile(
   profiles: ProfileCommandDeps,
   ctx: ExtensionContext,
 ): Promise<string | undefined> {
-  const names = [OFF_PROFILE_NAME, ...Object.keys(profiles.settings.profiles).sort((left, right) =>
-    Number(right === SESSION_PROFILE_NAME) - Number(left === SESSION_PROFILE_NAME))];
+  const names = [
+    OFF_PROFILE_NAME,
+    ...Object.keys(profiles.settings.profiles).sort(
+      (left, right) => Number(right === SESSION_PROFILE_NAME) - Number(left === SESSION_PROFILE_NAME),
+    ),
+  ];
   const current = profiles.getActiveProfile();
   const agents = await profiles.discover();
   const parentModel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
   const name = await ctx.ui.custom<string | undefined>((tui, theme, _kb, done) => {
     const container = new Container();
-    container.addChild(new Text(theme.fg("accent", theme.bold(`Subagent profile (active: ${current ?? "none"})`)), 0, 0));
+    container.addChild(
+      new Text(theme.fg("accent", theme.bold(`Subagent profile (active: ${current ?? "none"})`)), 0, 0),
+    );
     const input = new Input();
     container.addChild(input);
     const items = names.map((name) => {
-      const label = name === SESSION_PROFILE_NAME ? `${name} (built-in)` : name === OFF_PROFILE_NAME ? `${name} (no subagents)` : name;
+      const label =
+        name === SESSION_PROFILE_NAME
+          ? `${name} (built-in)`
+          : name === OFF_PROFILE_NAME
+            ? `${name} (no subagents)`
+            : name;
       return { value: name, label: name === current ? `${label} (active)` : label };
     });
     let previewName: string | undefined;
     let highlightedName: string | undefined;
     // null marks a pending request; each provider is requested once per picker open.
     const usage = new Map<string, string | undefined | null>();
-    const providersFor = (profile: string) => profile === OFF_PROFILE_NAME ? [] : [...new Set(agents.flatMap((agent) => {
-      const model = resolveAgentSettings(agent, profiles.settings, profile).model ?? parentModel;
-      return model ? [model.split("/")[0]!] : [];
-    }))];
+    const providersFor = (profile: string) =>
+      profile === OFF_PROFILE_NAME
+        ? []
+        : [
+            ...new Set(
+              agents.flatMap((agent) => {
+                const model = resolveAgentSettings(agent, profiles.settings, profile).model ?? parentModel;
+                return model ? [model.split("/")[0]!] : [];
+              }),
+            ),
+          ];
     const details: Component = {
       render(width: number) {
         if (!previewName) return [];
         if (previewName === OFF_PROFILE_NAME) {
-          return ["", theme.fg("dim", "Subagents are off. New launches are blocked."), ""].map((line) => truncateToWidth(line, width, "…"));
+          return ["", theme.fg("dim", "Subagents are off. New launches are blocked."), ""].map((line) =>
+            truncateToWidth(line, width, "…"),
+          );
         }
         const rows = [
           ["Agent", "Model", "Thinking"],
@@ -72,7 +101,10 @@ export async function chooseProfile(
         );
         const columnWidths = [
           agentWidth,
-          Math.min(Math.max(...rows.map((row) => visibleWidth(row[1]!))), Math.max(0, available - agentWidth - thinkingWidth)),
+          Math.min(
+            Math.max(...rows.map((row) => visibleWidth(row[1]!))),
+            Math.max(0, available - agentWidth - thinkingWidth),
+          ),
           thinkingWidth,
         ];
         const usageRows = providersFor(previewName).flatMap((provider) => {
@@ -84,21 +116,26 @@ export async function chooseProfile(
           "",
           theme.fg("accent", theme.bold(`Resolved settings: ${previewName}`)),
           ...rows.map((row, index) => {
-            const line = row.map((cell, column) => {
-              const cellWidth = columnWidths[column]!;
-              const text = truncateToWidth(cell, cellWidth, "…");
-              return text + " ".repeat(Math.max(0, cellWidth - visibleWidth(text)));
-            }).join(gap).trimEnd();
-            return index === 0
-              ? theme.fg("muted", theme.bold(line))
-              : theme.fg("dim", line);
+            const line = row
+              .map((cell, column) => {
+                const cellWidth = columnWidths[column]!;
+                const text = truncateToWidth(cell, cellWidth, "…");
+                return text + " ".repeat(Math.max(0, cellWidth - visibleWidth(text)));
+              })
+              .join(gap)
+              .trimEnd();
+            return index === 0 ? theme.fg("muted", theme.bold(line)) : theme.fg("dim", line);
           }),
           ...(agents.length === 0 ? [theme.fg("dim", "No agents discovered")] : []),
-          ...(usageRows.length === 0 ? [] : [
-            theme.fg("muted", theme.bold("Provider usage")),
-            ...usageRows.map(([provider, text]) =>
-              theme.fg("dim", provider + " ".repeat(providerWidth - visibleWidth(provider))) + gap + text),
-          ]),
+          ...(usageRows.length === 0
+            ? []
+            : [
+                theme.fg("muted", theme.bold("Provider usage")),
+                ...usageRows.map(
+                  ([provider, text]) =>
+                    theme.fg("dim", provider + " ".repeat(providerWidth - visibleWidth(provider))) + gap + text,
+                ),
+              ]),
           "",
         ].map((line) => truncateToWidth(line, width, "…"));
       },
@@ -121,10 +158,13 @@ export async function chooseProfile(
         for (const provider of providersFor(item.value)) {
           if (usage.has(provider)) continue;
           usage.set(provider, null);
-          void profiles.requestUsage(provider, theme).catch(() => undefined).then((text) => {
-            usage.set(provider, text);
-            tui.requestRender();
-          });
+          void profiles
+            .requestUsage(provider, theme)
+            .catch(() => undefined)
+            .then((text) => {
+              usage.set(provider, text);
+              tui.requestRender();
+            });
         }
       };
       list.onSelect = (item) => done(item.value);
@@ -137,22 +177,31 @@ export async function chooseProfile(
     };
     refilter();
     container.addChild({
-      render: (width: number) => list.getSelectedItem()
-        ? list.render(width)
-        : [truncateToWidth(theme.fg("warning", "  No matching profiles"), width, "…")],
+      render: (width: number) =>
+        list.getSelectedItem()
+          ? list.render(width)
+          : [truncateToWidth(theme.fg("warning", "  No matching profiles"), width, "…")],
       invalidate: () => list.invalidate(),
     });
     container.addChild(details);
     container.addChild(new Text(theme.fg("dim", "type to search • ↑↓ navigate • enter select • esc cancel"), 0, 0));
     return {
-      get focused() { return input.focused; },
-      set focused(value: boolean) { input.focused = value; },
+      get focused() {
+        return input.focused;
+      },
+      set focused(value: boolean) {
+        input.focused = value;
+      },
       render: (width: number) => container.render(width),
       invalidate: () => container.invalidate(),
       handleInput(data: string) {
         const kb = getKeybindings();
-        if (kb.matches(data, "tui.select.up") || kb.matches(data, "tui.select.down") ||
-          kb.matches(data, "tui.select.confirm") || kb.matches(data, "tui.select.cancel")) {
+        if (
+          kb.matches(data, "tui.select.up") ||
+          kb.matches(data, "tui.select.down") ||
+          kb.matches(data, "tui.select.confirm") ||
+          kb.matches(data, "tui.select.cancel")
+        ) {
           list.handleInput(data);
         } else {
           const query = input.getValue();
@@ -170,9 +219,13 @@ export async function chooseProfile(
   }
   profiles.setActiveProfile(name);
   pi.appendEntry(PROFILE_ENTRY_TYPE, { name });
-  if (ctx.hasUI) ctx.ui.notify(name === OFF_PROFILE_NAME
-    ? "Subagents turned off. New launches are blocked."
-    : `Subagent profile switched to ${name}. New jobs will use it.`, "info");
+  if (ctx.hasUI)
+    ctx.ui.notify(
+      name === OFF_PROFILE_NAME
+        ? "Subagents turned off. New launches are blocked."
+        : `Subagent profile switched to ${name}. New jobs will use it.`,
+      "info",
+    );
   return name;
 }
 

@@ -1,8 +1,8 @@
-import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, writeFile, rm, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { test } from "node:test";
 import {
   discoverAgents,
   loadSubagentSettings,
@@ -33,17 +33,20 @@ test("parseFrontmatter skips lines without a colon", () => {
 test("discovery parses agent metadata", async () => {
   const dir = await mkdtemp(join(tmpdir(), "subagents-test-"));
   const file = join(dir, "worker.md");
-  await writeFile(file, [
-    "---",
-    "name: worker",
-    "description: Implements things",
-    "model: opencode-go/deepseek-v4-pro",
-    "thinkingLevel: high",
-    "tools: read, grep, bash, edit",
-    "inactivityTimeoutMs: 300000",
-    "---",
-    "You are a worker.",
-  ].join("\n"));
+  await writeFile(
+    file,
+    [
+      "---",
+      "name: worker",
+      "description: Implements things",
+      "model: opencode-go/deepseek-v4-pro",
+      "thinkingLevel: high",
+      "tools: read, grep, bash, edit",
+      "inactivityTimeoutMs: 300000",
+      "---",
+      "You are a worker.",
+    ].join("\n"),
+  );
   try {
     const [agent] = await discoverAgents(dir);
     assert.equal(agent?.name, "worker");
@@ -63,9 +66,15 @@ test("discovery falls back to filename and validates inactivityTimeoutMs strictl
   const file = join(dir, "fallback.md");
   try {
     for (const [value, expected] of [
-      ["0", 0], ["2147483647", 2147483647],
-      ["banana", undefined], ["", undefined], ["10ms", undefined],
-      ["1.5", undefined], ["1e3", undefined], ["-1", undefined], ["2147483648", undefined],
+      ["0", 0],
+      ["2147483647", 2147483647],
+      ["banana", undefined],
+      ["", undefined],
+      ["10ms", undefined],
+      ["1.5", undefined],
+      ["1e3", undefined],
+      ["-1", undefined],
+      ["2147483648", undefined],
     ] as const) {
       await writeFile(file, `---\ndescription: no name\ninactivityTimeoutMs: ${value}\n---\nbody`);
       const [agent] = await discoverAgents(dir);
@@ -89,7 +98,10 @@ test("discoverAgents loads only readable .md files, in name order", async () => 
     await writeFile(join(agentsDir, "ignore.txt"), "not an agent");
     await mkdir(join(agentsDir, "0-unreadable.md"));
     const agents = await discoverAgents(agentsDir);
-    assert.deepEqual(agents.map((a) => a.name), ["alpha", "b"]);
+    assert.deepEqual(
+      agents.map((a) => a.name),
+      ["alpha", "b"],
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -103,7 +115,6 @@ test("discoverAgents tolerates a missing agents dir", async () => {
     await rm(dir, { recursive: true, force: true });
   }
 });
-
 
 test("parseSubagentSettings maps legacy settings to default and validates overrides", () => {
   const settings = parseSubagentSettings({
@@ -122,7 +133,9 @@ test("parseSubagentSettings maps legacy settings to default and validates overri
 test("parseSubagentSettings preserves timeout-only overrides and validates inactivityTimeoutMs", () => {
   for (const value of [0, 2147483647, -1, 2147483648, 1.5, "100", null, NaN, Infinity]) {
     const settings = parseSubagentSettings({
-      profiles: { idle: { defaults: { inactivityTimeoutMs: value }, agents: { worker: { inactivityTimeoutMs: value } } } },
+      profiles: {
+        idle: { defaults: { inactivityTimeoutMs: value }, agents: { worker: { inactivityTimeoutMs: value } } },
+      },
     });
     const expected = value === 0 || value === 2147483647 ? { inactivityTimeoutMs: value } : {};
     assert.deepEqual(settings.profiles.idle!.defaults, expected);
@@ -222,9 +235,7 @@ test("resolveExtensionPaths reads manifests in the configured agent npm director
     await mkdir(noPi, { recursive: true });
     await writeFile(join(noPi, "package.json"), JSON.stringify({ name: "pi-plain" }));
 
-    const paths = await resolveExtensionPaths(
-      ["npm:pi-claude-bridge", "npm:pi-plain", "npm:pi-missing"],
-    );
+    const paths = await resolveExtensionPaths(["npm:pi-claude-bridge", "npm:pi-plain", "npm:pi-missing"]);
     assert.deepEqual(paths, [join(bridge, "src", "index.ts")]);
     process.env.PI_PACKAGE_DIR = join(dir, "override");
     const override = join(process.env.PI_PACKAGE_DIR, "node_modules", "pi-claude-bridge");
@@ -245,18 +256,36 @@ test("resolveAgentSettings gives local overrides precedence over frontmatter and
     defaults: { model: "default/model", thinkingLevel: "low", inactivityTimeoutMs: 100 },
     agents: { scout: { model: "local/model", thinkingLevel: "high", inactivityTimeoutMs: 0 } },
   });
-  const agent = resolveAgentSettings({
-    name: "scout", description: "", model: "frontmatter/model", thinkingLevel: "medium",
-    tools: ["read"], systemPrompt: "", inactivityTimeoutMs: 200,
-  }, settings, "default");
+  const agent = resolveAgentSettings(
+    {
+      name: "scout",
+      description: "",
+      model: "frontmatter/model",
+      thinkingLevel: "medium",
+      tools: ["read"],
+      systemPrompt: "",
+      inactivityTimeoutMs: 200,
+    },
+    settings,
+    "default",
+  );
   assert.equal(agent.model, "local/model");
   assert.equal(agent.thinkingLevel, "high");
   assert.equal(agent.inactivityTimeoutMs, 0);
   assert.deepEqual(agent.tools, ["read"]);
 
-  const frontmatter = resolveAgentSettings({
-    name: "worker", description: "", model: "frontmatter/model", thinkingLevel: "medium", systemPrompt: "", inactivityTimeoutMs: 0,
-  }, settings, "default");
+  const frontmatter = resolveAgentSettings(
+    {
+      name: "worker",
+      description: "",
+      model: "frontmatter/model",
+      thinkingLevel: "medium",
+      systemPrompt: "",
+      inactivityTimeoutMs: 0,
+    },
+    settings,
+    "default",
+  );
   assert.equal(frontmatter.model, "frontmatter/model");
   assert.equal(frontmatter.thinkingLevel, "medium");
   assert.equal(frontmatter.inactivityTimeoutMs, 0);
@@ -272,7 +301,12 @@ test("resolveAgentSettings ignores agent models for session while retaining agen
     profiles: { other: { defaults: { model: "other/model", thinkingLevel: "low" } } },
   });
   const agent = {
-    name: "scout", description: "", model: "frontmatter/model", thinkingLevel: "high", systemPrompt: "", inactivityTimeoutMs: 0,
+    name: "scout",
+    description: "",
+    model: "frontmatter/model",
+    thinkingLevel: "high",
+    systemPrompt: "",
+    inactivityTimeoutMs: 0,
   };
   const resolved = resolveAgentSettings(agent, settings, SESSION_PROFILE_NAME);
   assert.equal(resolved.model, undefined);
@@ -304,7 +338,10 @@ test("parseSubagentSettings validates profiles and ignores defaultProfile", () =
 
 test("parseSubagentSettings reserves session and off even for disabled or malformed profiles", () => {
   for (const profile of [{}, { enabled: false }, null]) {
-    assert.throws(() => parseSubagentSettings({ profiles: { session: profile } }), /profile name "session" is reserved/);
+    assert.throws(
+      () => parseSubagentSettings({ profiles: { session: profile } }),
+      /profile name "session" is reserved/,
+    );
     assert.throws(() => parseSubagentSettings({ profiles: { off: profile } }), /profile name "off" is reserved/);
   }
 });

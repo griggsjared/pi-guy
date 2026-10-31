@@ -33,9 +33,10 @@ function normalizeWindow(value: unknown): CodexUsageWindow | undefined {
   if (used === undefined) return undefined;
 
   const minutes = asNumber(object.window_minutes);
-  const windowSeconds = asNumber(object.limit_window_seconds)
-    ?? asNumber(object.window_seconds)
-    ?? (minutes === undefined ? undefined : minutes * 60);
+  const windowSeconds =
+    asNumber(object.limit_window_seconds) ??
+    asNumber(object.window_seconds) ??
+    (minutes === undefined ? undefined : minutes * 60);
   const resetAt = normalizeResetAt(asNumber(object.reset_at) ?? asNumber(object.resetAt));
   const usedPercent = Math.max(0, Math.min(100, used));
   return {
@@ -52,7 +53,10 @@ function classifyWindows(
   const result: Pick<CodexUsage, "fiveHour" | "weekly"> = {};
   const unknown: Array<{ position: "primary" | "secondary"; window: CodexUsageWindow }> = [];
 
-  for (const [position, window] of [["primary", primary], ["secondary", secondary]] as const) {
+  for (const [position, window] of [
+    ["primary", primary],
+    ["secondary", secondary],
+  ] as const) {
     if (!window) continue;
     if (window.windowSeconds === undefined) {
       unknown.push({ position, window });
@@ -76,7 +80,10 @@ function classifyWindows(
 export function normalizeCodexUsage(payload: unknown, capturedAt = Date.now()): UsageStatus | undefined {
   const rateLimit = asObject(asObject(payload)?.rate_limit);
   if (!rateLimit) return undefined;
-  const windows = classifyWindows(normalizeWindow(rateLimit.primary_window), normalizeWindow(rateLimit.secondary_window));
+  const windows = classifyWindows(
+    normalizeWindow(rateLimit.primary_window),
+    normalizeWindow(rateLimit.secondary_window),
+  );
   const canonical: UsageWindow[] = [];
   if (windows.fiveHour) {
     canonical.push({
@@ -94,7 +101,9 @@ export function normalizeCodexUsage(payload: unknown, capturedAt = Date.now()): 
       ...(windows.weekly.resetAt !== undefined ? { resetAtMs: windows.weekly.resetAt * 1000 } : {}),
     });
   }
-  return canonical.length ? { provider: CODEX_PROVIDER, state: "ready", windows: canonical, capturedAtMs: capturedAt } : undefined;
+  return canonical.length
+    ? { provider: CODEX_PROVIDER, state: "ready", windows: canonical, capturedAtMs: capturedAt }
+    : undefined;
 }
 
 function extractAccountId(accessToken: string): string | undefined {
@@ -115,9 +124,9 @@ function isOfficialBaseUrl(value: string | undefined): boolean {
   if (!value) return true;
   try {
     const url = new URL(value);
-    return url.protocol === "https:"
-      && url.hostname === "chatgpt.com"
-      && url.pathname.replace(/\/+$/, "") === "/backend-api";
+    return (
+      url.protocol === "https:" && url.hostname === "chatgpt.com" && url.pathname.replace(/\/+$/, "") === "/backend-api"
+    );
   } catch {
     return false;
   }

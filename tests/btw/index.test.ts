@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AssistantMessage, Context } from "@earendil-works/pi-ai";
-import type { ExtensionAPI, ExtensionCommandContext, SessionEntry, SessionMessageEntry } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionAPI,
+  ExtensionCommandContext,
+  SessionEntry,
+  SessionMessageEntry,
+} from "@earendil-works/pi-coding-agent";
 import { KeybindingsManager, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
 import btw, { fitModalBody, transcript } from "../../src/btw/index.ts";
 import { fakeTheme } from "../helpers/theme.ts";
@@ -63,8 +68,15 @@ test("modal body scrolls within the padded terminal height", () => {
   });
 });
 
-type Modal = { handleInput(data: string): void; dispose(): void };
-type RequestOptions = { signal: AbortSignal; sessionId: string; cacheRetention: string };
+interface Modal {
+  handleInput(data: string): void;
+  dispose(): void;
+}
+interface RequestOptions {
+  signal: AbortSignal;
+  sessionId: string;
+  cacheRetention: string;
+}
 
 function harness(history: SessionMessageEntry["message"][] = []) {
   let handler!: Parameters<ExtensionAPI["registerCommand"]>[1]["handler"];
@@ -91,9 +103,15 @@ function harness(history: SessionMessageEntry["message"][] = []) {
   const originalEntries = structuredClone(entries);
   const model = { provider: "test-router", id: "virtual" };
   btw({
-    on: (_event: string, callback: () => void) => { shutdown = callback; },
-    registerCommand: (_name: string, command: { handler: typeof handler }) => { handler = command.handler; },
-    sendUserMessage: (text: string, options: unknown) => { sent.push({ text, options }); },
+    on: (_event: string, callback: () => void) => {
+      shutdown = callback;
+    },
+    registerCommand: (_name: string, command: { handler: typeof handler }) => {
+      handler = command.handler;
+    },
+    sendUserMessage: (text: string, options: unknown) => {
+      sent.push({ text, options });
+    },
     appendEntry: () => assert.fail("unexpected main-session write"),
     sendMessage: () => assert.fail("unexpected main-session message"),
   } as unknown as ExtensionAPI);
@@ -116,18 +134,29 @@ function harness(history: SessionMessageEntry["message"][] = []) {
       },
     },
     ui: {
-      notify: (text: string, level: string) => { notifications.push({ text, level }); },
-      custom: (factory: (
-        tui: unknown, theme: unknown, kb: unknown, done: (value: string | null) => void,
-      ) => Modal) => {
+      notify: (text: string, level: string) => {
+        notifications.push({ text, level });
+      },
+      custom: (factory: (tui: unknown, theme: unknown, kb: unknown, done: (value: string | null) => void) => Modal) => {
         const pending = Promise.withResolvers<string | null>();
         modal = factory(
-          { requestRender: () => { renders++; }, terminal: { rows: 24 } },
+          {
+            requestRender: () => {
+              renders++;
+            },
+            terminal: { rows: 24 },
+          },
           fakeTheme(),
           new KeybindingsManager(TUI_KEYBINDINGS),
-          (value) => { completions++; pending.resolve(value); },
+          (value) => {
+            completions++;
+            pending.resolve(value);
+          },
         );
-        return pending.promise.then((value) => { modal.dispose(); return value; });
+        return pending.promise.then((value) => {
+          modal.dispose();
+          return value;
+        });
       },
     },
   } as unknown as ExtensionCommandContext;
@@ -135,19 +164,58 @@ function harness(history: SessionMessageEntry["message"][] = []) {
     start: (question: string) => handler(question, ctx),
     input: (key: string) => modal.handleInput(key),
     shutdown: () => shutdown(),
-    requests, sent, notifications, entries, originalEntries, model,
-    get renders() { return renders; },
-    get completions() { return completions; },
+    requests,
+    sent,
+    notifications,
+    entries,
+    originalEntries,
+    model,
+    get renders() {
+      return renders;
+    },
+    get completions() {
+      return completions;
+    },
   };
 }
 
 test("registry requests isolate all system state while retaining context and successive private turns", async () => {
   const history = [
-    { role: "system", content: [{ type: "text", text: "MAIN instructions" }], toolsAdded: [{ name: "inheritedDeclaration" }], timestamp: 1 },
-    { role: "user", content: [{ type: "text", text: "main question" }, { type: "image", data: "aW1hZ2U=", mimeType: "image/png" }], timestamp: 2 },
-    { ...answer("main answer"), content: [{ type: "toolCall", id: "call", name: "read", arguments: { path: "example" } }] },
-    { role: "toolResult", toolCallId: "call", toolName: "read", content: [{ type: "text", text: "file contents" }, { type: "image", data: "dG9vbA==", mimeType: "image/png" }], isError: false, timestamp: 3 },
-    { role: "system", content: [{ type: "text", text: "MAIN delta" }], toolsAdded: [{ name: "laterDeclaration" }], timestamp: 4 },
+    {
+      role: "system",
+      content: [{ type: "text", text: "MAIN instructions" }],
+      toolsAdded: [{ name: "inheritedDeclaration" }],
+      timestamp: 1,
+    },
+    {
+      role: "user",
+      content: [
+        { type: "text", text: "main question" },
+        { type: "image", data: "aW1hZ2U=", mimeType: "image/png" },
+      ],
+      timestamp: 2,
+    },
+    {
+      ...answer("main answer"),
+      content: [{ type: "toolCall", id: "call", name: "read", arguments: { path: "example" } }],
+    },
+    {
+      role: "toolResult",
+      toolCallId: "call",
+      toolName: "read",
+      content: [
+        { type: "text", text: "file contents" },
+        { type: "image", data: "dG9vbA==", mimeType: "image/png" },
+      ],
+      isError: false,
+      timestamp: 3,
+    },
+    {
+      role: "system",
+      content: [{ type: "text", text: "MAIN delta" }],
+      toolsAdded: [{ name: "laterDeclaration" }],
+      timestamp: 4,
+    },
     { role: "custom", customType: "context", content: "legitimate extension context", display: false, timestamp: 5 },
   ] as unknown as SessionMessageEntry["message"][];
   const h = harness(history);
@@ -155,12 +223,22 @@ test("registry requests isolate all system state while retaining context and suc
   assert.equal(h.requests.length, 1);
   const first = h.requests[0]!;
   assert.equal(first.model, h.model);
-  assert.equal(first.context.systemPrompt, "You are answering a side question about the current conversation. Answer the question directly and concisely. Do not continue the main task, call tools, or propose changes unless the question explicitly asks for them.");
+  assert.equal(
+    first.context.systemPrompt,
+    "You are answering a side question about the current conversation. Answer the question directly and concisely. Do not continue the main task, call tools, or propose changes unless the question explicitly asks for them.",
+  );
   assert.equal("tools" in first.context, false);
-  assert.equal(first.context.messages.some((message) => message.role === "system"), false);
+  assert.equal(
+    first.context.messages.some((message) => message.role === "system"),
+    false,
+  );
   assert.doesNotMatch(JSON.stringify(first.context), /MAIN|inheritedDeclaration|laterDeclaration|toolsAdded/);
   assert.deepEqual(first.context.messages.slice(0, 3), history.slice(1, 4));
-  assert.deepEqual(first.context.messages[3], { role: "user", content: [{ type: "text", text: "legitimate extension context" }], timestamp: 5 });
+  assert.deepEqual(first.context.messages[3], {
+    role: "user",
+    content: [{ type: "text", text: "legitimate extension context" }],
+    timestamp: 5,
+  });
   assert.equal(first.options.cacheRetention, "none");
   assert.deepEqual(Object.keys(first.options).sort(), ["cacheRetention", "sessionId", "signal"]);
   assert.match(first.options.sessionId, /^[0-9a-f-]{36}$/);
@@ -186,10 +264,12 @@ test("registry requests isolate all system state while retaining context and suc
   assert.deepEqual(h.entries, h.originalEntries);
   h.input("\x13");
   await running;
-  assert.deepEqual(h.sent, [{
-    text: "Side conversation (via /btw):\n\nQ: side question\nA: side answer\n\nQ: follow-up\nA: second answer",
-    options: { deliverAs: "followUp" },
-  }]);
+  assert.deepEqual(h.sent, [
+    {
+      text: "Side conversation (via /btw):\n\nQ: side question\nA: side answer\n\nQ: follow-up\nA: second answer",
+      options: { deliverAs: "followUp" },
+    },
+  ]);
   assert.equal(first.options.signal.aborted, true);
   assert.equal(h.completions, 1);
   assert.deepEqual(h.entries, h.originalEntries);
@@ -218,7 +298,10 @@ for (const cancellation of ["escape", "shutdown"]) {
       assert.equal(h.completions, 1);
       assert.deepEqual(h.notifications, []);
       assert.deepEqual(h.sent.slice(), []);
-      assert.deepEqual(h.requests[1]!.context.messages.map((message) => message.content), [[{ type: "text", text: "new question" }]]);
+      assert.deepEqual(
+        h.requests[1]!.context.messages.map((message) => message.content),
+        [[{ type: "text", text: "new question" }]],
+      );
       h.requests[1]!.resolve(answer("fresh answer"));
       await flush();
       h.input("\x13");
@@ -236,7 +319,12 @@ for (const failure of ["aborted", "error", "rejection"]) {
     const h = harness();
     const running = h.start("question");
     if (failure === "rejection") h.requests[0]!.reject(new Error("registry failure"));
-    else h.requests[0]!.resolve({ ...answer("discard"), stopReason: failure as "aborted" | "error", errorMessage: "registry failure" });
+    else
+      h.requests[0]!.resolve({
+        ...answer("discard"),
+        stopReason: failure as "aborted" | "error",
+        errorMessage: "registry failure",
+      });
     await running;
     assert.equal(h.requests[0]!.options.signal.aborted, true);
     assert.equal(h.completions, 1);

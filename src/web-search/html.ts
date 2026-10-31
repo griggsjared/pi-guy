@@ -1,6 +1,11 @@
 // Stays a type alias: interfaces lack the implicit index signature that makes
 // these objects assignable to the tool result's JsonValue payloads.
-export type SearchResult = { title: string; url: string; snippet: string };
+// oxlint-disable-next-line typescript/consistent-type-definitions
+export type SearchResult = {
+  title: string;
+  url: string;
+  snippet: string;
+};
 
 export const MAX_TEXT_CHARS = 4000;
 
@@ -42,7 +47,10 @@ function decodeEntities(text: string): string {
 }
 
 function stripTags(text: string): string {
-  return text.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
+  return text
+    .replace(/<[^>]*>/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 // DuckDuckGo lite wraps real URLs in //duckduckgo.com/l/?uddg=<encoded>&rut=... redirects.
@@ -176,10 +184,8 @@ export function extractReadableContent(html: string): {
 export function isWeakContent(html: string, text: string): boolean {
   if (text.length < 40) return true;
   const lower = html.toLowerCase();
-  const jsShell =
-    lower.includes("<script") && /id=["'](root|app|__next|__nuxt)["']/.test(lower);
+  const jsShell = lower.includes("<script") && /id=["'](root|app|__next|__nuxt)["']/.test(lower);
   return (
-    (jsShell && text.length < 200) ||
-    /enable javascript|javascript required|please turn on javascript/i.test(html)
+    (jsShell && text.length < 200) || /enable javascript|javascript required|please turn on javascript/i.test(html)
   );
 }

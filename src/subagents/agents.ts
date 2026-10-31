@@ -56,7 +56,9 @@ function parseAgentSettings(value: unknown): AgentSettings {
   return {
     ...(validModel(settings.model) ? { model: settings.model } : {}),
     ...(validThinkingLevel(settings.thinkingLevel) ? { thinkingLevel: settings.thinkingLevel } : {}),
-    ...(validInactivityTimeout(settings.inactivityTimeoutMs) ? { inactivityTimeoutMs: settings.inactivityTimeoutMs } : {}),
+    ...(validInactivityTimeout(settings.inactivityTimeoutMs)
+      ? { inactivityTimeoutMs: settings.inactivityTimeoutMs }
+      : {}),
   };
 }
 
@@ -82,13 +84,17 @@ export async function resolveExtensionPaths(
   for (const spec of specs) {
     const root = join(packageDir, "node_modules", spec.slice("npm:".length));
     try {
-      const manifest = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as { pi?: { extensions?: unknown } };
+      const manifest = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as {
+        pi?: { extensions?: unknown };
+      };
       const entries = manifest.pi?.extensions;
       if (!Array.isArray(entries)) continue;
       for (const entry of entries) {
         if (typeof entry === "string") paths.push(join(root, entry));
       }
-    } catch { /* package not installed */ }
+    } catch {
+      /* package not installed */
+    }
   }
   return paths;
 }
@@ -116,10 +122,14 @@ export function parseSubagentSettings(value: unknown): SubagentSettings {
   if (config.profiles && typeof config.profiles === "object" && !Array.isArray(config.profiles)) {
     for (const [name, profile] of Object.entries(config.profiles)) {
       if (name === SESSION_PROFILE_NAME) {
-        throw new Error(`Invalid subagent configuration: profile name "${SESSION_PROFILE_NAME}" is reserved for the built-in session profile.`);
+        throw new Error(
+          `Invalid subagent configuration: profile name "${SESSION_PROFILE_NAME}" is reserved for the built-in session profile.`,
+        );
       }
       if (name === OFF_PROFILE_NAME) {
-        throw new Error(`Invalid subagent configuration: profile name "${OFF_PROFILE_NAME}" is reserved for turning subagents off.`);
+        throw new Error(
+          `Invalid subagent configuration: profile name "${OFF_PROFILE_NAME}" is reserved for turning subagents off.`,
+        );
       }
       if (!isValidProfileName(name)) continue;
       const parsed = parseProfile(profile);
@@ -162,15 +172,23 @@ export async function loadSubagentSettings(
 }
 
 function getSubagentProfile(settings: SubagentSettings, profileName?: string): SubagentProfile {
-  if (profileName !== undefined) return Object.hasOwn(settings.profiles, profileName) ? settings.profiles[profileName]! : EMPTY_PROFILE;
+  if (profileName !== undefined)
+    return Object.hasOwn(settings.profiles, profileName) ? settings.profiles[profileName]! : EMPTY_PROFILE;
   const names = Object.keys(settings.profiles);
   return names.length === 1 ? settings.profiles[names[0]!]! : EMPTY_PROFILE;
 }
 
-export function resolveAgentSettings(agent: AgentConfig, settings: SubagentSettings, profileName?: string): AgentConfig {
-  if (profileName === SESSION_PROFILE_NAME || (
-    profileName === undefined && Object.keys(settings.profiles).length === 1 && Object.hasOwn(settings.profiles, SESSION_PROFILE_NAME)
-  )) {
+export function resolveAgentSettings(
+  agent: AgentConfig,
+  settings: SubagentSettings,
+  profileName?: string,
+): AgentConfig {
+  if (
+    profileName === SESSION_PROFILE_NAME ||
+    (profileName === undefined &&
+      Object.keys(settings.profiles).length === 1 &&
+      Object.hasOwn(settings.profiles, SESSION_PROFILE_NAME))
+  ) {
     return { ...agent, model: undefined, thinkingLevel: agent.thinkingLevel };
   }
   const profile = getSubagentProfile(settings, profileName);
@@ -206,14 +224,19 @@ async function loadAgentFile(path: string): Promise<AgentConfig | undefined> {
     const name = meta.name || parse(path).name;
     if (!name) return undefined;
 
-    const inactivityTimeout = /^\d+$/.test(meta.inactivityTimeoutMs ?? "") ? Number(meta.inactivityTimeoutMs) : undefined;
+    const inactivityTimeout = /^\d+$/.test(meta.inactivityTimeoutMs ?? "")
+      ? Number(meta.inactivityTimeoutMs)
+      : undefined;
 
     return {
       name,
       description: meta.description || "",
       model: meta.model,
       thinkingLevel: validThinkingLevel(meta.thinkingLevel) ? meta.thinkingLevel : undefined,
-      tools: meta.tools?.split(",").map((s) => s.trim()).filter(Boolean),
+      tools: meta.tools
+        ?.split(",")
+        .map((s) => s.trim())
+        .filter(Boolean),
       systemPrompt: body,
       inactivityTimeoutMs: validInactivityTimeout(inactivityTimeout) ? inactivityTimeout : undefined,
     };

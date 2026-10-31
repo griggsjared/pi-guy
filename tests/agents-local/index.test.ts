@@ -3,19 +3,37 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { createAssistantMessageEventStream, getCurrentSystemPrompt, getCurrentTools, Type } from "@earendil-works/pi-ai";
+import {
+  createAssistantMessageEventStream,
+  getCurrentSystemPrompt,
+  getCurrentTools,
+  Type,
+} from "@earendil-works/pi-ai";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { Model } from "@earendil-works/pi-ai/compat";
-import { createAgentSession, createEventBus, DefaultResourceLoader, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
+import {
+  createAgentSession,
+  createEventBus,
+  DefaultResourceLoader,
+  SessionManager,
+  SettingsManager,
+} from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import agentsLocal from "../../src/agents-local/index.ts";
 
 test("reports complete parent-first local paths at startup, clearing removals and propagating read errors", async (t) => {
   const events: ExtensionAPI["events"] = createEventBus();
   const reports: unknown[] = [];
-  events.on("context:files", (data) => { reports.push(data); });
+  events.on("context:files", (data) => {
+    reports.push(data);
+  });
   let handler: ((event: unknown, ctx: { cwd: string }) => Promise<void>) | undefined;
-  agentsLocal({ events, on(event, callback) { if (event === "session_start") handler = callback as typeof handler; } } as ExtensionAPI);
+  agentsLocal({
+    events,
+    on(event, callback) {
+      if (event === "session_start") handler = callback as typeof handler;
+    },
+  } as ExtensionAPI);
   assert.ok(handler);
 
   const root = await mkdtemp(join(tmpdir(), "pi-agents-local-startup-"));
@@ -47,16 +65,26 @@ test("reports complete parent-first local paths at startup, clearing removals an
 });
 
 test("loads and keeps a session snapshot of local instructions alongside shared context", async (t) => {
-  type ContextFile = { path: string; content: string };
+  interface ContextFile {
+    path: string;
+    content: string;
+  }
   const events: ExtensionAPI["events"] = createEventBus();
   const reports: unknown[] = [];
-  events.on("context:files", (data) => { reports.push(data); });
+  events.on("context:files", (data) => {
+    reports.push(data);
+  });
   let start: ((event: unknown, ctx: { cwd: string }) => Promise<void>) | undefined;
-  let handler: ((event: { systemPromptOptions: { contextFiles: ContextFile[] } }, ctx: { cwd: string }) => void) | undefined;
-  agentsLocal({ events, on(event, callback) {
-    if (event === "session_start") start = callback as typeof start;
-    if (event === "before_agent_start") handler = callback as typeof handler;
-  } } as ExtensionAPI);
+  let handler:
+    | ((event: { systemPromptOptions: { contextFiles: ContextFile[] } }, ctx: { cwd: string }) => void)
+    | undefined;
+  agentsLocal({
+    events,
+    on(event, callback) {
+      if (event === "session_start") start = callback as typeof start;
+      if (event === "before_agent_start") handler = callback as typeof handler;
+    },
+  } as ExtensionAPI);
   assert.ok(start);
   assert.ok(handler);
 
@@ -115,42 +143,93 @@ test("keeps the session snapshot in custom-message turns and their tool continua
   const localFile = join(cwd, "AGENTS.local.md");
   await writeFile(parentFile, "local-parent-marker");
   await writeFile(localFile, "local-request-marker-v1");
-  const settingsManager = SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false }, cacheWarming: "off" });
+  const settingsManager = SettingsManager.inMemory({
+    compaction: { enabled: false },
+    retry: { enabled: false },
+    cacheWarming: "off",
+  });
   const eventBus = createEventBus();
   const reports: unknown[] = [];
-  eventBus.on("context:files", (data) => { reports.push(data); });
+  eventBus.on("context:files", (data) => {
+    reports.push(data);
+  });
   const resourceLoader = new DefaultResourceLoader({
-    cwd, agentDir, settingsManager, eventBus,
-    noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true,
+    cwd,
+    agentDir,
+    settingsManager,
+    eventBus,
+    noExtensions: true,
+    noSkills: true,
+    noPromptTemplates: true,
+    noThemes: true,
     extensionFactories: [agentsLocal],
-    agentsFilesOverride: ({ agentsFiles }) => ({ agentsFiles: [...agentsFiles, { path: "/virtual/OTHER.md", content: "other-instruction-marker" }] }),
+    agentsFilesOverride: ({ agentsFiles }) => ({
+      agentsFiles: [...agentsFiles, { path: "/virtual/OTHER.md", content: "other-instruction-marker" }],
+    }),
   });
   await resourceLoader.reload();
   const model: Model<"openai-completions"> = {
-    id: "test", name: "test", api: "openai-completions", provider: "openai", baseUrl: "http://unused",
-    reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 200000, maxTokens: 128,
+    id: "test",
+    name: "test",
+    api: "openai-completions",
+    provider: "openai",
+    baseUrl: "http://unused",
+    reasoning: false,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 200000,
+    maxTokens: 128,
   };
   const { session } = await createAgentSession({
-    cwd, agentDir, model, resourceLoader, settingsManager,
-    tools: ["noop"], sessionManager: SessionManager.inMemory(cwd),
-    customTools: [{
-      name: "noop", label: "noop", description: "Test tool", parameters: Type.Object({}),
-      execute: async () => ({ content: [{ type: "text", text: "done" }], details: undefined }),
-    }],
+    cwd,
+    agentDir,
+    model,
+    resourceLoader,
+    settingsManager,
+    tools: ["noop"],
+    sessionManager: SessionManager.inMemory(cwd),
+    customTools: [
+      {
+        name: "noop",
+        label: "noop",
+        description: "Test tool",
+        parameters: Type.Object({}),
+        execute: async () => ({ content: [{ type: "text", text: "done" }], details: undefined }),
+      },
+    ],
   });
   t.after(() => session.dispose());
   const requests: Array<{ prompt: string; tools: string[] }> = [];
   session.agent.streamFunction = (_model, context) => {
-    requests.push({ prompt: getCurrentSystemPrompt(context.messages), tools: getCurrentTools(context.messages).map(({ name }) => name) });
+    requests.push({
+      prompt: getCurrentSystemPrompt(context.messages),
+      tools: getCurrentTools(context.messages).map(({ name }) => name),
+    });
     const toolUse = requests.length === 2;
     const message: AssistantMessage = {
-      role: "assistant", api: model.api, provider: model.provider, model: model.id,
-      content: toolUse ? [{ type: "toolCall", id: "noop-1", name: "noop", arguments: {} }] : [{ type: "text", text: "OK" }],
-      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-      stopReason: toolUse ? "toolUse" : "stop", timestamp: Date.now(),
+      role: "assistant",
+      api: model.api,
+      provider: model.provider,
+      model: model.id,
+      content: toolUse
+        ? [{ type: "toolCall", id: "noop-1", name: "noop", arguments: {} }]
+        : [{ type: "text", text: "OK" }],
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      stopReason: toolUse ? "toolUse" : "stop",
+      timestamp: Date.now(),
     };
     const stream = createAssistantMessageEventStream();
-    queueMicrotask(() => { stream.push({ type: "done", reason: message.stopReason as "stop" | "toolUse", message }); stream.end(); });
+    queueMicrotask(() => {
+      stream.push({ type: "done", reason: message.stopReason as "stop" | "toolUse", message });
+      stream.end();
+    });
     return stream;
   };
   await session.modelRuntime.setRuntimeApiKey("openai", "test");
@@ -159,7 +238,10 @@ test("keeps the session snapshot in custom-message turns and their tool continua
   assert.equal(requests.length, 0);
   assert.doesNotMatch(session.systemPrompt, /local-parent-marker|local-request-marker/);
   await session.prompt("test");
-  await session.sendCustomMessage({ customType: "follow-up", content: "continue", display: false }, { triggerTurn: true });
+  await session.sendCustomMessage(
+    { customType: "follow-up", content: "continue", display: false },
+    { triggerTurn: true },
+  );
   assert.equal(requests.length, 3);
   for (const { prompt } of requests) {
     assert.equal(prompt.split("local-parent-marker").length - 1, 1);
@@ -168,12 +250,18 @@ test("keeps the session snapshot in custom-message turns and their tool continua
   }
 
   await writeFile(localFile, "local-request-marker-v2");
-  await session.sendCustomMessage({ customType: "follow-up", content: "updated", display: false }, { triggerTurn: true });
+  await session.sendCustomMessage(
+    { customType: "follow-up", content: "updated", display: false },
+    { triggerTurn: true },
+  );
   assert.equal(requests[3]!.prompt, requests[2]!.prompt);
 
   await rm(parentFile);
   await rm(localFile);
-  await session.sendCustomMessage({ customType: "follow-up", content: "removed", display: false }, { triggerTurn: true });
+  await session.sendCustomMessage(
+    { customType: "follow-up", content: "removed", display: false },
+    { triggerTurn: true },
+  );
   assert.equal(requests.length, 5);
   assert.equal(requests[4]!.prompt, requests[3]!.prompt);
   assert.deepEqual(reports, [{ source: "agents-local", paths: [parentFile, localFile] }]);

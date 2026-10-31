@@ -1,8 +1,8 @@
-import { test } from "node:test";
 import assert from "node:assert/strict";
+import { test } from "node:test";
+import { EMPTY_USAGE } from "../../src/subagents/constants.ts";
 import { createJobRegistry } from "../../src/subagents/registry.ts";
 import type { SubagentControl } from "../../src/subagents/registry.ts";
-import { EMPTY_USAGE } from "../../src/subagents/constants.ts";
 import type { SubagentResult } from "../../src/subagents/types.ts";
 
 function result(overrides: Partial<SubagentResult> = {}): SubagentResult {
@@ -39,7 +39,13 @@ test("registry lifecycle: add -> complete -> pendingCompleted -> markCleared", (
 
   time = 100;
   registry.recordStep(id, { phase: "start", id: "assistant", kind: "assistant", summary: "Thinking" });
-  registry.updateLive(id, { text: "partial", progress: "read x.ts", model: "served-model", thinkingLevel: "high", toolCalls: [{ name: "read", args: { path: "x.ts" } }] });
+  registry.updateLive(id, {
+    text: "partial",
+    progress: "read x.ts",
+    model: "served-model",
+    thinkingLevel: "high",
+    toolCalls: [{ name: "read", args: { path: "x.ts" } }],
+  });
   assert.equal(job.steps[0]?.startedAt, 100);
   assert.equal(job.steps[0]?.endedAt, undefined);
   assert.equal(job.text, "partial");
@@ -56,9 +62,14 @@ test("registry lifecycle: add -> complete -> pendingCompleted -> markCleared", (
   assert.equal(registry.recordStep(id, { phase: "end", id: "assistant" }), false);
   assert.equal(registry.recordStep(id, { phase: "start", id: "late", kind: "retry", summary: "Retry" }), false);
   registry.complete(id, result());
-  assert.deepEqual(job.steps, [{ id: "assistant", kind: "assistant", summary: "Thinking", startedAt: 100, endedAt: 1000 }]);
+  assert.deepEqual(job.steps, [
+    { id: "assistant", kind: "assistant", summary: "Thinking", startedAt: 100, endedAt: 1000 },
+  ]);
   assert.equal(registry.running().length, 0);
-  assert.deepEqual(registry.pendingCompleted().map((j) => j.id), [id]);
+  assert.deepEqual(
+    registry.pendingCompleted().map((j) => j.id),
+    [id],
+  );
   assert.equal(registry.recent(1).length, 1);
 
   registry.markCleared([id]);
@@ -100,9 +111,15 @@ test("registry: event ring sequences, limits, cursors, and defensive copies", ()
   });
   latest!.events[0]!.summary = "changed";
   assert.equal(registry.readEvents(id, { since: 1 })?.events[0]?.summary, "hello");
-  assert.deepEqual(registry.readEvents(id, { since: 0 })?.events.map((event) => event.seq), [1, 2, 3]);
+  assert.deepEqual(
+    registry.readEvents(id, { since: 0 })?.events.map((event) => event.seq),
+    [1, 2, 3],
+  );
   assert.equal(registry.readEvents(id, { since: 0 })?.droppedBefore, undefined);
-  assert.deepEqual(registry.readEvents(id, { since: 1, limit: 1 })?.events.map((event) => event.seq), [2]);
+  assert.deepEqual(
+    registry.readEvents(id, { since: 1, limit: 1 })?.events.map((event) => event.seq),
+    [2],
+  );
   assert.equal(registry.readEvents(id, { since: 1, limit: 1 })?.nextCursor, 2);
   assert.deepEqual(registry.readEvents(id, { since: 3 }), { events: [], nextCursor: 3 });
   assert.throws(() => registry.readEvents(id, { since: 4 }), /ahead of current sequence/);
@@ -120,12 +137,24 @@ test("registry: concurrent same-name steps correlate events by ID and freeze tim
   const id = registry.add("worker", "task");
   assert.equal(registry.recordStep(999, { phase: "end", id: "a" }), false);
   assert.equal(registry.recordStep(id, { phase: "end", id: "missing" }), false);
-  const a = { phase: "start", id: "a", kind: "tool", summary: "read a", toolCall: { name: "read", args: { path: "a" } } } as const;
+  const a = {
+    phase: "start",
+    id: "a",
+    kind: "tool",
+    summary: "read a",
+    toolCall: { name: "read", args: { path: "a" } },
+  } as const;
   assert.equal(registry.recordStep(id, a), true);
   registry.appendEvent(id, { kind: "tool-start", summary: "read a", stepId: "a" });
   time = 20;
   assert.equal(registry.recordStep(id, a), false);
-  registry.recordStep(id, { phase: "start", id: "b", kind: "tool", summary: "read b", toolCall: { name: "read", args: { path: "b" } } });
+  registry.recordStep(id, {
+    phase: "start",
+    id: "b",
+    kind: "tool",
+    summary: "read b",
+    toolCall: { name: "read", args: { path: "b" } },
+  });
   time = 30;
   assert.equal(registry.recordStep(id, { phase: "end", id: "b" }), true);
   registry.appendEvent(id, { kind: "tool-end", summary: "read b", stepId: "b" });
@@ -143,10 +172,13 @@ test("registry: concurrent same-name steps correlate events by ID and freeze tim
     { seq: 3, timestamp: 100, kind: "tool-end", summary: "read a", stepId: "a", startedAt: 10, durationMs: 40 },
     { seq: 4, timestamp: 100, kind: "tool-end", summary: "unknown", stepId: "unknown" },
   ]);
-  assert.deepEqual(registry.get(id)?.steps.map((step) => step.toolCall), [
-    { name: "read", args: { path: "b" } },
-    { name: "read", args: { path: "a" } },
-  ]);
+  assert.deepEqual(
+    registry.get(id)?.steps.map((step) => step.toolCall),
+    [
+      { name: "read", args: { path: "b" } },
+      { name: "read", args: { path: "a" } },
+    ],
+  );
 
   registry.recordStep(id, { phase: "start", id: "retry", kind: "retry", summary: "Retry" });
   time = 90;
@@ -169,24 +201,35 @@ test("registry: active steps survive event eviction and retain the latest 20 com
   }
   for (let i = 0; i < 100; i++) registry.appendEvent(id, { kind: "state", summary: "progress" });
   assert.equal(registry.readEvents(id)?.events.length, 100);
-  assert.equal(registry.readEvents(id)?.events.some((event) => event.kind === "tool-start"), false);
+  assert.equal(
+    registry.readEvents(id)?.events.some((event) => event.kind === "tool-start"),
+    false,
+  );
   const job = registry.get(id)!;
   assert.equal(job.steps.filter((step) => step.endedAt === undefined).length, 21);
-  assert.deepEqual(job.steps.filter((step) => step.endedAt !== undefined).map((step) => step.id),
-    Array.from({ length: 20 }, (_, i) => `finished-${i + 1}`));
+  assert.deepEqual(
+    job.steps.filter((step) => step.endedAt !== undefined).map((step) => step.id),
+    Array.from({ length: 20 }, (_, i) => `finished-${i + 1}`),
+  );
 
   const startedAt = job.steps[0]!.startedAt;
   registry.recordStep(id, { phase: "end", id: "active-0" });
   registry.appendEvent(id, { kind: "tool-end", summary: "read", stepId: "active-0" });
   assert.equal(registry.readEvents(id)?.events.at(-1)?.startedAt, startedAt);
   assert.equal(job.steps.length, 40);
-  assert.equal(job.steps.some((step) => step.id === "finished-1"), false);
+  assert.equal(
+    job.steps.some((step) => step.id === "finished-1"),
+    false,
+  );
   assert.equal(job.steps.at(-1)?.id, "active-0");
   registry.appendEvent(id, { kind: "state", summary: "evicted", stepId: "finished-0" });
   assert.equal(registry.readEvents(id)?.events.at(-1)?.startedAt, undefined);
 
   registry.complete(id, result());
-  assert.deepEqual(job.steps.map((step) => step.id), Array.from({ length: 20 }, (_, i) => `active-${i + 1}`));
+  assert.deepEqual(
+    job.steps.map((step) => step.id),
+    Array.from({ length: 20 }, (_, i) => `active-${i + 1}`),
+  );
   assert.ok(job.steps.every((step) => step.endedAt === job.endTime));
 });
 
@@ -241,8 +284,14 @@ test("registry: recent sorts by endTime descending and limits", () => {
   const b = registry.add("b", "t");
   time = 200;
   registry.complete(b, result({ agent: "b" }));
-  assert.deepEqual(registry.recent(1).map((j) => j.agent), ["b"]);
-  assert.deepEqual(registry.recent().map((j) => j.agent), ["b", "a"]);
+  assert.deepEqual(
+    registry.recent(1).map((j) => j.agent),
+    ["b"],
+  );
+  assert.deepEqual(
+    registry.recent().map((j) => j.agent),
+    ["b", "a"],
+  );
 });
 
 test("registry: cancellation before registration is delivered once and freezes steps", () => {
@@ -258,14 +307,26 @@ test("registry: cancellation before registration is delivered once and freezes s
   registry.cancel(id);
   assert.equal(registry.recordStep(id, { phase: "end", id: "a" }), false);
   assert.equal(registry.recordStep(id, { phase: "start", id: "late", kind: "tool", summary: "read" }), false);
-  assert.deepEqual(registry.get(id)?.steps.map((step) => [step.id, step.endedAt]), [["b", 10], ["a", 20]]);
+  assert.deepEqual(
+    registry.get(id)?.steps.map((step) => [step.id, step.endedAt]),
+    [
+      ["b", 10],
+      ["a", 20],
+    ],
+  );
   const reasons: string[] = [];
   registry.registerControl(id, control({ cancel: (reason) => reasons.push(reason) }));
   assert.deepEqual(reasons, ["session-shutdown"]);
   registry.complete(id, result());
   assert.equal(registry.get(id)?.status, "cancelled");
   assert.equal(registry.get(id)?.cancellationReason, "session-shutdown");
-  assert.deepEqual(registry.get(id)?.steps.map((step) => [step.id, step.endedAt]), [["b", 10], ["a", 20]]);
+  assert.deepEqual(
+    registry.get(id)?.steps.map((step) => [step.id, step.endedAt]),
+    [
+      ["b", 10],
+      ["a", 20],
+    ],
+  );
 });
 
 test("registry: unknown, terminal, and duplicate handles cannot become unreachable", () => {
@@ -310,19 +371,28 @@ test("registry: sends messages and resolves the matching pending question", asyn
   const id = registry.add("worker", "task");
   const sends: unknown[][] = [];
   const replies: unknown[][] = [];
-  registry.registerControl(id, control({
-    send: async (...args) => { sends.push(args); },
-    reply: async (...args) => { replies.push(args); },
-  }));
+  registry.registerControl(
+    id,
+    control({
+      send: async (...args) => {
+        sends.push(args);
+      },
+      reply: async (...args) => {
+        replies.push(args);
+      },
+    }),
+  );
 
   assert.equal(registry.recordQuestion(id, { id: "q1", question: "Which API?", context: "Two choices" }), true);
   assert.equal(registry.recordQuestion(id, { id: "q1", question: "duplicate" }), false);
-  assert.deepEqual(registry.get(id)?.pendingQuestions, [{
-    id: "q1",
-    question: "Which API?",
-    context: "Two choices",
-    askedAt: 123,
-  }]);
+  assert.deepEqual(registry.get(id)?.pendingQuestions, [
+    {
+      id: "q1",
+      question: "Which API?",
+      context: "Two choices",
+      askedAt: 123,
+    },
+  ]);
 
   await registry.send(id, "Use the existing pattern", "steer");
   await registry.reply(id, "q1", "Use v2");
@@ -336,9 +406,15 @@ test("registry: concurrent replies cannot answer the same question twice", async
   const registry = createJobRegistry();
   const id = registry.add("worker", "task");
   let release: (() => void) | undefined;
-  registry.registerControl(id, control({
-    reply: () => new Promise<void>((resolve) => { release = resolve; }),
-  }));
+  registry.registerControl(
+    id,
+    control({
+      reply: () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    }),
+  );
   registry.recordQuestion(id, { id: "q1", question: "Continue?" });
 
   const first = registry.reply(id, "q1", "yes");
@@ -351,13 +427,21 @@ test("registry: concurrent replies cannot answer the same question twice", async
 test("registry: failed replies remain pending", async () => {
   const registry = createJobRegistry();
   const id = registry.add("worker", "task");
-  registry.registerControl(id, control({
-    reply: async () => { throw new Error("write failed"); },
-  }));
+  registry.registerControl(
+    id,
+    control({
+      reply: async () => {
+        throw new Error("write failed");
+      },
+    }),
+  );
   registry.recordQuestion(id, { id: "q1", question: "Continue?" });
 
   await assert.rejects(registry.reply(id, "q1", "yes"), /write failed/);
-  assert.deepEqual(registry.get(id)?.pendingQuestions.map((question) => question.id), ["q1"]);
+  assert.deepEqual(
+    registry.get(id)?.pendingQuestions.map((question) => question.id),
+    ["q1"],
+  );
 });
 
 test("registry: messaging rejects unknown, queued, cancelling, and terminal jobs", async () => {

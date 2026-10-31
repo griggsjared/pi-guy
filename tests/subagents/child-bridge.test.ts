@@ -1,5 +1,5 @@
-import { test } from "node:test";
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import childBridge from "../../src/subagents/child-bridge.ts";
 import { ASK_PARENT_TITLE_PREFIX } from "../../src/subagents/constants.ts";
 import { captureTools } from "../helpers/pi.ts";
@@ -39,11 +39,9 @@ test("ask_parent forwards question, context, and signal", async () => {
     ctx as never,
   );
 
-  assert.deepEqual(calls, [[
-    `${ASK_PARENT_TITLE_PREFIX}Which API?`,
-    "There are two options.",
-    { signal: controller.signal },
-  ]]);
+  assert.deepEqual(calls, [
+    [`${ASK_PARENT_TITLE_PREFIX}Which API?`, "There are two options.", { signal: controller.signal }],
+  ]);
   assert.equal((result.content[0] as { text: string }).text, "Use the existing API.");
   assert.deepEqual(result.details, { answered: true });
 });
@@ -52,13 +50,14 @@ test("ask_parent rejects a blank question before opening RPC input", async () =>
   const tool = registeredTool();
   let opened = false;
   await assert.rejects(
-    tool.execute(
-      "call-1",
-      { question: "   " },
-      undefined,
-      undefined,
-      { ui: { input: async () => { opened = true; return "answer"; } } } as never,
-    ),
+    tool.execute("call-1", { question: "   " }, undefined, undefined, {
+      ui: {
+        input: async () => {
+          opened = true;
+          return "answer";
+        },
+      },
+    } as never),
     /cannot be empty/,
   );
   assert.equal(opened, false);
@@ -66,13 +65,9 @@ test("ask_parent rejects a blank question before opening RPC input", async () =>
 
 test("ask_parent reports a cancelled response", async () => {
   const tool = registeredTool();
-  const result = await tool.execute(
-    "call-1",
-    { question: "Continue?" },
-    undefined,
-    undefined,
-    { ui: { input: async () => undefined } } as never,
-  );
+  const result = await tool.execute("call-1", { question: "Continue?" }, undefined, undefined, {
+    ui: { input: async () => undefined },
+  } as never);
 
   assert.match((result.content[0] as { text: string }).text, /did not answer/);
   assert.deepEqual(result.details, { answered: false });

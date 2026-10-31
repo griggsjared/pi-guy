@@ -5,32 +5,46 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { decodeFooterUsageStatus, formatFooterBalance, formatFooterReset, formatFooterUsage, registerStatusline } from "../../src/statusline/footer.ts";
+import {
+  decodeFooterUsageStatus,
+  formatFooterBalance,
+  formatFooterReset,
+  formatFooterUsage,
+  registerStatusline,
+} from "../../src/statusline/footer.ts";
 import { captureHandlers } from "../helpers/pi.ts";
 import { fakeTheme } from "../helpers/theme.ts";
 
 test("formats shared usage status", () => {
-  assert.equal(formatFooterUsage({
-    provider: "openai-codex",
-    state: "ready",
-    capturedAtMs: 1_000_000_000_000,
-    windows: [{ kind: "weekly", label: "7d", usedPercent: 20, resetAtMs: 1_000_000_000_000 }],
-  }), "20%(now)");
+  assert.equal(
+    formatFooterUsage({
+      provider: "openai-codex",
+      state: "ready",
+      capturedAtMs: 1_000_000_000_000,
+      windows: [{ kind: "weekly", label: "7d", usedPercent: 20, resetAtMs: 1_000_000_000_000 }],
+    }),
+    "20%(now)",
+  );
 });
 
 test("rejects malformed status transport and accepts unknown state", () => {
   assert.equal(decodeFooterUsageStatus("not json"), undefined);
-  assert.deepEqual(decodeFooterUsageStatus(JSON.stringify({
-    provider: "opencode-go",
-    state: "unknown",
-    capturedAtMs: 1_000,
-    windows: [],
-  })), {
-    provider: "opencode-go",
-    state: "unknown",
-    capturedAtMs: 1_000,
-    windows: [],
-  });
+  assert.deepEqual(
+    decodeFooterUsageStatus(
+      JSON.stringify({
+        provider: "opencode-go",
+        state: "unknown",
+        capturedAtMs: 1_000,
+        windows: [],
+      }),
+    ),
+    {
+      provider: "opencode-go",
+      state: "unknown",
+      capturedAtMs: 1_000,
+      windows: [],
+    },
+  );
 });
 
 test("formats reset countdowns compactly", () => {
@@ -66,7 +80,11 @@ test("refreshes footer leaf cache for persisted usage and keeps cache hits branc
   const directory = mkdtempSync(join(tmpdir(), "statusline-cost-"));
   const sessionManager = SessionManager.create(directory, directory);
   const usage = (total: number) => ({
-    input: 25, output: 0, cacheRead: 75, cacheWrite: 0, totalTokens: 100,
+    input: 25,
+    output: 0,
+    cacheRead: 75,
+    cacheWrite: 0,
+    totalTokens: 100,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total },
   });
   const { handlers, on } = captureHandlers();
@@ -75,26 +93,44 @@ test("refreshes footer leaf cache for persisted usage and keeps cache hits branc
   let branchReads = 0;
   registerStatusline({ on } as any);
   const context = {
-    model: { name: "model", provider: "deepseek" }, thinkingLevel: "off",
+    model: { name: "model", provider: "deepseek" },
+    thinkingLevel: "off",
     getContextUsage: () => undefined,
     sessionManager: {
       getLeafId: () => sessionManager.getLeafId(),
-      getBranch: () => { branchReads++; return sessionManager.getBranch(); },
+      getBranch: () => {
+        branchReads++;
+        return sessionManager.getBranch();
+      },
     },
-    ui: { setFooter(callback: any) { footer = callback; } },
+    ui: {
+      setFooter(callback: any) {
+        footer = callback;
+      },
+    },
   };
   try {
     const userId = sessionManager.appendMessage({ role: "user", content: "test", timestamp: 0 });
     const assistantId = sessionManager.appendMessage({
-      role: "assistant", content: [], api: "openai-completions", provider: "deepseek", model: "model",
-      usage: usage(1), stopReason: "stop", timestamp: 0,
+      role: "assistant",
+      content: [],
+      api: "openai-completions",
+      provider: "deepseek",
+      model: "model",
+      usage: usage(1),
+      stopReason: "stop",
+      timestamp: 0,
     });
     handlers.get("session_start")?.({}, context);
     rendered = footer({ invalidate() {} }, fakeTheme(), { getExtensionStatuses: () => new Map() });
     assert.match(rendered.render(120)[0], /c:75% {2,}deepseek $/);
     rendered.render(120);
     assert.equal(branchReads, 1);
-    const warm = sessionManager.appendUsage("cache_warm", "deepseek", "model", { ...usage(2), input: 100, cacheRead: 0 });
+    const warm = sessionManager.appendUsage("cache_warm", "deepseek", "model", {
+      ...usage(2),
+      input: 100,
+      cacheRead: 0,
+    });
     assert.equal(sessionManager.getLeafId(), warm.id);
     assert.equal(warm.parentId, assistantId);
     assert.match(rendered.render(120)[0], /c:75% {2,}deepseek $/);
@@ -103,8 +139,14 @@ test("refreshes footer leaf cache for persisted usage and keeps cache hits branc
     assert.match(rendered.render(120)[0], /c:75% {2,}deepseek $/);
     sessionManager.branch(userId);
     const otherAssistantId = sessionManager.appendMessage({
-      role: "assistant", content: [], api: "openai-completions", provider: "deepseek", model: "model",
-      usage: { ...usage(1), input: 75, cacheRead: 25 }, stopReason: "stop", timestamp: 0,
+      role: "assistant",
+      content: [],
+      api: "openai-completions",
+      provider: "deepseek",
+      model: "model",
+      usage: { ...usage(1), input: 75, cacheRead: 25 },
+      stopReason: "stop",
+      timestamp: 0,
     });
     assert.match(rendered.render(120)[0], /c:25% {2,}deepseek $/);
     sessionManager.branch(warm.id);
@@ -129,15 +171,32 @@ test("right-aligns balance beside DeepSeek", () => {
   const { handlers, on } = captureHandlers();
   let footer: ((...args: any[]) => any) | undefined;
   let rendered: any;
-  const statuses = new Map([["provider-usage", JSON.stringify({
-    provider: "deepseek", state: "ready", capturedAtMs: 0, windows: [], balance: { amount: 42.5, currency: "USD" },
-  })]]);
+  const statuses = new Map([
+    [
+      "provider-usage",
+      JSON.stringify({
+        provider: "deepseek",
+        state: "ready",
+        capturedAtMs: 0,
+        windows: [],
+        balance: { amount: 42.5, currency: "USD" },
+      }),
+    ],
+  ]);
   registerStatusline({ on } as any);
   const context = {
-    model: { name: "DeepSeek V4.1 Flash", provider: "deepseek" }, thinkingLevel: "off",
+    model: { name: "DeepSeek V4.1 Flash", provider: "deepseek" },
+    thinkingLevel: "off",
     getContextUsage: () => undefined,
-    sessionManager: { getLeafId: () => null, getBranch: () => [{ type: "message", message: { role: "assistant", usage: { cost: { total: 0.042 } } } }] },
-    ui: { setFooter(callback: any) { footer = callback; } },
+    sessionManager: {
+      getLeafId: () => null,
+      getBranch: () => [{ type: "message", message: { role: "assistant", usage: { cost: { total: 0.042 } } } }],
+    },
+    ui: {
+      setFooter(callback: any) {
+        footer = callback;
+      },
+    },
   };
   try {
     handlers.get("session_start")?.({}, context);
@@ -157,13 +216,23 @@ test("right-aligns nonquota providers without a balance", () => {
   const { handlers, on } = captureHandlers();
   let footer: ((...args: any[]) => any) | undefined;
   let rendered: any;
-  const statuses = new Map([["provider-usage", JSON.stringify({ provider: "deepseek", state: "unknown", capturedAtMs: 0, windows: [] })]]);
+  const statuses = new Map([
+    ["provider-usage", JSON.stringify({ provider: "deepseek", state: "unknown", capturedAtMs: 0, windows: [] })],
+  ]);
   registerStatusline({ on } as any);
   const context = {
-    model: { name: "DeepSeek V4.1 Flash", provider: "deepseek" }, thinkingLevel: "off",
+    model: { name: "DeepSeek V4.1 Flash", provider: "deepseek" },
+    thinkingLevel: "off",
     getContextUsage: () => undefined,
-    sessionManager: { getLeafId: () => null, getBranch: () => [{ type: "message", message: { role: "assistant", usage: { cost: { total: 0.042 } } } }] },
-    ui: { setFooter(callback: any) { footer = callback; } },
+    sessionManager: {
+      getLeafId: () => null,
+      getBranch: () => [{ type: "message", message: { role: "assistant", usage: { cost: { total: 0.042 } } } }],
+    },
+    ui: {
+      setFooter(callback: any) {
+        footer = callback;
+      },
+    },
   };
   try {
     handlers.get("session_start")?.({}, context);
@@ -171,7 +240,10 @@ test("right-aligns nonquota providers without a balance", () => {
     for (const provider of ["deepseek", "google"]) {
       context.model.provider = provider;
       const line = rendered.render(120)[0];
-      assert.equal(line, " DeepSeek V4.1 Flash" + " ".repeat(118 - context.model.name.length - provider.length) + provider + " ");
+      assert.equal(
+        line,
+        " DeepSeek V4.1 Flash" + " ".repeat(118 - context.model.name.length - provider.length) + provider + " ",
+      );
       assert.ok(line.endsWith(provider + " "));
       assert.equal(line.length, 120);
       assert.doesNotMatch(line, /quota:\?/);
@@ -191,10 +263,23 @@ test("right-aligns quota windows and the pending marker beside the provider with
   ]);
   registerStatusline({ on } as any);
   const context = {
-    model: { name: "GPT-5.6 Luna", provider: "openai-codex" }, thinkingLevel: "high",
+    model: { name: "GPT-5.6 Luna", provider: "openai-codex" },
+    thinkingLevel: "high",
     getContextUsage: () => ({ tokens: 1000, contextWindow: 200000 }),
-    sessionManager: { getLeafId: () => null, getBranch: () => [{ type: "message", message: { role: "assistant", usage: { input: 25, cacheRead: 75, cacheWrite: 0, cost: { total: 0.042 } } } }] },
-    ui: { setFooter(callback: any) { footer = callback; } },
+    sessionManager: {
+      getLeafId: () => null,
+      getBranch: () => [
+        {
+          type: "message",
+          message: { role: "assistant", usage: { input: 25, cacheRead: 75, cacheWrite: 0, cost: { total: 0.042 } } },
+        },
+      ],
+    },
+    ui: {
+      setFooter(callback: any) {
+        footer = callback;
+      },
+    },
   };
   try {
     handlers.get("session_start")?.({}, context);
@@ -207,22 +292,30 @@ test("right-aligns quota windows and the pending marker beside the provider with
     assert.doesNotMatch(line, /s:\$/);
     assert.deepEqual(rendered.render(120).slice(1), []);
 
-    statuses.set("provider-usage", JSON.stringify({
-      provider: "openai-codex", state: "ready", capturedAtMs: 0,
-      windows: [
-        { kind: "monthly", label: "30d", usedPercent: 30, resetAtMs: 1 },
-        { kind: "rolling", label: "5h", usedPercent: 10, resetAtMs: 1 },
-        { kind: "weekly", label: "7d", usedPercent: 20, resetAtMs: 1 },
-      ],
-      balance: { amount: 42.5, currency: "USD" },
-    }));
+    statuses.set(
+      "provider-usage",
+      JSON.stringify({
+        provider: "openai-codex",
+        state: "ready",
+        capturedAtMs: 0,
+        windows: [
+          { kind: "monthly", label: "30d", usedPercent: 30, resetAtMs: 1 },
+          { kind: "rolling", label: "5h", usedPercent: 10, resetAtMs: 1 },
+          { kind: "weekly", label: "7d", usedPercent: 20, resetAtMs: 1 },
+        ],
+        balance: { amount: 42.5, currency: "USD" },
+      }),
+    );
     const right = "10%(now) 20%(now) 30%(now) b:$42.50 openai-codex";
     assert.equal(rendered.render(120)[0], ` ${left}` + " ".repeat(118 - left.length - right.length) + `${right} `);
     assert.deepEqual(rendered.render(120).slice(1), []);
     const compact = "10% 20% 30% openai-codex";
     assert.equal(rendered.render(left.length + 4 + compact.length)[0], ` ${left}  ${compact} `);
     const truncated = "10% openai-codex";
-    assert.equal(rendered.render(left.length + 4 + truncated.length)[0].replace(/\x1b\[[0-9;]*m/g, ""), ` ${left}  ${truncated} `);
+    assert.equal(
+      rendered.render(left.length + 4 + truncated.length)[0].replace(/\x1b\[[0-9;]*m/g, ""),
+      ` ${left}  ${truncated} `,
+    );
     for (const width of [0, 1, 2, 4, 20, 40, 80, 120]) {
       assert.ok(visibleWidth(rendered.render(width)[0]) <= width);
       assert.doesNotMatch(rendered.render(width)[0], /s:\$/);
@@ -238,27 +331,45 @@ test("renders Claude unknown quota then 5h and 7d usage resets beside claude-bri
   const { handlers, on } = captureHandlers();
   let footer: any;
   let rendered: any;
-  const statuses = new Map([["provider-usage", JSON.stringify({
-    provider: "claude-bridge", state: "unknown", capturedAtMs: now, windows: [],
-  })]]);
+  const statuses = new Map([
+    [
+      "provider-usage",
+      JSON.stringify({
+        provider: "claude-bridge",
+        state: "unknown",
+        capturedAtMs: now,
+        windows: [],
+      }),
+    ],
+  ]);
   registerStatusline({ on } as any);
   const context = {
-    model: { name: "Claude Sonnet", provider: "claude-bridge" }, thinkingLevel: "off",
+    model: { name: "Claude Sonnet", provider: "claude-bridge" },
+    thinkingLevel: "off",
     getContextUsage: () => undefined,
     sessionManager: { getLeafId: () => null, getBranch: () => [] },
-    ui: { setFooter(callback: any) { footer = callback; } },
+    ui: {
+      setFooter(callback: any) {
+        footer = callback;
+      },
+    },
   };
   try {
     handlers.get("session_start")?.({}, context);
     rendered = footer({ invalidate() {} }, fakeTheme(), { getExtensionStatuses: () => statuses });
     assert.match(rendered.render(120)[0], /quota:\? claude-bridge $/);
-    statuses.set("provider-usage", JSON.stringify({
-      provider: "claude-bridge", state: "ready", capturedAtMs: now,
-      windows: [
-        { kind: "weekly", label: "7d", usedPercent: 40, resetAtMs: now + 3 * 86_400_000 + 4 * 3_600_000 },
-        { kind: "rolling", label: "5h", usedPercent: 12.5, resetAtMs: now + 3_900_000 },
-      ],
-    }));
+    statuses.set(
+      "provider-usage",
+      JSON.stringify({
+        provider: "claude-bridge",
+        state: "ready",
+        capturedAtMs: now,
+        windows: [
+          { kind: "weekly", label: "7d", usedPercent: 40, resetAtMs: now + 3 * 86_400_000 + 4 * 3_600_000 },
+          { kind: "rolling", label: "5h", usedPercent: 12.5, resetAtMs: now + 3_900_000 },
+        ],
+      }),
+    );
     assert.match(rendered.render(120)[0], /13%\(1h5m\) 40%\(3d4h\) claude-bridge $/);
   } finally {
     rendered?.dispose();
@@ -272,10 +383,15 @@ test("colors each quota window at usage thresholds across footer widths", () => 
   const statuses = new Map<string, string>();
   registerStatusline({ on } as any);
   const context = {
-    model: { name: "model", provider: "openai-codex" }, thinkingLevel: "off",
+    model: { name: "model", provider: "openai-codex" },
+    thinkingLevel: "off",
     getContextUsage: () => undefined,
     sessionManager: { getLeafId: () => null, getBranch: () => [] },
-    ui: { setFooter(callback: any) { footer = callback; } },
+    ui: {
+      setFooter(callback: any) {
+        footer = callback;
+      },
+    },
   };
   try {
     handlers.get("session_start")?.({}, context);
@@ -284,24 +400,46 @@ test("colors each quota window at usage thresholds across footer widths", () => 
       return `\x1b[${codes[color] ?? 37}m${value}\x1b[0m`;
     };
     rendered = footer({ invalidate() {} }, { fg: ansi }, { getExtensionStatuses: () => statuses });
-    for (const [usedPercent, color] of [[89.99, "dim"], [90, "warning"], [94.99, "warning"], [95, "error"], [100, "error"]] as const) {
-      statuses.set("provider-usage", JSON.stringify({
-        provider: "openai-codex", state: "ready", capturedAtMs: 0,
-        windows: [{ kind: "rolling", label: "5h", usedPercent, resetAtMs: 1 }],
-      }));
+    for (const [usedPercent, color] of [
+      [89.99, "dim"],
+      [90, "warning"],
+      [94.99, "warning"],
+      [95, "error"],
+      [100, "error"],
+    ] as const) {
+      statuses.set(
+        "provider-usage",
+        JSON.stringify({
+          provider: "openai-codex",
+          state: "ready",
+          capturedAtMs: 0,
+          windows: [{ kind: "rolling", label: "5h", usedPercent, resetAtMs: 1 }],
+        }),
+      );
       assert.ok(rendered.render(120)[0].includes(ansi(color, `${Math.round(usedPercent)}%(now)`)));
       assert.ok(rendered.render(26)[0].includes(ansi(color, `${Math.round(usedPercent)}%`)));
     }
-    statuses.set("provider-usage", JSON.stringify({
-      provider: "openai-codex", state: "ready", capturedAtMs: 0,
-      windows: [
-        { kind: "monthly", label: "30d", usedPercent: 20, resetAtMs: 1 },
-        { kind: "rolling", label: "5h", usedPercent: 95, resetAtMs: 1 },
-        { kind: "weekly", label: "7d", usedPercent: 90, resetAtMs: 1 },
-      ],
-    }));
-    assert.ok(rendered.render(120)[0].includes(`${ansi("error", "95%(now)")} ${ansi("warning", "90%(now)")} ${ansi("dim", "20%(now)")}`));
-    assert.ok(rendered.render(33)[0].includes(`${ansi("error", "95%")} ${ansi("warning", "90%")} ${ansi("dim", "20%")}`));
+    statuses.set(
+      "provider-usage",
+      JSON.stringify({
+        provider: "openai-codex",
+        state: "ready",
+        capturedAtMs: 0,
+        windows: [
+          { kind: "monthly", label: "30d", usedPercent: 20, resetAtMs: 1 },
+          { kind: "rolling", label: "5h", usedPercent: 95, resetAtMs: 1 },
+          { kind: "weekly", label: "7d", usedPercent: 90, resetAtMs: 1 },
+        ],
+      }),
+    );
+    assert.ok(
+      rendered
+        .render(120)[0]
+        .includes(`${ansi("error", "95%(now)")} ${ansi("warning", "90%(now)")} ${ansi("dim", "20%(now)")}`),
+    );
+    assert.ok(
+      rendered.render(33)[0].includes(`${ansi("error", "95%")} ${ansi("warning", "90%")} ${ansi("dim", "20%")}`),
+    );
     assert.ok(rendered.render(25)[0].includes(ansi("error", "95%")));
     for (let width = 0; width <= 120; width++) {
       const line = rendered.render(width)[0];
@@ -320,10 +458,15 @@ test("colors dollar balances below one dollar and fifty cents", () => {
   const statuses = new Map<string, string>();
   registerStatusline({ on } as any);
   const context = {
-    model: { name: "model", provider: "deepseek" }, thinkingLevel: "off",
+    model: { name: "model", provider: "deepseek" },
+    thinkingLevel: "off",
     getContextUsage: () => undefined,
     sessionManager: { getLeafId: () => null, getBranch: () => [] },
-    ui: { setFooter(callback: any) { footer = callback; } },
+    ui: {
+      setFooter(callback: any) {
+        footer = callback;
+      },
+    },
   };
   try {
     handlers.get("session_start")?.({}, context);
@@ -332,10 +475,23 @@ test("colors dollar balances below one dollar and fifty cents", () => {
       return `\x1b[${codes[color] ?? 37}m${value}\x1b[0m`;
     };
     rendered = footer({ invalidate() {} }, { fg: ansi }, { getExtensionStatuses: () => statuses });
-    for (const [amount, color] of [[1, "dim"], [0.99, "warning"], [0.5, "warning"], [0.49, "error"], [0, "error"]] as const) {
-      statuses.set("provider-usage", JSON.stringify({
-        provider: "deepseek", state: "ready", capturedAtMs: 0, windows: [], balance: { amount, currency: "USD" },
-      }));
+    for (const [amount, color] of [
+      [1, "dim"],
+      [0.99, "warning"],
+      [0.5, "warning"],
+      [0.49, "error"],
+      [0, "error"],
+    ] as const) {
+      statuses.set(
+        "provider-usage",
+        JSON.stringify({
+          provider: "deepseek",
+          state: "ready",
+          capturedAtMs: 0,
+          windows: [],
+          balance: { amount, currency: "USD" },
+        }),
+      );
       const line = rendered.render(120)[0];
       assert.ok(line.endsWith(`${ansi(color, `b:$${amount.toFixed(2)}`)} ${ansi("muted", "deepseek")} `));
       assert.equal(visibleWidth(line), 120);
@@ -347,9 +503,16 @@ test("colors dollar balances below one dollar and fifty cents", () => {
         assert.doesNotMatch(narrow, /b:/);
       }
     }
-    statuses.set("provider-usage", JSON.stringify({
-      provider: "deepseek", state: "ready", capturedAtMs: 0, windows: [], balance: { amount: 0.49, currency: "CNY" },
-    }));
+    statuses.set(
+      "provider-usage",
+      JSON.stringify({
+        provider: "deepseek",
+        state: "ready",
+        capturedAtMs: 0,
+        windows: [],
+        balance: { amount: 0.49, currency: "CNY" },
+      }),
+    );
     assert.ok(rendered.render(120)[0].includes(ansi("dim", "b:¥0.49")));
   } finally {
     rendered?.dispose();
@@ -360,15 +523,32 @@ test("never clips balance mid-number on narrow footers", () => {
   const { handlers, on } = captureHandlers();
   let footer: ((...args: any[]) => any) | undefined;
   let rendered: any;
-  const statuses = new Map([["provider-usage", JSON.stringify({
-    provider: "deepseek", state: "ready", capturedAtMs: 0, windows: [], balance: { amount: 123456.78, currency: "USD" },
-  })]]);
+  const statuses = new Map([
+    [
+      "provider-usage",
+      JSON.stringify({
+        provider: "deepseek",
+        state: "ready",
+        capturedAtMs: 0,
+        windows: [],
+        balance: { amount: 123456.78, currency: "USD" },
+      }),
+    ],
+  ]);
   registerStatusline({ on } as any);
   const context = {
-    model: { name: "DeepSeek V4.1 Flash", provider: "deepseek" }, thinkingLevel: "off",
+    model: { name: "DeepSeek V4.1 Flash", provider: "deepseek" },
+    thinkingLevel: "off",
     getContextUsage: () => undefined,
-    sessionManager: { getLeafId: () => null, getBranch: () => [{ type: "message", message: { role: "assistant", usage: { cost: { total: 0.042 } } } }] },
-    ui: { setFooter(callback: any) { footer = callback; } },
+    sessionManager: {
+      getLeafId: () => null,
+      getBranch: () => [{ type: "message", message: { role: "assistant", usage: { cost: { total: 0.042 } } } }],
+    },
+    ui: {
+      setFooter(callback: any) {
+        footer = callback;
+      },
+    },
   };
   try {
     handlers.get("session_start")?.({}, context);
@@ -393,13 +573,22 @@ test("renders the subagent profile inline and reflects updates without duplicati
   const { handlers, on } = captureHandlers();
   let footer: any;
   let rendered: any;
-  const statuses = new Map([["subagents", "jobs:1 running"], ["modes", "plan"], ["other", "other status"]]);
+  const statuses = new Map([
+    ["subagents", "jobs:1 running"],
+    ["modes", "plan"],
+    ["other", "other status"],
+  ]);
   registerStatusline({ on } as any);
   const context = {
-    model: { name: "model", provider: "anthropic" }, thinkingLevel: "high" as string | undefined,
+    model: { name: "model", provider: "anthropic" },
+    thinkingLevel: "high" as string | undefined,
     getContextUsage: () => ({ tokens: 1000, contextWindow: 200000 }),
     sessionManager: { getLeafId: () => null, getBranch: () => [] },
-    ui: { setFooter(callback: any) { footer = callback; } },
+    ui: {
+      setFooter(callback: any) {
+        footer = callback;
+      },
+    },
   };
   try {
     handlers.get("session_start")?.({}, context);
@@ -435,30 +624,63 @@ test("renders ANSI-themed footer within a narrow width and disposes its timer", 
   let footer: any;
   let rendered: any;
   const statuses = new Map([
-    ["provider-usage", JSON.stringify({ provider: "openai-codex", state: "ready", capturedAtMs: 0, windows: [{ kind: "rolling", label: "5h", usedPercent: 42, resetAtMs: 0 }] })],
+    [
+      "provider-usage",
+      JSON.stringify({
+        provider: "openai-codex",
+        state: "ready",
+        capturedAtMs: 0,
+        windows: [{ kind: "rolling", label: "5h", usedPercent: 42, resetAtMs: 0 }],
+      }),
+    ],
     ["subagent-profile", "a-very-long-selected-profile-name"],
     ["subagents", "jobs:1 running"],
   ]);
   registerStatusline({ on } as any);
   let contextTokens = 1000;
   const context = {
-    model: { name: "a-very-long-model-name", provider: "openai-codex" }, thinkingLevel: "off",
+    model: { name: "a-very-long-model-name", provider: "openai-codex" },
+    thinkingLevel: "off",
     getContextUsage: () => ({ tokens: contextTokens, contextWindow: 1000000 }),
-    sessionManager: { getLeafId: () => null, getBranch: () => [{ type: "message", message: { role: "assistant", usage: { input: 25, cacheRead: 75, cacheWrite: 0 } } }] },
-    ui: { setFooter(callback: any) { footer = callback; } },
+    sessionManager: {
+      getLeafId: () => null,
+      getBranch: () => [
+        { type: "message", message: { role: "assistant", usage: { input: 25, cacheRead: 75, cacheWrite: 0 } } },
+      ],
+    },
+    ui: {
+      setFooter(callback: any) {
+        footer = callback;
+      },
+    },
   };
   try {
     handlers.get("session_start")?.({}, context);
     const ansi = (color: string, value: string) => {
-      const codes: Record<string, number | string> = { accent: "38;2;230;151;92", success: 32, error: 31, warning: 33, borderAccent: 34, dim: 2, muted: 90 };
+      const codes: Record<string, number | string> = {
+        accent: "38;2;230;151;92",
+        success: 32,
+        error: 31,
+        warning: 33,
+        borderAccent: 34,
+        dim: 2,
+        muted: 90,
+      };
       return `\x1b[${codes[color] ?? 37}m${value}\x1b[0m`;
     };
-    rendered = footer({ invalidate() {} }, { fg: ansi, bold: (value: string) => value }, { getExtensionStatuses: () => statuses });
+    rendered = footer(
+      { invalidate() {} },
+      { fg: ansi, bold: (value: string) => value },
+      { getExtensionStatuses: () => statuses },
+    );
     assert.match(rendered.render(120)[0], /\x1b\[38;2;230;151;92m s:a-very-long-selected-profile-name\x1b\[0m/);
     assert.match(rendered.render(120)[0], /\x1b\[34m1k\/1m\x1b\[0m/);
     assert.match(rendered.render(120)[0], /\x1b\[33mc:75%\x1b\[0m/);
     const wide = rendered.render(120)[0].replace(/\x1b\[[0-9;]*m/g, "");
-    assert.match(wide, /^ a-very-long-model-name s:a-very-long-selected-profile-name 1k\/1m c:75% {2,}42% openai-codex $/);
+    assert.match(
+      wide,
+      /^ a-very-long-model-name s:a-very-long-selected-profile-name 1k\/1m c:75% {2,}42% openai-codex $/,
+    );
     assert.equal(wide.length, 120);
     contextTokens = 200000;
     assert.match(rendered.render(120)[0], /\x1b\[31m200k\/1m\x1b\[0m/);

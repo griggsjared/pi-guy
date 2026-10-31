@@ -38,7 +38,10 @@ test("recognizes claude-bridge quota status and round trips Claude windows", () 
 });
 
 test("accepts valid balances and rejects invalid balances in decoded status", () => {
-  for (const balance of [{ amount: 1, currency: "USD" }, { amount: 0, currency: "CNY" }]) {
+  for (const balance of [
+    { amount: 1, currency: "USD" },
+    { amount: 0, currency: "CNY" },
+  ]) {
     const status = { ...readyStatus, balance };
     assert.deepEqual(decodeUsageStatus(JSON.stringify(status)), status);
   }
@@ -60,12 +63,24 @@ test("rejects malformed JSON and invalid usage shapes", () => {
   assert.equal(decodeUsageStatus("not json"), undefined);
   assert.equal(decodeUsageStatus(JSON.stringify({ ...readyStatus, provider: "other" })), undefined);
   assert.equal(decodeUsageStatus(JSON.stringify({ ...readyStatus, capturedAtMs: -1 })), undefined);
-  assert.equal(decodeUsageStatus(JSON.stringify({
-    ...readyStatus, windows: [{ ...readyStatus.windows[0]!, usedPercent: Number.NaN }],
-  })), undefined);
-  assert.equal(decodeUsageStatus(JSON.stringify({
-    ...readyStatus, windows: [{ ...readyStatus.windows[0]!, resetAtMs: 0 }],
-  }).replace('"resetAtMs":0', '"resetAtMs":1e400')), undefined);
+  assert.equal(
+    decodeUsageStatus(
+      JSON.stringify({
+        ...readyStatus,
+        windows: [{ ...readyStatus.windows[0]!, usedPercent: Number.NaN }],
+      }),
+    ),
+    undefined,
+  );
+  assert.equal(
+    decodeUsageStatus(
+      JSON.stringify({
+        ...readyStatus,
+        windows: [{ ...readyStatus.windows[0]!, resetAtMs: 0 }],
+      }).replace('"resetAtMs":0', '"resetAtMs":1e400'),
+    ),
+    undefined,
+  );
 });
 
 test("accepts optional reset timestamps and unknown status without windows", () => {

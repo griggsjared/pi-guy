@@ -1,5 +1,5 @@
-import { test } from "node:test";
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import {
   accumulateEvent,
   assistantText,
@@ -31,47 +31,78 @@ test("parseEventLine", () => {
 });
 
 test("parseParentQuestion recognizes only marked input requests", () => {
-  assert.deepEqual(parseParentQuestion(JSON.stringify({
-    type: "extension_ui_request",
-    id: "question-1",
-    method: "input",
-    title: "subagents:ask-parent: Which API? ",
-    placeholder: " Existing or new. ",
-  })), {
-    id: "question-1",
-    question: "Which API?",
-    context: "Existing or new.",
-  });
-  assert.deepEqual(parseParentQuestion(JSON.stringify({
-    type: "extension_ui_request",
-    id: "question-2",
-    method: "input",
-    title: "subagents:ask-parent:Continue?",
-  })), { id: "question-2", question: "Continue?", context: undefined });
+  assert.deepEqual(
+    parseParentQuestion(
+      JSON.stringify({
+        type: "extension_ui_request",
+        id: "question-1",
+        method: "input",
+        title: "subagents:ask-parent: Which API? ",
+        placeholder: " Existing or new. ",
+      }),
+    ),
+    {
+      id: "question-1",
+      question: "Which API?",
+      context: "Existing or new.",
+    },
+  );
+  assert.deepEqual(
+    parseParentQuestion(
+      JSON.stringify({
+        type: "extension_ui_request",
+        id: "question-2",
+        method: "input",
+        title: "subagents:ask-parent:Continue?",
+      }),
+    ),
+    { id: "question-2", question: "Continue?", context: undefined },
+  );
   assert.equal(parseParentQuestion("not json"), undefined);
-  assert.equal(parseParentQuestion(JSON.stringify({
-    type: "extension_ui_request",
-    id: "",
-    method: "input",
-    title: "subagents:ask-parent:Missing ID",
-  })), undefined);
-  assert.equal(parseParentQuestion(JSON.stringify({
-    type: "extension_ui_request",
-    id: "question-3",
-    method: "editor",
-    title: "subagents:ask-parent:Wrong method",
-  })), undefined);
-  assert.equal(parseParentQuestion(JSON.stringify({
-    type: "extension_ui_request",
-    id: "question-4",
-    method: "input",
-    title: "Ordinary extension input",
-  })), undefined);
+  assert.equal(
+    parseParentQuestion(
+      JSON.stringify({
+        type: "extension_ui_request",
+        id: "",
+        method: "input",
+        title: "subagents:ask-parent:Missing ID",
+      }),
+    ),
+    undefined,
+  );
+  assert.equal(
+    parseParentQuestion(
+      JSON.stringify({
+        type: "extension_ui_request",
+        id: "question-3",
+        method: "editor",
+        title: "subagents:ask-parent:Wrong method",
+      }),
+    ),
+    undefined,
+  );
+  assert.equal(
+    parseParentQuestion(
+      JSON.stringify({
+        type: "extension_ui_request",
+        id: "question-4",
+        method: "input",
+        title: "Ordinary extension input",
+      }),
+    ),
+    undefined,
+  );
 });
 
 test("assistantText", () => {
   assert.equal(assistantText("plain"), "plain");
-  assert.equal(assistantText([{ type: "text", text: "a" }, { type: "text", text: "b" }]), "a\nb");
+  assert.equal(
+    assistantText([
+      { type: "text", text: "a" },
+      { type: "text", text: "b" },
+    ]),
+    "a\nb",
+  );
   assert.equal(assistantText([{ type: "thinking", thinking: "hmm" }]), "");
   assert.equal(assistantText([{ type: "text", text: 42 }]), "");
   assert.equal(assistantText(42), "");
@@ -79,14 +110,23 @@ test("assistantText", () => {
 
 test("accumulateEvent: message_end string content and usage", () => {
   const state = createStreamState("default-model");
-  accumulateEvent(state, end("final answer", {
-    usage: { input: 10, output: 20, cacheRead: 30, cacheWrite: 40, totalTokens: 60, cost: 0.001 },
-    model: "served-model",
-  }));
+  accumulateEvent(
+    state,
+    end("final answer", {
+      usage: { input: 10, output: 20, cacheRead: 30, cacheWrite: 40, totalTokens: 60, cost: 0.001 },
+      model: "served-model",
+    }),
+  );
   assert.equal(state.finalText, "final answer");
   assert.equal(state.model, "served-model");
   assert.deepEqual(state.usage, {
-    turns: 1, input: 10, output: 20, cacheRead: 30, cacheWrite: 40, cost: 0.001, contextTokens: 60,
+    turns: 1,
+    input: 10,
+    output: 20,
+    cacheRead: 30,
+    cacheWrite: 40,
+    cost: 0.001,
+    contextTokens: 60,
   });
 });
 
@@ -99,11 +139,14 @@ test("accumulateEvent: cost as object", () => {
 test("accumulateEvent: tool calls parsed, sanitized, and truncated", () => {
   const state = createStreamState("m");
   const longContent = Array.from({ length: 10 }, () => "line").join("\n");
-  accumulateEvent(state, end([
-    { type: "text", text: "working" },
-    { type: "toolCall", name: "write", arguments: { file_path: "/x.ts", content: longContent } },
-    { type: "tool_use", name: "read", input: { path: "/y.ts" } },
-  ]));
+  accumulateEvent(
+    state,
+    end([
+      { type: "text", text: "working" },
+      { type: "toolCall", name: "write", arguments: { file_path: "/x.ts", content: longContent } },
+      { type: "tool_use", name: "read", input: { path: "/y.ts" } },
+    ]),
+  );
   assert.equal(state.toolCalls.length, 2);
   assert.equal(state.toolCalls[0]?.name, "write");
   assert.equal(state.toolCalls[0]?.args.content, undefined);
@@ -114,12 +157,16 @@ test("accumulateEvent: tool calls parsed, sanitized, and truncated", () => {
 test("stream retains the newest 20 tool calls", () => {
   const state = createStreamState("m");
   const parts = Array.from({ length: 25 }, (_, i) => ({
-    type: "toolCall", name: "read", arguments: { path: `/f${i}.ts` },
+    type: "toolCall",
+    name: "read",
+    arguments: { path: `/f${i}.ts` },
   }));
   accumulateEvent(state, end(parts));
   assert.equal(state.toolCalls.length, 20);
-  assert.deepEqual(state.toolCalls.map((call) => call.args.path),
-    Array.from({ length: 20 }, (_, i) => `/f${i + 5}.ts`));
+  assert.deepEqual(
+    state.toolCalls.map((call) => call.args.path),
+    Array.from({ length: 20 }, (_, i) => `/f${i + 5}.ts`),
+  );
 });
 
 test("accumulateEvent: message_update keeps the longest legacy chunk", () => {
@@ -149,11 +196,7 @@ test("accumulateEvent: ignores non-assistant and malformed lines", () => {
 });
 
 test("extractFinalText: full stream, thinking fallback, and truncated tail", () => {
-  const stream = [
-    update("partial"),
-    end("final"),
-    "garbage",
-  ].join("\n");
+  const stream = [update("partial"), end("final"), "garbage"].join("\n");
   assert.equal(extractFinalText(stream), "final");
   assert.equal(extractFinalText(end("")), "");
   assert.equal(extractFinalText(end([{ type: "thinking", thinking: "only thinking" }])), "only thinking");

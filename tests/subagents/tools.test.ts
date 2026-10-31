@@ -1,20 +1,14 @@
-import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { createJobRegistry } from "../../src/subagents/registry.ts";
-import { resolveMode } from "../../src/subagents/tools.ts";
-import { createPeekTool, createReplyTool } from "../../src/subagents/status-tools.ts";
+import type { spawn } from "node:child_process";
+import { test } from "node:test";
 import { QUESTION_ENTRY_TYPE } from "../../src/subagents/constants.ts";
-import {
-  FakeChild,
-  fakeSpawnChildren,
-  endEvent,
-  questionEvent,
-  responseEvent,
-} from "./fake-child.ts";
-import type { SpawnCall } from "./fake-child.ts";
+import type { createJobRegistry } from "../../src/subagents/registry.ts";
+import { createPeekTool, createReplyTool } from "../../src/subagents/status-tools.ts";
+import { resolveMode } from "../../src/subagents/tools.ts";
 import { fakeTheme } from "../helpers/theme.ts";
 import { flush, sleep, waitFor } from "../helpers/wait.ts";
+import { FakeChild, fakeSpawnChildren, endEvent, questionEvent, responseEvent } from "./fake-child.ts";
+import type { SpawnCall } from "./fake-child.ts";
 import { makeTool, renderable, renderText } from "./helpers.ts";
 
 test("resolveMode: single, batch, and validation", () => {
@@ -26,10 +20,7 @@ test("resolveMode: single, batch, and validation", () => {
   });
   assert.throws(() => resolveMode({}), /exactly one mode/);
   assert.throws(() => resolveMode({ agent: "a" }), /exactly one mode/); // agent without task is not a single
-  assert.throws(
-    () => resolveMode({ agent: "a", task: "t", tasks: [{ agent: "a", task: "t" }] }),
-    /exactly one mode/,
-  );
+  assert.throws(() => resolveMode({ agent: "a", task: "t", tasks: [{ agent: "a", task: "t" }] }), /exactly one mode/);
   assert.throws(() => resolveMode({ tasks: [] }), /at least one task/);
 });
 
@@ -37,8 +28,22 @@ test("overlapping tool launches deliver independently and clear only their own j
   const children = [new FakeChild(), new FakeChild(), new FakeChild()];
   const { spawnFn } = fakeSpawnChildren(children);
   const { tool, registry, sendMessage, activeTickers, ctx } = makeTool({ spawnFn });
-  t.after(() => { children.forEach((child) => child.finish(0)); for (const ticker of activeTickers) clearInterval(ticker); });
-  await tool.execute("first", { tasks: [{ agent: "scout", task: "one" }, { agent: "scout", task: "two" }] }, undefined, undefined, ctx);
+  t.after(() => {
+    children.forEach((child) => child.finish(0));
+    for (const ticker of activeTickers) clearInterval(ticker);
+  });
+  await tool.execute(
+    "first",
+    {
+      tasks: [
+        { agent: "scout", task: "one" },
+        { agent: "scout", task: "two" },
+      ],
+    },
+    undefined,
+    undefined,
+    ctx,
+  );
   await tool.execute("second", { agent: "scout", task: "three" }, undefined, undefined, ctx);
   await waitFor(() => children.every((child) => child.stdin.writes.length > 0));
   const first = children.find((child) => child.stdin.commands()[0]!.message === "Task: one")!;
@@ -47,24 +52,38 @@ test("overlapping tool launches deliver independently and clear only their own j
   first.stdout.emit("data", Buffer.from(endEvent("one")));
   first.finish(0);
   await waitFor(() => sendMessage.calls.length === 1);
-  assert.deepEqual(registry.pendingCompleted().map((job) => job.id), [1]);
+  assert.deepEqual(
+    registry.pendingCompleted().map((job) => job.id),
+    [1],
+  );
   third.stdout.emit("data", Buffer.from(endEvent("three")));
   third.finish(0);
   await waitFor(() => sendMessage.calls.length === 2);
-  assert.deepEqual(registry.pendingCompleted().map((job) => job.id), [1]);
+  assert.deepEqual(
+    registry.pendingCompleted().map((job) => job.id),
+    [1],
+  );
   assert.equal(registry.get(2)!.status, "running");
   second.stdout.emit("data", Buffer.from(endEvent("two")));
   second.finish(0);
   await waitFor(() => activeTickers.size === 0);
   assert.deepEqual(registry.pendingCompleted(), []);
-  assert.deepEqual(sendMessage.calls.map((call) => (call[0] as { details: { jobId: number } }).details.jobId), [1, 3, 2]);
+  assert.deepEqual(
+    sendMessage.calls.map((call) => (call[0] as { details: { jobId: number } }).details.jobId),
+    [1, 3, 2],
+  );
 });
 
 test("failed inactivity delivery leaves the child running", async (t) => {
   const { tool, pi, registry, activeTickers, child, ctx } = makeTool();
-  t.after(() => { child.finish(0); for (const ticker of activeTickers) clearInterval(ticker); });
+  t.after(() => {
+    child.finish(0);
+    for (const ticker of activeTickers) clearInterval(ticker);
+  });
   const errors = t.mock.method(console, "error", () => {});
-  const delivery = t.mock.method(pi, "sendMessage", () => { throw new Error("parent unavailable"); });
+  const delivery = t.mock.method(pi, "sendMessage", () => {
+    throw new Error("parent unavailable");
+  });
   t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1000 });
   await tool.execute("launch", { agent: "scout", task: "Keep working" }, undefined, undefined, ctx);
   while (child.stdin.commands().length === 0) await flush();
@@ -83,9 +102,23 @@ test("inactivity does not deliver for completed or removed registry jobs", async
   const children = [new FakeChild(), new FakeChild()];
   const { spawnFn } = fakeSpawnChildren(children);
   const { tool, registry, sendMessage, appendEntry, activeTickers, ctx } = makeTool({ spawnFn });
-  t.after(() => { children.forEach((child) => child.finish(0)); for (const ticker of activeTickers) clearInterval(ticker); });
+  t.after(() => {
+    children.forEach((child) => child.finish(0));
+    for (const ticker of activeTickers) clearInterval(ticker);
+  });
   t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1000 });
-  await tool.execute("launch", { tasks: [{ agent: "scout", task: "one" }, { agent: "scout", task: "two" }] }, undefined, undefined, ctx);
+  await tool.execute(
+    "launch",
+    {
+      tasks: [
+        { agent: "scout", task: "one" },
+        { agent: "scout", task: "two" },
+      ],
+    },
+    undefined,
+    undefined,
+    ctx,
+  );
   while (children.some((child) => child.stdin.commands().length === 0)) await flush();
   registry.complete(1, { agent: "scout", task: "one", text: "done", exitCode: 0, error: "" });
   registry.jobs.delete(2);
@@ -99,64 +132,77 @@ test("launch failures and cancellations keep status while avoiding a repeated ta
   const theme = fakeTheme() as never;
   const args = { agent: "scout", task: "launch task", title: "Launch title" };
   const call = renderText(tool.renderCall!(args, theme, {} as never));
-  const failed = renderText(tool.renderResult!(
-    {
-      content: [{ type: "text", text: "subagent launch scout · Launch title: Error: spawn failed" }],
-      details: { status: "failed", jobId: 1, agent: "scout", task: "launch task", title: "Launch title" },
-    } as never,
-    { expanded: false, isPartial: false },
-    theme,
-    { args } as never,
-  ));
+  const failed = renderText(
+    tool.renderResult!(
+      {
+        content: [{ type: "text", text: "subagent launch scout · Launch title: Error: spawn failed" }],
+        details: { status: "failed", jobId: 1, agent: "scout", task: "launch task", title: "Launch title" },
+      } as never,
+      { expanded: false, isPartial: false },
+      theme,
+      { args } as never,
+    ),
+  );
   const combinedLaunch = `${call}\n${failed}`;
   assert.equal(combinedLaunch.match(/Launch title/g)?.length, 1);
   assert.doesNotMatch(failed, /subagent launch/);
   assert.match(failed, /✗/);
   assert.match(failed, /Error: spawn failed/);
 
-  const cancelled = renderText(tool.renderResult!(
-    {
-      content: [{ type: "text", text: "subagent launch scout · Launch title: Cancelled (manual)." }],
-      details: { status: "cancelled", jobId: 1, agent: "scout", task: "launch task", title: "Launch title" },
-    } as never,
-    { expanded: false, isPartial: false },
-    theme,
-    { args } as never,
-  ));
+  const cancelled = renderText(
+    tool.renderResult!(
+      {
+        content: [{ type: "text", text: "subagent launch scout · Launch title: Cancelled (manual)." }],
+        details: { status: "cancelled", jobId: 1, agent: "scout", task: "launch task", title: "Launch title" },
+      } as never,
+      { expanded: false, isPartial: false },
+      theme,
+      { args } as never,
+    ),
+  );
   assert.doesNotMatch(cancelled, /subagent launch scout · Launch title/);
   assert.match(cancelled, /⊘/);
   assert.match(cancelled, /Cancelled \(manual\)/);
 
-  const mismatched = renderText(tool.renderResult!(
-    {
-      content: [{ type: "text", text: "subagent launch scout · Other title: Error: mismatch" }],
-      details: { status: "failed", jobId: 1, agent: "scout", task: "launch task", title: "Other title" },
-    } as never,
-    { expanded: false, isPartial: false },
-    theme,
-    { args } as never,
-  ));
+  const mismatched = renderText(
+    tool.renderResult!(
+      {
+        content: [{ type: "text", text: "subagent launch scout · Other title: Error: mismatch" }],
+        details: { status: "failed", jobId: 1, agent: "scout", task: "launch task", title: "Other title" },
+      } as never,
+      { expanded: false, isPartial: false },
+      theme,
+      { args } as never,
+    ),
+  );
   assert.match(mismatched, /subagent launch scout · Other title/);
   assert.match(mismatched, /Error: mismatch/);
 
-  const legacy = renderText(tool.renderResult!(
-    {
-      content: [{ type: "text", text: "subagent launch scout · Launch title: Error: legacy" }],
-      details: { status: "failed", jobId: 1, agent: "scout", task: "launch task", title: "Launch title" },
-    } as never,
-    { expanded: false, isPartial: false },
-    theme,
-    {} as never,
-  ));
+  const legacy = renderText(
+    tool.renderResult!(
+      {
+        content: [{ type: "text", text: "subagent launch scout · Launch title: Error: legacy" }],
+        details: { status: "failed", jobId: 1, agent: "scout", task: "launch task", title: "Launch title" },
+      } as never,
+      { expanded: false, isPartial: false },
+      theme,
+      {} as never,
+    ),
+  );
   assert.match(legacy, /subagent launch scout · Launch title/);
   assert.match(legacy, /Error: legacy/);
 
-  const launched = renderText(tool.renderResult!(
-    { content: [{ type: "text", text: "Launched **scout** subagent #1: \\\"launch task\\\"" }], details: { status: "launched", jobIds: [1] } } as never,
-    { expanded: false, isPartial: false },
-    theme,
-    { args } as never,
-  ));
+  const launched = renderText(
+    tool.renderResult!(
+      {
+        content: [{ type: "text", text: 'Launched **scout** subagent #1: \\"launch task\\"' }],
+        details: { status: "launched", jobIds: [1] },
+      } as never,
+      { expanded: false, isPartial: false },
+      theme,
+      { args } as never,
+    ),
+  );
   assert.equal(launched.trim(), "");
 });
 
@@ -166,18 +212,17 @@ test("execute: profile confirmation surfaces a paused progress update", async (t
     onPause?.("Paused: waiting for subagent profile selection");
     return true;
   });
-  t.after(() => { child.finish(0); for (const ticker of activeTickers) clearInterval(ticker); });
-  await tool.execute(
-    "call1",
-    { agent: "scout", task: "t" },
-    undefined,
-    (partial) => updates.push(partial),
-    ctx,
-  );
-  assert.deepEqual(updates, [{
-    content: [{ type: "text", text: "subagent launch scout · t: Paused: waiting for subagent profile selection" }],
-    details: { status: "running", targets: [{ agent: "scout", task: "t" }] },
-  }]);
+  t.after(() => {
+    child.finish(0);
+    for (const ticker of activeTickers) clearInterval(ticker);
+  });
+  await tool.execute("call1", { agent: "scout", task: "t" }, undefined, (partial) => updates.push(partial), ctx);
+  assert.deepEqual(updates, [
+    {
+      content: [{ type: "text", text: "subagent launch scout · t: Paused: waiting for subagent profile selection" }],
+      details: { status: "running", targets: [{ agent: "scout", task: "t" }] },
+    },
+  ]);
 });
 
 test("execute: cancelling profile confirmation returns a cancelled result", async () => {
@@ -371,7 +416,12 @@ test("execute: single returns launched, then displays and delivers its result", 
   await waitFor(() => sendMessage.calls.length === 1);
 
   const [message, options] = sendMessage.calls[0]! as [
-    { customType: string; content: string; display: boolean; details: { status: string; icon: string; jobId: number; agent: string; model: string; thinkingLevel?: string } },
+    {
+      customType: string;
+      content: string;
+      display: boolean;
+      details: { status: string; icon: string; jobId: number; agent: string; model: string; thinkingLevel?: string };
+    },
     { triggerTurn: boolean; deliverAs: string },
   ];
   assert.equal(message.customType, "subagents");
@@ -410,13 +460,24 @@ test("execute: inactivity steers a busy parent once per idle stretch without sto
   const now = Date.now();
   t.mock.timers.enable({ apis: ["Date", "setTimeout"], now });
   const { tool, registry, sendMessage, appendEntry, activeTickers, child, ctx } = makeTool();
-  t.after(() => { child.finish(0); for (const ticker of activeTickers) clearInterval(ticker); });
+  t.after(() => {
+    child.finish(0);
+    for (const ticker of activeTickers) clearInterval(ticker);
+  });
   (ctx as unknown as { isIdle: () => boolean }).isIdle = () => false;
   await tool.execute("launch", { agent: "scout", task: "Inspect the slow tool" }, undefined, undefined, ctx);
   while (child.stdin.commands().length === 0) await flush();
-  child.stdout.emit("data", Buffer.from(`${JSON.stringify({
-    type: "tool_execution_start", toolCallId: "read-1", toolName: "read", args: { path: "src/auth.ts" },
-  })}\n`));
+  child.stdout.emit(
+    "data",
+    Buffer.from(
+      `${JSON.stringify({
+        type: "tool_execution_start",
+        toolCallId: "read-1",
+        toolName: "read",
+        args: { path: "src/auth.ts" },
+      })}\n`,
+    ),
+  );
   assert.equal(registry.get(1)?.steps.filter((step) => step.endedAt === undefined).length, 1);
 
   t.mock.timers.tick(300000);
@@ -427,7 +488,13 @@ test("execute: inactivity steers a busy parent once per idle stretch without sto
   ];
   assert.equal(message.customType, "subagent-check-in");
   assert.equal(message.display, true);
-  assert.deepEqual(message.details, { jobId: 1, agent: "scout", lastActivityAt: now, detectedAt: now + 300000, inactivityTimeoutMs: 300000 });
+  assert.deepEqual(message.details, {
+    jobId: 1,
+    agent: "scout",
+    lastActivityAt: now,
+    detectedAt: now + 300000,
+    inactivityTimeoutMs: 300000,
+  });
   assert.deepEqual(options, { deliverAs: "steer", triggerTurn: true });
   assert.match(message.content, /#1 scout/);
   assert.match(message.content, /Task: Inspect the slow tool/);
@@ -443,9 +510,18 @@ test("execute: inactivity steers a busy parent once per idle stretch without sto
 
   t.mock.timers.tick(600000);
   assert.equal(sendMessage.calls.length, 1);
-  child.stdout.emit("data", Buffer.from(`${JSON.stringify({
-    type: "tool_execution_end", toolCallId: "read-1", toolName: "read", isError: false, result: "ok",
-  })}\n`));
+  child.stdout.emit(
+    "data",
+    Buffer.from(
+      `${JSON.stringify({
+        type: "tool_execution_end",
+        toolCallId: "read-1",
+        toolName: "read",
+        isError: false,
+        result: "ok",
+      })}\n`,
+    ),
+  );
   assert.equal(registry.get(1)?.steps.find((step) => step.kind === "tool")?.endedAt, now + 900000);
   t.mock.timers.tick(300000);
   assert.equal(sendMessage.calls.length, 2);
@@ -467,19 +543,11 @@ test("execute: child semantic events are available through peek", async () => {
   child.finish(0);
   await sleep(20);
 
-  const peek = await createPeekTool({ registry }).execute(
-    "peek",
-    { jobId: 1 },
-    undefined,
-    undefined,
-    {} as never,
+  const peek = await createPeekTool({ registry }).execute("peek", { jobId: 1 }, undefined, undefined, {} as never);
+  assert.deepEqual(
+    peek.details.events.map((event) => `${event.kind}:${event.summary}`),
+    ["state:started", "tool-start:read src/auth.ts", "tool-end:read success: ok", "assistant:scouted"],
   );
-  assert.deepEqual(peek.details.events.map((event) => `${event.kind}:${event.summary}`), [
-    "state:started",
-    "tool-start:read src/auth.ts",
-    "tool-end:read success: ok",
-    "assistant:scouted",
-  ]);
 });
 
 test("child questions trigger a parent turn and subagent_reply resolves them", async () => {
@@ -491,10 +559,14 @@ test("child questions trigger a parent turn and subagent_reply resolves them", a
   child.stdout.emit("data", Buffer.from(responseEvent(initial)));
   child.stdout.emit("data", Buffer.from(questionEvent("question-1", "Which API?", "Two choices")));
 
-  assert.deepEqual(registry.get(1)?.pendingQuestions.map((question) => question.id), ["question-1"]);
-  assert.deepEqual(registry.readEvents(1)?.events.map((event) => `${event.kind}:${event.summary}`), [
-    "question:question: Which API?",
-  ]);
+  assert.deepEqual(
+    registry.get(1)?.pendingQuestions.map((question) => question.id),
+    ["question-1"],
+  );
+  assert.deepEqual(
+    registry.readEvents(1)?.events.map((event) => `${event.kind}:${event.summary}`),
+    ["question:question: Which API?"],
+  );
   const [message, options] = sendMessage.calls[0] as [
     { customType: string; content: string; display: boolean; details: { jobId: number; questionId: string } },
     { deliverAs: string; triggerTurn: boolean },
@@ -534,7 +606,9 @@ test("stale UI context does not duplicate cancellation completion", async () => 
   await waitFor(() => child.stdin.writes.length > 0);
   Object.defineProperty(ctx, "hasUI", {
     configurable: true,
-    get: () => { throw new Error("stale context"); },
+    get: () => {
+      throw new Error("stale context");
+    },
   });
 
   assert.equal(registry.cancel(1, "manual"), true);
@@ -549,7 +623,10 @@ test("stale UI context does not duplicate cancellation completion", async () => 
 
 test("cancelling a child waiting on the parent invalidates its question and suppresses check-ins", async (t) => {
   const { tool, registry, sendMessage, activeTickers, child, ctx } = makeTool();
-  t.after(() => { child.finish(0); for (const ticker of activeTickers) clearInterval(ticker); });
+  t.after(() => {
+    child.finish(0);
+    for (const ticker of activeTickers) clearInterval(ticker);
+  });
   t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: Date.now() });
   await tool.execute("call1", { agent: "scout", task: "t" }, undefined, undefined, ctx);
   while (child.stdin.commands().length === 0) await flush();
@@ -557,7 +634,10 @@ test("cancelling a child waiting on the parent invalidates its question and supp
   assert.ok(initial);
   child.stdout.emit("data", Buffer.from(responseEvent(initial)));
   child.stdout.emit("data", Buffer.from(questionEvent("question-1", "Continue?")));
-  assert.deepEqual(registry.get(1)?.pendingQuestions.map((question) => question.id), ["question-1"]);
+  assert.deepEqual(
+    registry.get(1)?.pendingQuestions.map((question) => question.id),
+    ["question-1"],
+  );
   t.mock.timers.tick(600000);
   assert.equal(sendMessage.calls.length, 1, "a pending question suppresses inactivity check-ins");
 
@@ -568,21 +648,16 @@ test("cancelling a child waiting on the parent invalidates its question and supp
   t.mock.timers.reset();
   await sleep(20);
   assert.equal(registry.get(1)?.status, "cancelled");
-  const resultMessage = sendMessage.calls.find((call) =>
-    (call[0] as { details?: { status?: string } }).details?.status === "cancelled");
+  const resultMessage = sendMessage.calls.find(
+    (call) => (call[0] as { details?: { status?: string } }).details?.status === "cancelled",
+  );
   assert.ok(resultMessage, "cancelled result delivered after the child closes");
 });
 
 test("execute: all-unknown batch throws", async () => {
   const { tool, ctx } = makeTool();
   await assert.rejects(
-    tool.execute(
-      "call1",
-      { tasks: [{ agent: "ghost", task: "t" }] },
-      undefined,
-      undefined,
-      ctx,
-    ),
+    tool.execute("call1", { tasks: [{ agent: "ghost", task: "t" }] }, undefined, undefined, ctx),
     /Unknown agent\(s\): ghost/,
   );
 });
@@ -591,7 +666,12 @@ test("execute: partial-unknown batch launches known jobs and reports skipped cou
   const { tool, registry, sendMessage, child, ctx } = makeTool();
   const result = await tool.execute(
     "call1",
-    { tasks: [{ agent: "ghost", task: "t" }, { agent: "scout", task: "t2" }] },
+    {
+      tasks: [
+        { agent: "ghost", task: "t" },
+        { agent: "scout", task: "t2" },
+      ],
+    },
     undefined,
     undefined,
     ctx,
@@ -621,19 +701,36 @@ test("execute: queued cancellation does not spawn and reports its reason", async
   const notices: string[] = [];
   (ctx as unknown as { hasUI: boolean; ui: { notify: (text: string) => void } }).hasUI = true;
   (ctx as unknown as { ui: { notify: (text: string) => void } }).ui = { notify: (text) => notices.push(text) };
-  await tool.execute("call1", {
-    tasks: [{ agent: "scout", task: "one" }, { agent: "scout", task: "two" }],
-    concurrency: 1,
-  }, undefined, undefined, ctx);
+  await tool.execute(
+    "call1",
+    {
+      tasks: [
+        { agent: "scout", task: "one" },
+        { agent: "scout", task: "two" },
+      ],
+      concurrency: 1,
+    },
+    undefined,
+    undefined,
+    ctx,
+  );
   assert.equal(registry.cancel(2, "timeout"), true);
   // Let the first launch finish setup and attach its close listener.
   await waitFor(() => children[0]!.stdin.writes.length > 0);
   children[0]!.finish(0);
   await sleep(30);
   assert.equal(calls.length, 1, "the queued cancelled job must not spawn");
-  const resultMessage = sendMessage.calls.find((call) => (call[0] as { details?: { jobId?: number } }).details?.jobId === 2);
-  assert.equal((resultMessage?.[0] as { details: { status: string; cancellationReason?: string } }).details.status, "cancelled");
-  assert.equal((resultMessage?.[0] as { details: { cancellationReason?: string } }).details.cancellationReason, "timeout");
+  const resultMessage = sendMessage.calls.find(
+    (call) => (call[0] as { details?: { jobId?: number } }).details?.jobId === 2,
+  );
+  assert.equal(
+    (resultMessage?.[0] as { details: { status: string; cancellationReason?: string } }).details.status,
+    "cancelled",
+  );
+  assert.equal(
+    (resultMessage?.[0] as { details: { cancellationReason?: string } }).details.cancellationReason,
+    "timeout",
+  );
   assert.deepEqual(notices, ["subagent #2 scout — cancelled (timeout) · two"]);
   assert.match((sendMessage.calls.at(-1)?.[0] as { content: string }).content, /Cancelled \(timeout\)/);
 });
@@ -643,10 +740,19 @@ test("execute: parent abort does not cancel running or queued jobs", async () =>
   const { spawnFn, calls } = fakeSpawnChildren(children);
   const { tool, registry, ctx } = makeTool({ spawnFn });
   const controller = new AbortController();
-  const result = await tool.execute("call1", {
-    tasks: [{ agent: "scout", task: "one" }, { agent: "scout", task: "two" }],
-    concurrency: 1,
-  }, controller.signal, undefined, ctx);
+  const result = await tool.execute(
+    "call1",
+    {
+      tasks: [
+        { agent: "scout", task: "one" },
+        { agent: "scout", task: "two" },
+      ],
+      concurrency: 1,
+    },
+    controller.signal,
+    undefined,
+    ctx,
+  );
   assert.equal(result.details.status, "launched");
 
   await waitFor(() => calls.length > 0);
@@ -674,7 +780,10 @@ test("execute: registry cancellation reason wins over child completion", async (
   await waitFor(() => sendMessage.calls.length === 1);
 
   assert.equal(registry.get(1)?.cancellationReason, "manual");
-  const message = sendMessage.calls[0]![0] as { content: string; details: { status: string; icon: string; cancellationReason?: string } };
+  const message = sendMessage.calls[0]![0] as {
+    content: string;
+    details: { status: string; icon: string; cancellationReason?: string };
+  };
   assert.equal(message.details.status, "cancelled");
   assert.equal(message.details.icon, "⊘");
   assert.equal(message.details.cancellationReason, "manual");
@@ -694,7 +803,8 @@ test("execute: setup cancellation reports cancellation instead of failure", asyn
   const result = await made.tool.execute("call1", { agent: "scout", task: "t" }, undefined, undefined, made.ctx);
   assert.equal(result.details.status, "launched");
   await waitFor(() => made.sendMessage.calls.length > 0);
-  const details = (made.sendMessage.calls[0]?.[0] as { details: { status: string; cancellationReason?: string } }).details;
+  const details = (made.sendMessage.calls[0]?.[0] as { details: { status: string; cancellationReason?: string } })
+    .details;
   assert.equal(details.status, "cancelled");
   assert.equal(details.cancellationReason, "session-shutdown");
 });
@@ -720,7 +830,12 @@ test("execute: parallel batch displays and delivers each result", async () => {
   const { tool, registry, sendMessage, sendUserMessage, activeTickers, activeProcs, ctx } = makeTool({ spawnFn });
   const result = await tool.execute(
     "call1",
-    { tasks: [{ agent: "scout", task: "t1" }, { agent: "scout", task: "t2" }] },
+    {
+      tasks: [
+        { agent: "scout", task: "t1" },
+        { agent: "scout", task: "t2" },
+      ],
+    },
     undefined,
     undefined,
     ctx,
@@ -739,7 +854,10 @@ test("execute: parallel batch displays and delivers each result", async () => {
   first.stdout.emit("data", Buffer.from(endEvent("one")));
   first.finish(0);
   await waitFor(() => sendMessage.calls.length === 1);
-  assert.deepEqual(registry.pendingCompleted().map((job) => job.id), [1]);
+  assert.deepEqual(
+    registry.pendingCompleted().map((job) => job.id),
+    [1],
+  );
   assert.equal(registry.get(2)!.status, "running");
   second.stdout.emit("data", Buffer.from(endEvent("two")));
   second.finish(1);
@@ -756,14 +874,8 @@ test("execute: parallel batch displays and delivers each result", async () => {
 
 test("execute: validation errors reject", async () => {
   const { tool, ctx } = makeTool();
-  await assert.rejects(
-    tool.execute("call1", { tasks: [] }, undefined, undefined, ctx),
-    /at least one task/,
-  );
-  await assert.rejects(
-    tool.execute("call1", { agent: "scout" }, undefined, undefined, ctx),
-    /exactly one mode/,
-  );
+  await assert.rejects(tool.execute("call1", { tasks: [] }, undefined, undefined, ctx), /at least one task/);
+  await assert.rejects(tool.execute("call1", { agent: "scout" }, undefined, undefined, ctx), /exactly one mode/);
 });
 
 test("renderResult: tolerates missing details (error results omit it)", () => {
@@ -783,12 +895,7 @@ test("renderResult: renders launched/failed/completed summaries", () => {
   const { tool } = makeTool();
   const theme = fakeTheme() as never;
   const render = (details: { status: string }) =>
-    tool.renderResult!(
-      { content: [{ type: "text", text: "s" }], details } as never,
-      {} as never,
-      theme,
-      {} as never,
-    );
+    tool.renderResult!({ content: [{ type: "text", text: "s" }], details } as never, {} as never, theme, {} as never);
   const launched = render({ status: "launched" });
   assert.ok(renderable(launched));
   assert.equal(renderText(launched).trim(), "");

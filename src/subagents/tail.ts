@@ -9,7 +9,8 @@ import type { JobEvent, JobStep } from "./types.ts";
 const MAX_TAIL_EVENTS = 100;
 const MAX_VISIBLE_EVENTS = 14;
 const POLL_INTERVAL_MS = 250;
-const TERMINAL_SEQUENCE = /\x1B\][\s\S]*?(?:\x07|\x1B\\|\x9C)|\x1B[P^_X][\s\S]*?(?:\x1B\\|\x9C)|[\x1B\x9B][[\]()#;?]*(?:\d{1,4}(?:[;:]\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]/g;
+const TERMINAL_SEQUENCE =
+  /\x1B\][\s\S]*?(?:\x07|\x1B\\|\x9C)|\x1B[P^_X][\s\S]*?(?:\x1B\\|\x9C)|[\x1B\x9B][[\]()#;?]*(?:\d{1,4}(?:[;:]\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]/g;
 const CONTROL_CHARACTER = /[\x00-\x1F\x7F-\x9F]/g;
 
 export function formatLocalTime(timestamp: number): string {
@@ -21,17 +22,24 @@ export function formatStepTiming(step: JobStep, now: number): string {
   return `${formatLocalTime(step.startedAt)} · ${formatDuration(Math.max(1000, (step.endedAt ?? now) - step.startedAt))}${step.endedAt === undefined ? " elapsed" : ""}`;
 }
 
-export function formatEventTiming(event: JobEvent, job: Job | undefined, now: number): { timestamp: string; suffix: string } {
+export function formatEventTiming(
+  event: JobEvent,
+  job: Job | undefined,
+  now: number,
+): { timestamp: string; suffix: string } {
   const step = event.stepId === undefined ? undefined : job?.steps.find((step) => step.id === event.stepId);
   const startedAt = event.startedAt ?? step?.startedAt;
   const active = step?.endedAt === undefined && step !== undefined && job?.status === "running";
   const endedAt = step?.endedAt ?? (job?.status !== "running" ? job?.endTime : undefined);
-  const duration = event.durationMs ?? (startedAt !== undefined && step && (active || endedAt !== undefined)
-    ? (endedAt ?? now) - startedAt
-    : undefined);
+  const duration =
+    event.durationMs ??
+    (startedAt !== undefined && step && (active || endedAt !== undefined) ? (endedAt ?? now) - startedAt : undefined);
   return {
-    timestamp: formatLocalTime(event.durationMs === undefined ? startedAt ?? event.timestamp : event.timestamp),
-    suffix: duration === undefined ? "" : ` · ${formatDuration(Math.max(1000, duration))}${event.durationMs === undefined && active ? " elapsed" : ""}`,
+    timestamp: formatLocalTime(event.durationMs === undefined ? (startedAt ?? event.timestamp) : event.timestamp),
+    suffix:
+      duration === undefined
+        ? ""
+        : ` · ${formatDuration(Math.max(1000, duration))}${event.durationMs === undefined && active ? " elapsed" : ""}`,
   };
 }
 
@@ -57,11 +65,7 @@ export function eventColor(kind: JobEvent["kind"]): ThemeColor {
 }
 
 function normalizeLine(text: string): string {
-  return text
-    .replace(TERMINAL_SEQUENCE, "")
-    .replace(CONTROL_CHARACTER, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  return text.replace(TERMINAL_SEQUENCE, "").replace(CONTROL_CHARACTER, " ").replace(/\s+/g, " ").trim();
 }
 
 function contentText(content: unknown): string {
@@ -126,13 +130,7 @@ export class SubagentTail implements Component {
   private readonly jobId: number;
   private readonly done: () => void;
 
-  constructor(
-    tui: Pick<TUI, "requestRender">,
-    theme: Theme,
-    registry: JobRegistry,
-    jobId: number,
-    done: () => void,
-  ) {
+  constructor(tui: Pick<TUI, "requestRender">, theme: Theme, registry: JobRegistry, jobId: number, done: () => void) {
     this.tui = tui;
     this.theme = theme;
     this.registry = registry;
@@ -189,10 +187,15 @@ export class SubagentTail implements Component {
       this.cursor = read.nextCursor;
       const job = this.registry.get(this.jobId);
       const now = Date.now();
-      const stepTiming = job?.status === "running"
-        ? job.steps.filter((step) => step.endedAt === undefined).map((step) => `${step.id}:${formatStepTiming(step, now)}:${step.summary}`).join("\n")
-        : "";
-      const liveChanged = job?.status !== this.lastStatus ||
+      const stepTiming =
+        job?.status === "running"
+          ? job.steps
+              .filter((step) => step.endedAt === undefined)
+              .map((step) => `${step.id}:${formatStepTiming(step, now)}:${step.summary}`)
+              .join("\n")
+          : "";
+      const liveChanged =
+        job?.status !== this.lastStatus ||
         job?.progress !== this.lastProgress ||
         job?.cancellationReason !== this.lastCancellationReason ||
         stepTiming !== this.lastStepTiming;
@@ -273,7 +276,10 @@ export class SubagentTail implements Component {
     const status = job?.status ?? "unavailable";
     const statusLabel = job?.cancellationReason ? `${status} (${job.cancellationReason})` : status;
     const lines: string[] = [
-      themeLine(this.theme.fg("accent", this.theme.bold(`Subagent #${this.jobId} ${job?.agent ?? "subagent"}`)), this.theme.fg(statusColor(status), statusLabel)),
+      themeLine(
+        this.theme.fg("accent", this.theme.bold(`Subagent #${this.jobId} ${job?.agent ?? "subagent"}`)),
+        this.theme.fg(statusColor(status), statusLabel),
+      ),
       job
         ? this.theme.fg("dim", `Task: ${normalizeLine(job.task)}`)
         : this.theme.fg("error", "Job is no longer available."),
@@ -284,7 +290,9 @@ export class SubagentTail implements Component {
     if (activeSteps.length > 0) {
       lines.push(this.theme.fg("dim", `Active steps (${activeSteps.length}):`));
       for (const step of activeSteps) {
-        lines.push(this.theme.fg("dim", `- ${formatStepTiming(step, now)} · ${step.kind}: ${normalizeLine(step.summary)}`));
+        lines.push(
+          this.theme.fg("dim", `- ${formatStepTiming(step, now)} · ${step.kind}: ${normalizeLine(step.summary)}`),
+        );
       }
     } else if (job?.progress) lines.push(this.theme.fg("dim", `Progress: ${normalizeLine(job.progress)}`));
     if (this.droppedBefore !== undefined) {
@@ -293,7 +301,12 @@ export class SubagentTail implements Component {
 
     const start = this.events.length > 0 ? this.scrollTop + 1 : 0;
     const end = Math.min(this.events.length, this.scrollTop + MAX_VISIBLE_EVENTS);
-    lines.push(this.theme.fg("dim", `Events ${start}-${end}/${this.events.length} · cursor ${this.cursor}${this.follow ? " · following" : " · paused"}`));
+    lines.push(
+      this.theme.fg(
+        "dim",
+        `Events ${start}-${end}/${this.events.length} · cursor ${this.cursor}${this.follow ? " · following" : " · paused"}`,
+      ),
+    );
 
     const visible = this.events.slice(this.scrollTop, this.scrollTop + MAX_VISIBLE_EVENTS);
     if (visible.length === 0) {

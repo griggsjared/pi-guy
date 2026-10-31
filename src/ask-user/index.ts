@@ -23,19 +23,13 @@ const OptionParams = Type.Object({
     description:
       "Concrete option label shown in the picker. Do not provide an Other, Custom, write-in, free-text, or discussion option.",
   }),
-  description: Type.Optional(
-    Type.String({ description: "One-line explanation shown under the label" }),
-  ),
+  description: Type.Optional(Type.String({ description: "One-line explanation shown under the label" })),
 });
 
 const QuestionParams = Type.Object({
   question: Type.String({ description: "The question to ask the user" }),
-  title: Type.Optional(
-    Type.String({ description: "Optional short title shown above the question" }),
-  ),
-  description: Type.Optional(
-    Type.String({ description: "Optional extra context shown under the question" }),
-  ),
+  title: Type.Optional(Type.String({ description: "Optional short title shown above the question" })),
+  description: Type.Optional(Type.String({ description: "Optional extra context shown under the question" })),
   options: Type.Array(OptionParams, {
     minItems: MIN_OPTIONS,
     maxItems: MAX_OPTIONS,
@@ -77,9 +71,7 @@ interface AskUserToolDetails {
   cancelled: boolean;
 }
 
-function buildItems(question: {
-  options: { label: string; description?: string }[];
-}): SelectItem[] {
+function buildItems(question: { options: { label: string; description?: string }[] }): SelectItem[] {
   const items: SelectItem[] = question.options
     .filter((option) => !RESERVED_OPTION_RE.test(option.label.trim()))
     .map((option, index) => ({
@@ -106,9 +98,7 @@ function choiceText(selected: Selected): string {
     return selected.context ? `${selected.label} — ${selected.context}` : selected.label;
   }
   if ("items" in selected) {
-    const parts = selected.items.map((item) =>
-      item.context ? `${item.label} — ${item.context}` : item.label,
-    );
+    const parts = selected.items.map((item) => (item.context ? `${item.label} — ${item.context}` : item.label));
     if (selected.other) parts.push(`Other: ${selected.other}`);
     return parts.join(", ");
   }
@@ -119,12 +109,12 @@ function formatAnswers(answers: Answer[], cancelled: boolean): string {
   if (answers.length === 0) {
     return cancelled ? "User cancelled without answering any question." : "(no answers)";
   }
-  const lines = answers.map(
-    (answer, index) => `${index + 1}. ${answer.question}\n   → ${choiceText(answer.selected)}`,
-  );
+  const lines = answers.map((answer, index) => `${index + 1}. ${answer.question}\n   → ${choiceText(answer.selected)}`);
   if (cancelled) lines.push("(user cancelled — answers not confirmed)");
   else if (answers.some((answer) => "discuss" in answer.selected)) {
-    lines.push("\nUse the confirmed answers. Briefly restate the questions marked for discussion and invite discussion in prose, then wait for the user's reply. Do not choose answers for those questions or reopen the picker.");
+    lines.push(
+      "\nUse the confirmed answers. Briefly restate the questions marked for discussion and invite discussion in prose, then wait for the user's reply. Do not choose answers for those questions or reopen the picker.",
+    );
   }
   return lines.join("\n");
 }
@@ -168,29 +158,30 @@ export default function (pi: ExtensionAPI) {
         index: number,
         previous?: Answer,
       ): Promise<Answer | null> => {
-        const initial: InitialState | undefined = previous && !("discuss" in previous.selected)
-          ? "items" in previous.selected
-            ? {
-                values: [
-                  ...previous.selected.items.map((item) => String(item.index)),
-                  ...(previous.selected.other ? [OTHER_VALUE] : []),
-                ],
-                otherText: previous.selected.other,
-                contexts: Object.fromEntries(
-                  previous.selected.items.flatMap((item) =>
-                    item.context ? [[String(item.index), item.context]] : [],
+        const initial: InitialState | undefined =
+          previous && !("discuss" in previous.selected)
+            ? "items" in previous.selected
+              ? {
+                  values: [
+                    ...previous.selected.items.map((item) => String(item.index)),
+                    ...(previous.selected.other ? [OTHER_VALUE] : []),
+                  ],
+                  otherText: previous.selected.other,
+                  contexts: Object.fromEntries(
+                    previous.selected.items.flatMap((item) =>
+                      item.context ? [[String(item.index), item.context]] : [],
+                    ),
                   ),
-                ),
-              }
-            : "other" in previous.selected
-              ? { otherText: previous.selected.other }
-              : {
-                  values: [String(previous.selected.index)],
-                  contexts: previous.selected.context
-                    ? { [String(previous.selected.index)]: previous.selected.context }
-                    : undefined,
                 }
-          : undefined;
+              : "other" in previous.selected
+                ? { otherText: previous.selected.other }
+                : {
+                    values: [String(previous.selected.index)],
+                    contexts: previous.selected.context
+                      ? { [String(previous.selected.index)]: previous.selected.context }
+                      : undefined,
+                  }
+            : undefined;
         const prompt = {
           ...question,
           title: `Question ${index + 1}/${params.questions.length}${question.title ? ` · ${question.title}` : ""}`,
@@ -224,9 +215,7 @@ export default function (pi: ExtensionAPI) {
               }),
           };
           if (otherToggled) {
-            const text =
-              result.otherText ??
-              (await ctx.ui.input("Other (specify)", "Type your answer", { signal }));
+            const text = result.otherText ?? (await ctx.ui.input("Other (specify)", "Type your answer", { signal }));
             if (text !== undefined && text.trim()) multi.other = text.trim();
           }
           return { question: question.question, selected: multi };
@@ -271,8 +260,7 @@ export default function (pi: ExtensionAPI) {
             })),
           ];
           const summary = params.questions.map(
-            (question, index) =>
-              `${index + 1}. ${question.question} → ${choiceText(answers[index]!.selected)}`,
+            (question, index) => `${index + 1}. ${question.question} → ${choiceText(answers[index]!.selected)}`,
           );
           const confirmIndex = await confirmAnswers(ctx, summary, items, signal);
           if (confirmIndex === null) {
@@ -280,7 +268,11 @@ export default function (pi: ExtensionAPI) {
             break;
           }
           if (confirmIndex === 0) break;
-          const reanswered = await askOne(params.questions[confirmIndex - 1]!, confirmIndex - 1, answers[confirmIndex - 1]);
+          const reanswered = await askOne(
+            params.questions[confirmIndex - 1]!,
+            confirmIndex - 1,
+            answers[confirmIndex - 1],
+          );
           if (reanswered === null) {
             cancelled = true;
             break;

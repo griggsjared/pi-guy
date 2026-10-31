@@ -1,6 +1,7 @@
-import { test } from "node:test";
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
+import { EMPTY_USAGE } from "../../src/subagents/constants.ts";
 import {
   capOutput,
   formatResultOutput,
@@ -9,7 +10,6 @@ import {
   shortLabel,
   toolCallLabel,
 } from "../../src/subagents/format.ts";
-import { EMPTY_USAGE } from "../../src/subagents/constants.ts";
 import type { SubagentUsage } from "../../src/subagents/types.ts";
 
 test("formatUsageStats keeps metadata without usage", () => {
@@ -93,7 +93,10 @@ test("toolCallLabel", () => {
 });
 
 test("toolCallLabel keeps nested subagent tools explicit and inline-safe", () => {
-  assert.equal(toolCallLabel("subagent", { agent: "scout", task: "Review\nconfig" }), "subagent launch scout · Review config");
+  assert.equal(
+    toolCallLabel("subagent", { agent: "scout", task: "Review\nconfig" }),
+    "subagent launch scout · Review config",
+  );
   assert.equal(
     toolCallLabel("subagent", {
       tasks: [

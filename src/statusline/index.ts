@@ -3,16 +3,17 @@ import { PROVIDER_USAGE_REQUEST_EVENT } from "../lib/events.ts";
 import type { ProviderUsageRequest } from "../lib/events.ts";
 import { formatFooterBalance, formatFooterUsage, registerStatusline } from "./footer.ts";
 import { REQUEST_TIMEOUT_MS } from "./http.ts";
-import { ANTHROPIC_CACHE_TTL_MS, ANTHROPIC_PROVIDER, fetchAnthropicUsage, normalizeAnthropicHeaders } from "./providers/anthropic.ts";
+import {
+  ANTHROPIC_CACHE_TTL_MS,
+  ANTHROPIC_PROVIDER,
+  fetchAnthropicUsage,
+  normalizeAnthropicHeaders,
+} from "./providers/anthropic.ts";
 import { CLAUDE_CACHE_TTL_MS, CLAUDE_PROVIDER, fetchClaudeUsage } from "./providers/claude.ts";
 import { CODEX_CACHE_TTL_MS, CODEX_PROVIDER, fetchCodexUsage } from "./providers/codex.ts";
 import { DEEPSEEK_CACHE_TTL_MS, DEEPSEEK_PROVIDER, fetchDeepseekUsage } from "./providers/deepseek.ts";
 import { OPENCODE_CACHE_TTL_MS, OPENCODE_PROVIDER, fetchOpencodeUsage } from "./providers/opencode.ts";
-import {
-  encodeUsageStatus,
-  isUsageProvider,
-  USAGE_STATUS_KEY,
-} from "./usage-status.ts";
+import { encodeUsageStatus, isUsageProvider, USAGE_STATUS_KEY } from "./usage-status.ts";
 import type { UsageProvider, UsageStatus } from "./usage-status.ts";
 
 const REFRESH_INTERVAL_MS = 60_000;
@@ -33,8 +34,13 @@ const USAGE_ADAPTERS: Record<UsageProvider, UsageAdapter> = {
 function isProviderUsageRequest(value: unknown): value is ProviderUsageRequest {
   if (!value || typeof value !== "object") return false;
   const { provider, theme, reply } = value as Record<string, unknown>;
-  return typeof provider === "string" && typeof reply === "function" &&
-    !!theme && typeof theme === "object" && typeof (theme as { fg?: unknown }).fg === "function";
+  return (
+    typeof provider === "string" &&
+    typeof reply === "function" &&
+    !!theme &&
+    typeof theme === "object" &&
+    typeof (theme as { fg?: unknown }).fg === "function"
+  );
 }
 
 // Mirrors the footer's right-hand usage text, without width limits.
@@ -61,10 +67,12 @@ export default function (pi: ExtensionAPI) {
   // Usage for non-active providers, fetched on request and never published to the footer.
   let sessionGeneration = 0;
   const providerCache = new Map<UsageProvider, { status: UsageStatus; fetchedAt: number }>();
-  const providerRequests = new Map<UsageProvider, { controller: AbortController; promise: Promise<UsageStatus | undefined> }>();
+  const providerRequests = new Map<
+    UsageProvider,
+    { controller: AbortController; promise: Promise<UsageStatus | undefined> }
+  >();
 
-  const supported = (provider: string | undefined): provider is UsageProvider =>
-    isUsageProvider(provider);
+  const supported = (provider: string | undefined): provider is UsageProvider => isUsageProvider(provider);
 
   const clearRequest = (): void => {
     requestController?.abort();
@@ -96,12 +104,15 @@ export default function (pi: ExtensionAPI) {
       ctx.ui.setStatus(USAGE_STATUS_KEY, undefined);
       return;
     }
-    ctx.ui.setStatus(USAGE_STATUS_KEY, encodeUsageStatus({
-      provider,
-      state: "unknown",
-      windows: [],
-      capturedAtMs: Date.now(),
-    }));
+    ctx.ui.setStatus(
+      USAGE_STATUS_KEY,
+      encodeUsageStatus({
+        provider,
+        state: "unknown",
+        windows: [],
+        capturedAtMs: Date.now(),
+      }),
+    );
   };
 
   const refresh = (ctx: ExtensionContext): Promise<void> => {
@@ -150,7 +161,11 @@ export default function (pi: ExtensionAPI) {
     return promise;
   };
 
-  const fetchProviderUsage = (provider: UsageProvider, adapter: UsageAdapter, ctx: ExtensionContext): Promise<UsageStatus | undefined> => {
+  const fetchProviderUsage = (
+    provider: UsageProvider,
+    adapter: UsageAdapter,
+    ctx: ExtensionContext,
+  ): Promise<UsageStatus | undefined> => {
     const cached = providerCache.get(provider);
     if (cached && Date.now() - cached.fetchedAt < adapter.cacheTtlMs) return Promise.resolve(cached.status);
     const inFlight = providerRequests.get(provider);
@@ -187,9 +202,13 @@ export default function (pi: ExtensionAPI) {
       return;
     }
     if (provider === activeProvider) {
-      void refresh(ctx).then(() => reply(formatRequestedUsage(latestUsage?.provider === provider ? latestUsage : undefined, theme)));
+      void refresh(ctx).then(() =>
+        reply(formatRequestedUsage(latestUsage?.provider === provider ? latestUsage : undefined, theme)),
+      );
     } else {
-      void fetchProviderUsage(provider, USAGE_ADAPTERS[provider], ctx).then((usage) => reply(formatRequestedUsage(usage, theme)));
+      void fetchProviderUsage(provider, USAGE_ADAPTERS[provider], ctx).then((usage) =>
+        reply(formatRequestedUsage(usage, theme)),
+      );
     }
   });
 
@@ -243,7 +262,9 @@ export default function (pi: ExtensionAPI) {
     const usage = normalizeAnthropicHeaders(event.headers);
     if (usage) {
       if (provider === CLAUDE_PROVIDER && latestUsage?.provider === provider && latestUsage.state === "ready") {
-        usage.windows.push(...latestUsage.windows.filter((window) => !usage.windows.some((update) => update.kind === window.kind)));
+        usage.windows.push(
+          ...latestUsage.windows.filter((window) => !usage.windows.some((update) => update.kind === window.kind)),
+        );
         usage.windows.sort((a, b) => a.kind.localeCompare(b.kind));
       }
       latestUsage = { ...usage, provider };

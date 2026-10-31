@@ -1,6 +1,11 @@
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
-export function boxed(lines: string[], width: number, theme: { fg(color: string, text: string): string }, title?: string): string[] {
+export function boxed(
+  lines: string[],
+  width: number,
+  theme: { fg(color: string, text: string): string },
+  title?: string,
+): string[] {
   if (width < 3) return lines.map((line) => truncateToWidth(line, Math.max(1, width), "", true));
   const innerWidth = width - 2;
   const border = (text: string) => theme.fg("border", text);

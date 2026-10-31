@@ -7,7 +7,9 @@ const AskParentParams = Type.Object({
   context: Type.Optional(Type.String({ maxLength: 8000, description: "Optional context the parent needs to answer" })),
 });
 
-interface AskParentToolDetails { answered: boolean; }
+interface AskParentToolDetails {
+  answered: boolean;
+}
 
 export default function (pi: ExtensionAPI) {
   pi.registerTool<typeof AskParentParams, AskParentToolDetails>({
@@ -23,11 +25,7 @@ export default function (pi: ExtensionAPI) {
       const question = params.question.trim();
       if (!question) throw new Error("Parent question cannot be empty.");
       const context = params.context?.trim() || undefined;
-      const answer = await ctx.ui.input(
-        `${ASK_PARENT_TITLE_PREFIX}${question}`,
-        context,
-        { signal },
-      );
+      const answer = await ctx.ui.input(`${ASK_PARENT_TITLE_PREFIX}${question}`, context, { signal });
       if (answer === undefined) {
         return {
           content: [{ type: "text", text: "The parent did not answer this question." }],

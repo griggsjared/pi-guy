@@ -1,11 +1,7 @@
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { formatTokens } from "../lib/format.ts";
-import {
-  decodeUsageStatus,
-  isQuotaProvider,
-  USAGE_STATUS_KEY,
-} from "./usage-status.ts";
+import { decodeUsageStatus, isQuotaProvider, USAGE_STATUS_KEY } from "./usage-status.ts";
 import type { UsageBalance, UsageStatus } from "./usage-status.ts";
 
 const WINDOW_ORDER = ["rolling", "weekly", "monthly"] as const;
@@ -29,9 +25,13 @@ export function formatFooterReset(resetAtMs: number | undefined, now = Date.now(
   return `${minutes}m`;
 }
 
-export function formatFooterUsage(status: UsageStatus, now = Date.now(), maxWidth = Infinity, theme?: Pick<Theme, "fg">): string {
-  const windows = [...status.windows]
-    .sort((a, b) => WINDOW_ORDER.indexOf(a.kind) - WINDOW_ORDER.indexOf(b.kind));
+export function formatFooterUsage(
+  status: UsageStatus,
+  now = Date.now(),
+  maxWidth = Infinity,
+  theme?: Pick<Theme, "fg">,
+): string {
+  const windows = [...status.windows].sort((a, b) => WINDOW_ORDER.indexOf(a.kind) - WINDOW_ORDER.indexOf(b.kind));
   const formatWindow = (window: UsageStatus["windows"][number], withReset: boolean): string => {
     const reset = withReset ? formatFooterReset(window.resetAtMs, now) : undefined;
     const text = `${Math.round(window.usedPercent)}%${reset ? `(${reset})` : ""}`;
@@ -51,8 +51,12 @@ export function formatFooterUsage(status: UsageStatus, now = Date.now(), maxWidt
 
 export function formatFooterBalance(balance: UsageBalance, theme: Pick<Theme, "fg">): string {
   const symbol = CURRENCY_SYMBOLS[balance.currency] ?? `${balance.currency} `;
-  const color = balance.currency === "USD" && balance.amount < 0.5 ? "error"
-    : balance.currency === "USD" && balance.amount < 1 ? "warning" : "dim";
+  const color =
+    balance.currency === "USD" && balance.amount < 0.5
+      ? "error"
+      : balance.currency === "USD" && balance.amount < 1
+        ? "warning"
+        : "dim";
   return theme.fg(color, `b:${symbol}${balance.amount.toFixed(2)}`);
 }
 
@@ -65,14 +69,18 @@ function calculateFooterCacheHit(entries: ReadonlyArray<{ type: string; message?
     if (message.role !== "assistant" || !message.usage || typeof message.usage !== "object") continue;
     const usage = message.usage as { input?: unknown; cacheRead?: unknown; cacheWrite?: unknown };
     if (
-      typeof usage.input !== "number" || !Number.isFinite(usage.input) ||
-      typeof usage.cacheRead !== "number" || !Number.isFinite(usage.cacheRead) ||
-      typeof usage.cacheWrite !== "number" || !Number.isFinite(usage.cacheWrite)
-    ) continue;
+      typeof usage.input !== "number" ||
+      !Number.isFinite(usage.input) ||
+      typeof usage.cacheRead !== "number" ||
+      !Number.isFinite(usage.cacheRead) ||
+      typeof usage.cacheWrite !== "number" ||
+      !Number.isFinite(usage.cacheWrite)
+    )
+      continue;
     cacheRead += usage.cacheRead;
     cacheInput += usage.input + usage.cacheRead + usage.cacheWrite;
   }
-  return cacheInput > 0 ? cacheRead / cacheInput * 100 : undefined;
+  return cacheInput > 0 ? (cacheRead / cacheInput) * 100 : undefined;
 }
 
 // Closely follows Claude Code's statusline: one main line with terse markers
@@ -100,7 +108,10 @@ export function registerStatusline(pi: ExtensionAPI) {
           const statuses = footerData.getExtensionStatuses();
           const rawMode = statuses.get("modes") ?? "";
           const modeStatus = rawMode
-            ? theme.fg(rawMode === "build" ? "error" : rawMode === "plan" ? "borderAccent" : "accent", `[${rawMode[0]}]`)
+            ? theme.fg(
+                rawMode === "build" ? "error" : rawMode === "plan" ? "borderAccent" : "accent",
+                `[${rawMode[0]}]`,
+              )
             : "";
 
           // Model name
@@ -165,16 +176,18 @@ export function registerStatusline(pi: ExtensionAPI) {
           right += `${right && provider ? " " : ""}${provider}`;
           const gap = width - visibleWidth(line) - visibleWidth(right);
 
-          const result = gap >= 2
-            ? line + " ".repeat(gap) + right
-            : truncateToWidth(line, Math.max(0, width - visibleWidth("...")), "...");
+          const result =
+            gap >= 2
+              ? line + " ".repeat(gap) + right
+              : truncateToWidth(line, Math.max(0, width - visibleWidth("...")), "...");
 
           const rest = Array.from(statuses.entries())
             .filter(([key]) => key !== "modes" && key !== "subagent-profile" && key !== USAGE_STATUS_KEY)
             .sort(([a], [b]) => a.localeCompare(b))
             .map(([, text]) => text);
-          return [result, ...rest.map((s) => truncateToWidth(s, width, theme.fg("dim", "...")))]
-            .map((line) => margin > 0 ? ` ${line} ` : line);
+          return [result, ...rest.map((s) => truncateToWidth(s, width, theme.fg("dim", "...")))].map((line) =>
+            margin > 0 ? ` ${line} ` : line,
+          );
         },
       };
     });

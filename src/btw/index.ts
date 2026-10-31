@@ -192,30 +192,26 @@ export default function (pi: ExtensionAPI) {
 
             const request = async (nextQuestion: string) => {
               if (!model) throw new Error("No model selected");
-              if (
-                operation.controller.signal.aborted ||
-                active !== operation ||
-                operation.generation !== generation
-              ) return;
+              if (operation.controller.signal.aborted || active !== operation || operation.generation !== generation)
+                return;
               messages.push({ role: "user", content: [{ type: "text", text: nextQuestion }], timestamp: Date.now() });
-              const response = await ctx.modelRegistry.streamSimple(
-                model,
-                { systemPrompt: SYSTEM_PROMPT, messages },
-                {
-                  signal: operation.controller.signal,
-                  cacheRetention: "none",
-                  sessionId: uuidv7(),
-                },
-              ).result();
+              const response = await ctx.modelRegistry
+                .streamSimple(
+                  model,
+                  { systemPrompt: SYSTEM_PROMPT, messages },
+                  {
+                    signal: operation.controller.signal,
+                    cacheRetention: "none",
+                    sessionId: uuidv7(),
+                  },
+                )
+                .result();
               if (response.stopReason === "aborted") {
                 close();
                 return;
               }
-              if (
-                operation.controller.signal.aborted ||
-                active !== operation ||
-                operation.generation !== generation
-              ) return;
+              if (operation.controller.signal.aborted || active !== operation || operation.generation !== generation)
+                return;
               if (response.stopReason === "error") throw new Error(response.errorMessage ?? "Model request failed");
               messages.push(response);
               turns.push({ question: nextQuestion, answer: response });
@@ -242,7 +238,8 @@ export default function (pi: ExtensionAPI) {
                   viewportRows = fitted.viewportRows;
                   const lines = [...fitted.lines, ...inputLines];
                   if (loading) lines.push(theme.fg("dim", "Thinking…"));
-                  const scrollHint = fitted.maxScroll > 0 ? `PgUp/PgDn scroll (${scrollTop + 1}/${fitted.maxScroll + 1}) · ` : "";
+                  const scrollHint =
+                    fitted.maxScroll > 0 ? `PgUp/PgDn scroll (${scrollTop + 1}/${fitted.maxScroll + 1}) · ` : "";
                   const hint = loading
                     ? `${scrollHint}Esc close`
                     : turns.length > 0

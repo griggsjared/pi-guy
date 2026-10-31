@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { CustomEditor } from "@earendil-works/pi-coding-agent";
+import type { CustomEditor } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import workingIndicator from "../../src/working-indicator/index.ts";
@@ -10,12 +10,12 @@ import { fakeTheme } from "../helpers/theme.ts";
 type TestContext = ReturnType<typeof createContext>["ctx"];
 type Handler = (event: Record<string, unknown>, context: TestContext) => void;
 
-type Calls = {
+interface Calls {
   messages: Array<string | undefined>;
   indicators: Array<unknown>;
   visibility: boolean[];
   editors: unknown[];
-};
+}
 
 function register() {
   const { handlers, on } = captureHandlers();
@@ -32,10 +32,18 @@ function createContext() {
       hasUI: true,
       ui: {
         theme: { ...fakeTheme(), style: (text: string) => text },
-        setWorkingMessage(message?: string) { calls.messages.push(message); },
-        setWorkingIndicator(indicator?: unknown) { calls.indicators.push(indicator); },
-        setWorkingVisible(visible: boolean) { calls.visibility.push(visible); },
-        setEditorComponent(factory: unknown) { calls.editors.push(factory); },
+        setWorkingMessage(message?: string) {
+          calls.messages.push(message);
+        },
+        setWorkingIndicator(indicator?: unknown) {
+          calls.indicators.push(indicator);
+        },
+        setWorkingVisible(visible: boolean) {
+          calls.visibility.push(visible);
+        },
+        setEditorComponent(factory: unknown) {
+          calls.editors.push(factory);
+        },
       },
       isIdle: () => true,
     },
@@ -98,12 +106,23 @@ test("prompt marker stays outside submitted text and preserves wrapped input and
   assert.ok(lines[2]?.startsWith("  ij"));
   assert.equal(lines.filter((line) => line.includes("❯")).length, 1);
   editor.handleMouse({
-    type: "click", button: "left", x: 4, y: 1, screenX: 4, screenY: 1,
-    width: 12, height: lines.length, shift: false, alt: false, ctrl: false,
+    type: "click",
+    button: "left",
+    x: 4,
+    y: 1,
+    screenX: 4,
+    screenY: 1,
+    width: 12,
+    height: lines.length,
+    shift: false,
+    alt: false,
+    ctrl: false,
   });
   assert.deepEqual(editor.getCursor(), { line: 0, col: 2 });
   let submitted: string | undefined;
-  editor.onSubmit = (text) => { submitted = text; };
+  editor.onSubmit = (text) => {
+    submitted = text;
+  };
   editor.handleInput("\r");
   assert.equal(submitted, "abcdefghij");
 });
@@ -125,12 +144,20 @@ test("prompt marker does not overwrite input when the editor is too narrow for i
   assert.equal(editor.getText(), "a");
 });
 
-for (const [patternIndex, pattern] of ["shimmer", "bounce", "karaoke", "ripple", "sparkle", "rainbow", "palettePulse"].entries()) {
+for (const [patternIndex, pattern] of [
+  "shimmer",
+  "bounce",
+  "karaoke",
+  "ripple",
+  "sparkle",
+  "rainbow",
+  "palettePulse",
+].entries()) {
   for (const direction of ["brighten", "darken"]) {
     test(`${pattern} animates while keeping spinner and text colors synced (${direction})`, (t) => {
       t.mock.timers.enable({ apis: ["Date", "setInterval"], now: 50000 });
       let draws = 0;
-      t.mock.method(Math, "random", () => draws++ === 0 ? patternIndex / 7 : direction === "brighten" ? 0.75 : 0.25);
+      t.mock.method(Math, "random", () => (draws++ === 0 ? patternIndex / 7 : direction === "brighten" ? 0.75 : 0.25));
       const handlers = register();
       const { calls, ctx } = createContext();
       ctx.ui.theme.fg = (color, text) => `<${color}>${text}</${color}>`;

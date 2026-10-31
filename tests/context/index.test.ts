@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { ContextUsage, ExtensionAPI, ExtensionCommandContext, Theme, ToolInfo } from "@earendil-works/pi-coding-agent";
+import type {
+  ContextUsage,
+  ExtensionAPI,
+  ExtensionCommandContext,
+  Theme,
+  ToolInfo,
+} from "@earendil-works/pi-coding-agent";
 import { KeybindingsManager, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
 import type { Component, OverlayOptions, TUI } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
@@ -47,28 +53,47 @@ function harness({
       getEntries: () => assert.fail("context must use the projection, not full history"),
     },
     ui: {
-      notify: (text: string, level: string) => { notifications.push({ text, level }); },
+      notify: (text: string, level: string) => {
+        notifications.push({ text, level });
+      },
       custom: (
         factory: (tui: TUI, theme: Theme, kb: KeybindingsManager, done: () => void) => Component,
         customOptions: typeof options,
       ) => {
         options = customOptions;
         const pending = Promise.withResolvers<void>();
-        modal = factory({ terminal: { rows: 40 } } as TUI, {
-          ...fakeTheme(),
-          fg: (color: string, text: string) => { styles.push({ color, text }); return text; },
-        } as Theme, keybindings, () => { completions++; pending.resolve(); });
+        modal = factory(
+          { terminal: { rows: 40 } } as TUI,
+          {
+            ...fakeTheme(),
+            fg: (color: string, text: string) => {
+              styles.push({ color, text });
+              return text;
+            },
+          } as Theme,
+          keybindings,
+          () => {
+            completions++;
+            pending.resolve();
+          },
+        );
         return pending.promise;
       },
     },
   } as unknown as ExtensionCommandContext;
   return {
-    ctx, notifications, styles,
+    ctx,
+    notifications,
+    styles,
     start: () => handler("", ctx),
     input: (key: string) => modal.handleInput!(key),
     render: (width: number) => modal.render(width),
-    get options() { return options; },
-    get completions() { return completions; },
+    get options() {
+      return options;
+    },
+    get completions() {
+      return completions;
+    },
     async show() {
       const running = handler("", ctx);
       const lines = modal.render(76);
@@ -81,29 +106,41 @@ function harness({
 
 function tool(name: string, exposure: ToolInfo["exposure"] = "direct"): ToolInfo {
   return {
-    name, exposure, description: "Run",
+    name,
+    exposure,
+    description: "Run",
     parameters: Type.Object({ path: Type.String({ description: "schema ".repeat(40) }) }),
     sourceInfo: { path: "inline:test", source: "inline", scope: "temporary", origin: "top-level" },
   };
 }
 
 function allocations(text: string): number[] {
-  return [...text.matchAll(/(?:System instructions|Tool definitions|Conversation|Tool results): ~([\d,]+) tokens/g)]
-    .map((match) => Number(match[1]!.replaceAll(",", "")));
+  return [
+    ...text.matchAll(/(?:System instructions|Tool definitions|Conversation|Tool results): ~([\d,]+) tokens/g),
+  ].map((match) => Number(match[1]!.replaceAll(",", "")));
 }
 
 test("attributes only current instructions, active visible declarations, and projected conversation or results", async () => {
   const messages = [
     { role: "user", content: "u".repeat(8) },
     { role: "custom", content: "c".repeat(8), customType: "context" },
-    { role: "assistant", content: [{ type: "text", text: "aaaa" }, { type: "thinking", thinking: "tttt" }] },
+    {
+      role: "assistant",
+      content: [
+        { type: "text", text: "aaaa" },
+        { type: "thinking", thinking: "tttt" },
+      ],
+    },
     { role: "toolResult", content: [{ type: "text", text: "r".repeat(24) }] },
   ] as AgentMessage[];
   const baseline = harness({ prompt: "s".repeat(24), messages, tools: [tool("visible")] });
   const clean = await baseline.show();
   const counts = allocations(clean);
   assert.equal(counts.length, 4);
-  assert.equal(counts.reduce((sum, count) => sum + count, 0), 101);
+  assert.equal(
+    counts.reduce((sum, count) => sum + count, 0),
+    101,
+  );
   assert.ok(counts[1]! > counts[0]! + counts[2]! + counts[3]!, "schema contributes to tool definitions");
   assert.ok(Math.max(counts[0]!, counts[2]!, counts[3]!) - Math.min(counts[0]!, counts[2]!, counts[3]!) <= 1);
   assert.ok(counts[0]! > 0);
@@ -133,7 +170,8 @@ test("attributes only current instructions, active visible declarations, and pro
     hidden: ["loadout-hidden"],
   });
   const result = polluted.ctx.sessionManager.buildSessionProjection().messages.at(-2)!;
-  if (result.role === "toolResult") result.content.push({ type: "image", data: "x".repeat(10000), mimeType: "image/png" });
+  if (result.role === "toolResult")
+    result.content.push({ type: "image", data: "x".repeat(10000), mimeType: "image/png" });
   assert.equal(await polluted.show(), clean);
   assert.deepEqual(polluted.notifications, []);
 });
@@ -150,7 +188,10 @@ test("estimates startup instructions and tools only for an empty projection with
   assert.ok(counts[0]! > 0);
   assert.ok(counts[1]! > 0);
   assert.deepEqual(counts.slice(2), [0, 0]);
-  assert.equal(counts.reduce((sum, count) => sum + count, 0), used);
+  assert.equal(
+    counts.reduce((sum, count) => sum + count, 0),
+    used,
+  );
   assert.match(text, new RegExp(`Free: ${200 - used} tokens`));
   assert.ok(h.styles.some((style) => style.color === "dim" && style.text === "·"));
 
@@ -171,7 +212,10 @@ test("estimates startup instructions and tools only for an empty projection with
 test("rounded allocations reconcile with used tokens and free space at capacity boundaries", async () => {
   const h = harness({
     prompt: "s",
-    messages: [{ role: "user", content: "c" }, { role: "toolResult", content: [{ type: "text", text: "r" }] }] as AgentMessage[],
+    messages: [
+      { role: "user", content: "c" },
+      { role: "toolResult", content: [{ type: "text", text: "r" }] },
+    ] as AgentMessage[],
   });
   for (const [tokens, free, expected] of [
     [2, 198, [1, 0, 1, 0]],
@@ -181,10 +225,17 @@ test("rounded allocations reconcile with used tokens and free space at capacity 
     h.ctx.getContextUsage = () => ({ tokens, contextWindow: 200, percent: tokens / 2 });
     const text = await h.show();
     assert.deepEqual(allocations(text), expected);
-    assert.equal(allocations(text).reduce((sum, count) => sum + count, 0), tokens);
+    assert.equal(
+      allocations(text).reduce((sum, count) => sum + count, 0),
+      tokens,
+    );
     assert.match(text, new RegExp(`Free: ${free} tokens`));
     if (tokens >= 199) {
-      assert.ok(h.styles.some((style) => style.color === (tokens > 200 ? "error" : "warning") && style.text.startsWith(`Used: ${tokens}`)));
+      assert.ok(
+        h.styles.some(
+          (style) => style.color === (tokens > 200 ? "error" : "warning") && style.text.startsWith(`Used: ${tokens}`),
+        ),
+      );
     }
   }
 });
@@ -194,7 +245,10 @@ test("unknown aggregate stays unknown after compaction rather than reusing histo
   const h = harness({ messages });
   assert.match(await h.show(), /Used: 101 tokens/);
   messages.splice(0, messages.length, {
-    role: "compactionSummary", summary: "retained summary", tokensBefore: 50000, timestamp: 1,
+    role: "compactionSummary",
+    summary: "retained summary",
+    tokensBefore: 50000,
+    timestamp: 1,
   });
   for (const usage of [{ tokens: null, contextWindow: 200, percent: null }, undefined]) {
     h.ctx.getContextUsage = () => usage;
@@ -239,7 +293,8 @@ test("centered overlay handles minimal width and dismisses with configured keys"
   assert.equal(h.completions, 1);
 
   const keybindings = new KeybindingsManager(TUI_KEYBINDINGS, {
-    "tui.select.cancel": "ctrl+x", "tui.select.confirm": "ctrl+y",
+    "tui.select.cancel": "ctrl+x",
+    "tui.select.confirm": "ctrl+y",
   });
   const remapped = harness({ keybindings });
   for (const key of ["\x18", "\x19"]) {

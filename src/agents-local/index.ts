@@ -26,7 +26,10 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     sessionFiles = [];
     sessionFiles = await readLocalFiles(ctx.cwd);
-    pi.events.emit(CONTEXT_FILES_EVENT, { source: "agents-local", paths: sessionFiles.map(({ path }) => path) } satisfies ContextFilesEvent);
+    pi.events.emit(CONTEXT_FILES_EVENT, {
+      source: "agents-local",
+      paths: sessionFiles.map(({ path }) => path),
+    } satisfies ContextFilesEvent);
   });
 
   pi.on("before_agent_start", (event) => {

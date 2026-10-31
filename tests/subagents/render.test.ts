@@ -1,11 +1,11 @@
-import { test } from "node:test";
 import assert from "node:assert/strict";
-import { Box, visibleWidth } from "@earendil-works/pi-tui";
+import { test } from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Box, visibleWidth } from "@earendil-works/pi-tui";
+import { EMPTY_USAGE, ENTRY_TYPE, QUESTION_ENTRY_TYPE } from "../../src/subagents/constants.ts";
 import { createJobRegistry } from "../../src/subagents/registry.ts";
 import { refreshUi, registerRenderers } from "../../src/subagents/render.ts";
 import { createSendTool } from "../../src/subagents/status-tools.ts";
-import { EMPTY_USAGE, ENTRY_TYPE, QUESTION_ENTRY_TYPE } from "../../src/subagents/constants.ts";
 import { fakeTheme, taggedTheme as createTaggedTheme } from "../helpers/theme.ts";
 import { flush } from "../helpers/wait.ts";
 import { complete, makeTool, renderable, renderAtWidth, renderText } from "./helpers.ts";
@@ -16,7 +16,11 @@ test("refreshUi: keeps one widget component and requests in-place renders", () =
   let factoryCalls = 0;
   let renderRequests = 0;
   let widgetContent: unknown;
-  const tui = { requestRender: () => { renderRequests += 1; } };
+  const tui = {
+    requestRender: () => {
+      renderRequests += 1;
+    },
+  };
   const ui = {
     setWidget: (_key: string, content: unknown) => {
       widgetContent = content;
@@ -48,12 +52,16 @@ test("refreshUi: clicks open the rendered job's tail and leave other mouse gestu
   const completedId = registry.add("scout", "finished task");
   const runningId = registry.add("worker", "running task");
   complete(registry, completedId);
-  type Widget = {
+  interface Widget {
     render(width: number): string[];
     handleMouse(event: { type: string; button: string; y: number }): unknown;
     dispose(): void;
-  };
-  type Tail = { render(width: number): string[]; handleInput(data: string): void; dispose(): void };
+  }
+  interface Tail {
+    render(width: number): string[];
+    handleInput(data: string): void;
+    dispose(): void;
+  }
   let widget: Widget | undefined;
   const tails: Tail[] = [];
   const options: unknown[] = [];
@@ -65,12 +73,16 @@ test("refreshUi: clicks open the rendered job's tail and leave other mouse gestu
     custom: (
       factory: (tui: unknown, theme: unknown, keybindings: unknown, done: () => void) => Tail,
       overlayOptions: unknown,
-    ) => new Promise<void>((resolve) => {
-      options.push(overlayOptions);
-      tails.push(factory(tui, fakeTheme(), {}, resolve));
-    }),
+    ) =>
+      new Promise<void>((resolve) => {
+        options.push(overlayOptions);
+        tails.push(factory(tui, fakeTheme(), {}, resolve));
+      }),
   };
-  t.after(() => { widget?.dispose(); for (const tail of tails) tail.dispose(); });
+  t.after(() => {
+    widget?.dispose();
+    for (const tail of tails) tail.dispose();
+  });
   refreshUi({ hasUI: true, ui } as never, registry);
   assert.ok(widget);
   const lines = widget.render(80);
@@ -114,11 +126,11 @@ test("refreshUi: clicks open the rendered job's tail and leave other mouse gestu
 test("refreshUi: failed tail opens recover and disposed widgets cannot open tails", async () => {
   const registry = createJobRegistry();
   registry.add("scout", "task");
-  type Widget = {
+  interface Widget {
     render(width: number): string[];
     handleMouse(event: { type: string; button: string; y: number }): unknown;
     dispose(): void;
-  };
+  }
   const widgets: Widget[] = [];
   let opens = 0;
   const ui = {
@@ -157,17 +169,22 @@ test("refreshUi: failed tail opens recover and disposed widgets cannot open tail
 test("refreshUi: truncation rows and vanished jobs are not clickable", () => {
   const registry = createJobRegistry();
   for (let index = 0; index < 11; index += 1) registry.add("scout", `task ${index}`);
-  let widget: {
-    render(width: number): string[];
-    handleMouse(event: { type: string; button: string; y: number }): unknown;
-    dispose(): void;
-  } | undefined;
+  let widget:
+    | {
+        render(width: number): string[];
+        handleMouse(event: { type: string; button: string; y: number }): unknown;
+        dispose(): void;
+      }
+    | undefined;
   let opens = 0;
   const ui = {
     setWidget: (_key: string, factory: unknown) => {
       if (typeof factory === "function") widget = factory({ requestRender: () => {} }, fakeTheme());
     },
-    custom: () => { opens += 1; return Promise.resolve(); },
+    custom: () => {
+      opens += 1;
+      return Promise.resolve();
+    },
   };
   refreshUi({ hasUI: true, ui } as never, registry);
   assert.ok(widget);
@@ -323,7 +340,15 @@ test("message and entry renderers render results and parent questions", () => {
 
   const failedMessage = {
     content: "subagent launch scout · LaunchFailureTitle: Error: spawn failed",
-    details: { jobId: 7, agent: "scout", task: "launch task", title: "LaunchFailureTitle", status: "failed", duration: "?", icon: "✗" },
+    details: {
+      jobId: 7,
+      agent: "scout",
+      task: "launch task",
+      title: "LaunchFailureTitle",
+      status: "failed",
+      duration: "?",
+      icon: "✗",
+    },
   };
   for (const failedCard of [
     captured!(failedMessage, { ...options, expanded: true }, theme),
@@ -337,16 +362,33 @@ test("message and entry renderers render results and parent questions", () => {
 
   const longTask = `${"long task ".repeat(16)}WIDE_TASK_END`;
   const longCard = captured!(
-    { content: "out", details: { jobId: 7, agent: "a", task: longTask, status: "completed", duration: "1s", icon: "✓" } },
+    {
+      content: "out",
+      details: { jobId: 7, agent: "a", task: longTask, status: "completed", duration: "1s", icon: "✓" },
+    },
     options,
     theme,
   );
-  const narrowHeadline = renderAtWidth(longCard, 120).split("\n").find((line) => line.includes("✓ #7 a"));
-  const wideHeadline = renderAtWidth(longCard, 220).split("\n").find((line) => line.includes("✓ #7 a"));
+  const narrowHeadline = renderAtWidth(longCard, 120)
+    .split("\n")
+    .find((line) => line.includes("✓ #7 a"));
+  const wideHeadline = renderAtWidth(longCard, 220)
+    .split("\n")
+    .find((line) => line.includes("✓ #7 a"));
   assert.ok(narrowHeadline);
   assert.ok(wideHeadline);
-  assert.equal(renderAtWidth(longCard, 120).split("\n").filter((line) => line.includes("✓ #7 a")).length, 1);
-  assert.equal(renderAtWidth(longCard, 220).split("\n").filter((line) => line.includes("✓ #7 a")).length, 1);
+  assert.equal(
+    renderAtWidth(longCard, 120)
+      .split("\n")
+      .filter((line) => line.includes("✓ #7 a")).length,
+    1,
+  );
+  assert.equal(
+    renderAtWidth(longCard, 220)
+      .split("\n")
+      .filter((line) => line.includes("✓ #7 a")).length,
+    1,
+  );
   assert.equal(renderAtWidth(longCard, 120).split("\n").length, renderAtWidth(longCard, 220).split("\n").length);
   assert.doesNotMatch(narrowHeadline, /WIDE_TASK_END/);
   assert.match(wideHeadline, /WIDE_TASK_END/);
@@ -354,7 +396,10 @@ test("message and entry renderers render results and parent questions", () => {
   const fallbackColors: string[] = [];
   const fallbackTheme = {
     ...fakeTheme(),
-    fg: (color: string, text: string) => { fallbackColors.push(color); return text; },
+    fg: (color: string, text: string) => {
+      fallbackColors.push(color);
+      return text;
+    },
   } as never;
   const withoutDetails = captured!({ content: "plain", details: undefined }, options, fallbackTheme);
   assert.ok(renderable(withoutDetails));
@@ -396,7 +441,9 @@ test("message and entry renderers render results and parent questions", () => {
   assert.match(renderText(expanded), /read src\/index\.ts:1-2/);
   assert.match(renderText(expanded), /\$ npm test/);
   const compactStats = compactText.split("\n").find((line) => line.includes("openai-codex/gpt-5.6-luna:high"));
-  const expandedStats = renderText(expanded).split("\n").find((line) => line.includes("openai-codex/gpt-5.6-luna:high"));
+  const expandedStats = renderText(expanded)
+    .split("\n")
+    .find((line) => line.includes("openai-codex/gpt-5.6-luna:high"));
   assert.ok(compactStats, "compact stats line should be rendered");
   assert.ok(expandedStats, "expanded stats line should be rendered");
   assert.equal(compactStats.match(/^\s*/)?.[0].length, expandedStats.match(/^\s*/)?.[0].length);
@@ -422,31 +469,29 @@ test("message and entry renderers render results and parent questions", () => {
   assert.doesNotMatch(questionText, /model-facing instructions/);
 
   const taggedTheme = createTaggedTheme() as never;
-  const taggedResult = renderText(captured!(
-    {
-      content: "out",
-      details: {
-        jobId: 7,
-        agent: "a",
-        task: "t",
-        status: "completed",
-        duration: "1s",
-        icon: "✓",
+  const taggedResult = renderText(
+    captured!(
+      {
+        content: "out",
+        details: {
+          jobId: 7,
+          agent: "a",
+          task: "t",
+          status: "completed",
+          duration: "1s",
+          icon: "✓",
+        },
       },
-    },
-    options,
-    taggedTheme,
-  ));
+      options,
+      taggedTheme,
+    ),
+  );
   assert.match(taggedResult, /\[success\]✓ /);
   assert.match(taggedResult, /\[accent\]#7 a/);
   assert.match(taggedResult, /\[muted\] \(1s\)/);
   assert.match(taggedResult, /\[dim\]: t/);
 
-  const taggedQuestion = renderText(questionRenderer!(
-    questionMessage,
-    { ...options, expanded: true },
-    taggedTheme,
-  ));
+  const taggedQuestion = renderText(questionRenderer!(questionMessage, { ...options, expanded: true }, taggedTheme));
   assert.match(taggedQuestion, /\[warning\]\? /);
   assert.match(taggedQuestion, /\[accent\]#12 worker/);
   assert.match(taggedQuestion, /\[dim\]: Which API should I use\?/);
@@ -457,7 +502,10 @@ test("message and entry renderers render results and parent questions", () => {
   const questionFallbackColors: string[] = [];
   const questionFallbackTheme = {
     ...fakeTheme(),
-    fg: (color: string, text: string) => { questionFallbackColors.push(color); return text; },
+    fg: (color: string, text: string) => {
+      questionFallbackColors.push(color);
+      return text;
+    },
   } as never;
   const questionFallback = questionRenderer!(
     { content: "legacy question", details: undefined },
@@ -488,61 +536,79 @@ test("renderers preserve card backgrounds through ellipsis and padding", () => {
         warning: 214,
         error: 203,
       };
-      const prefix = color === "dim"
-        ? `\x1b[2;38;5;${codes[color] ?? 250}m`
-        : `\x1b[38;5;${codes[color] ?? 250}m`;
+      const prefix = color === "dim" ? `\x1b[2;38;5;${codes[color] ?? 250}m` : `\x1b[38;5;${codes[color] ?? 250}m`;
       return `${prefix}${text}${color === "dim" ? "\x1b[22;39m" : "\x1b[39m"}`;
     },
     bg: (_color: string, text: string) => `\x1b[48;5;236m${text}\x1b[49m`,
     bold: (text: string) => `\x1b[1m${text}\x1b[22m`,
   };
 
-  const completionMessage = renderers.get(ENTRY_TYPE)!({
-    content: "completion output",
-    details: {
-      jobId: 7,
-      agent: "scout",
-      task: `${"completion-task ".repeat(18)}COMPLETION_END`,
-      status: "completed",
-      duration: "1s",
-      icon: "✓",
-    },
-  }, { expanded: false, outputPad: 1 }, ansiTheme);
-  const completionCard = entryRenderers.get(ENTRY_TYPE)!({
-    data: {
+  const completionMessage = renderers.get(ENTRY_TYPE)!(
+    {
       content: "completion output",
       details: {
         jobId: 7,
         agent: "scout",
-        task: `${"completion-card ".repeat(18)}CARD_END`,
+        task: `${"completion-task ".repeat(18)}COMPLETION_END`,
         status: "completed",
         duration: "1s",
         icon: "✓",
       },
     },
-  }, { expanded: false }, ansiTheme);
-  const question = renderers.get(QUESTION_ENTRY_TYPE)!({
-    content: "model-facing question",
-    details: {
-      jobId: 12,
-      agent: "worker",
-      question: `${"parent-question ".repeat(18)}QUESTION_END`,
+    { expanded: false, outputPad: 1 },
+    ansiTheme,
+  );
+  const completionCard = entryRenderers.get(ENTRY_TYPE)!(
+    {
+      data: {
+        content: "completion output",
+        details: {
+          jobId: 7,
+          agent: "scout",
+          task: `${"completion-card ".repeat(18)}CARD_END`,
+          status: "completed",
+          duration: "1s",
+          icon: "✓",
+        },
+      },
     },
-  }, { expanded: false, outputPad: 1 }, ansiTheme);
+    { expanded: false },
+    ansiTheme,
+  );
+  const question = renderers.get(QUESTION_ENTRY_TYPE)!(
+    {
+      content: "model-facing question",
+      details: {
+        jobId: 12,
+        agent: "worker",
+        question: `${"parent-question ".repeat(18)}QUESTION_END`,
+      },
+    },
+    { expanded: false, outputPad: 1 },
+    ansiTheme,
+  );
 
   const { tool: launchTool } = makeTool();
   const sendRegistry = createJobRegistry();
   const sendJobId = sendRegistry.add("scout", "send task");
   const sendTool = createSendTool({ registry: sendRegistry });
-  const launchCall = launchTool.renderCall!({
-    agent: "scout",
-    task: `${"launch-task ".repeat(18)}LAUNCH_END`,
-  }, ansiTheme as never, {} as never);
-  const sendCall = sendTool.renderCall!({
-    jobId: sendJobId,
-    deliverAs: "steer",
-    message: `${"send-message ".repeat(18)}SEND_END`,
-  }, ansiTheme as never, {} as never);
+  const launchCall = launchTool.renderCall!(
+    {
+      agent: "scout",
+      task: `${"launch-task ".repeat(18)}LAUNCH_END`,
+    },
+    ansiTheme as never,
+    {} as never,
+  );
+  const sendCall = sendTool.renderCall!(
+    {
+      jobId: sendJobId,
+      deliverAs: "steer",
+      message: `${"send-message ".repeat(18)}SEND_END`,
+    },
+    ansiTheme as never,
+    {} as never,
+  );
 
   const cases: Array<[string, unknown]> = [
     ["completion message", completionMessage],
@@ -557,7 +623,10 @@ test("renderers preserve card backgrounds through ellipsis and padding", () => {
     card.addChild(component as never);
     const lines = card.render(width);
     assert.ok(lines.length > 0, `${label}: should render`);
-    assert.ok(lines.every((line) => visibleWidth(line) <= width), `${label}: width overflow`);
+    assert.ok(
+      lines.every((line) => visibleWidth(line) <= width),
+      `${label}: width overflow`,
+    );
     const ellipsisLines = lines.filter((line) => line.includes("..."));
     assert.equal(ellipsisLines.length, 1, `${label}: expected one single-line preview`);
     const line = ellipsisLines[0]!;

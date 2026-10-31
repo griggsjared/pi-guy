@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import type { ChildProcess } from "node:child_process";
-import { spawn } from "node:child_process";
-import type { Component } from "@earendil-works/pi-tui";
+import type { spawn } from "node:child_process";
 import type { ExtensionAPI, ExtensionContext, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
+import type { Component } from "@earendil-works/pi-tui";
 import type { AgentConfig, SubagentSettings } from "../../src/subagents/agents.ts";
 import { createJobRegistry } from "../../src/subagents/registry.ts";
 import { createSubagentTool } from "../../src/subagents/tools.ts";
@@ -80,19 +80,37 @@ export function makeTool(
     hasUI: false,
     isIdle: () => true,
   } as unknown as ExtensionToolContext;
-  return { tool, pi, registry, sendMessage, sendUserMessage, appendEntry, handlers, activeTickers, activeProcs, child, ctx };
+  return {
+    tool,
+    pi,
+    registry,
+    sendMessage,
+    sendUserMessage,
+    appendEntry,
+    handlers,
+    activeTickers,
+    activeProcs,
+    child,
+    ctx,
+  };
 }
 
-export function customProfilePicker(interact: (component: Component) => void | Promise<void>, requestRender = () => {}) {
-  return (factory: (
-    tui: { requestRender: () => void },
-    theme: ReturnType<typeof fakeTheme>,
-    keybindings: unknown,
-    done: (result: string | undefined) => void,
-  ) => Component) => new Promise<string | undefined>((resolve, reject) => {
-    const component = factory({ requestRender }, fakeTheme(), {}, resolve);
-    Promise.resolve(interact(component)).catch(reject);
-  });
+export function customProfilePicker(
+  interact: (component: Component) => void | Promise<void>,
+  requestRender = () => {},
+) {
+  return (
+    factory: (
+      tui: { requestRender: () => void },
+      theme: ReturnType<typeof fakeTheme>,
+      keybindings: unknown,
+      done: (result: string | undefined) => void,
+    ) => Component,
+  ) =>
+    new Promise<string | undefined>((resolve, reject) => {
+      const component = factory({ requestRender }, fakeTheme(), {}, resolve);
+      Promise.resolve(interact(component)).catch(reject);
+    });
 }
 
 export function renderable(value: unknown): boolean {

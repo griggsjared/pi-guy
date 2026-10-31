@@ -113,7 +113,7 @@ export function toolCallLabel(name: string, args: Record<string, unknown>, width
     return text ? clip(text, max) : "";
   };
   const full = (value: unknown): string => valueText(value);
-  const fit = (label: string): string => maxWidth === undefined ? label : clip(label, maxWidth);
+  const fit = (label: string): string => (maxWidth === undefined ? label : clip(label, maxWidth));
   const pathValue = (): string => valueText(args.file_path ?? args.path ?? "…");
   const pathOf = (): string => pathClip(pathValue(), 60);
   const pathWithSuffix = (prefix: string, suffix: string): string => {
@@ -139,9 +139,10 @@ export function toolCallLabel(name: string, args: Record<string, unknown>, width
       const limit = Number(args.limit);
       const hasOffset = Number.isFinite(offset);
       const hasLimit = Number.isFinite(limit) && limit > 0;
-      const suffix = hasOffset || hasLimit
-        ? `:${hasOffset ? offset : 1}${hasLimit ? `-${(hasOffset ? offset : 1) + limit - 1}` : ""}`
-        : "";
+      const suffix =
+        hasOffset || hasLimit
+          ? `:${hasOffset ? offset : 1}${hasLimit ? `-${(hasOffset ? offset : 1) + limit - 1}` : ""}`
+          : "";
       return pathWithSuffix("read ", suffix);
     }
     case "write": {
@@ -149,7 +150,8 @@ export function toolCallLabel(name: string, args: Record<string, unknown>, width
       const suffix = lines > 1 ? ` (${lines} lines)` : "";
       return pathWithSuffix("write ", suffix);
     }
-    case "edit": return pathWithSuffix("edit ", "");
+    case "edit":
+      return pathWithSuffix("edit ", "");
     case "ls": {
       if (maxWidth === undefined) return `ls ${pathClip(valueText(args.path ?? "."), 60)}`;
       return fit(`ls ${pathClip(valueText(args.path ?? "."), maxWidth - 3)}`);
@@ -161,12 +163,13 @@ export function toolCallLabel(name: string, args: Record<string, unknown>, width
     case "subagent": {
       if (maxWidth === undefined) {
         const agent = str(args.agent ?? "…", 40);
-        const preview = clip(
-          valueText(normalizeTitle(stringArg(args.title)) ?? stringArg(args.task)) || "…",
-          60,
-        );
+        const preview = clip(valueText(normalizeTitle(stringArg(args.title)) ?? stringArg(args.task)) || "…", 60);
         if (Array.isArray(args.tasks) && args.tasks.length > 0) {
-          const tasks = args.tasks.slice(0, 4).map((task) => `${str((task as Record<string, unknown>)?.agent ?? "…", 32)} · ${subagentTaskLabel(task, 48)}`);
+          const tasks = args.tasks
+            .slice(0, 4)
+            .map(
+              (task) => `${str((task as Record<string, unknown>)?.agent ?? "…", 32)} · ${subagentTaskLabel(task, 48)}`,
+            );
           const more = args.tasks.length > tasks.length ? `, … +${args.tasks.length - tasks.length}` : "";
           return `subagent launch parallel (${args.tasks.length} tasks): ${tasks.join(", ")}${more}`;
         }
@@ -193,12 +196,17 @@ export function toolCallLabel(name: string, args: Record<string, unknown>, width
     case "subagent_send": {
       const mode = args.deliverAs === "followUp" ? "follow-up" : "steering";
       const message = maxWidth === undefined ? str(args.message ?? "…", 60) : full(args.message ?? "…");
-      return fit(`subagent send ${args.jobId === undefined ? "…" : `#${maxWidth === undefined ? str(args.jobId) : full(args.jobId)}`} ${mode} · ${message}`);
+      return fit(
+        `subagent send ${args.jobId === undefined ? "…" : `#${maxWidth === undefined ? str(args.jobId) : full(args.jobId)}`} ${mode} · ${message}`,
+      );
     }
     case "subagent_reply": {
       const answer = maxWidth === undefined ? str(args.answer ?? "…", 60) : full(args.answer ?? "…");
-      return fit(`subagent reply ${args.jobId === undefined ? "…" : `#${maxWidth === undefined ? str(args.jobId) : full(args.jobId)}`} · ${answer}`);
+      return fit(
+        `subagent reply ${args.jobId === undefined ? "…" : `#${maxWidth === undefined ? str(args.jobId) : full(args.jobId)}`} · ${answer}`,
+      );
     }
-    default: return fit(`${inlineText(name)} ${maxWidth === undefined ? str(args) : full(args)}`);
+    default:
+      return fit(`${inlineText(name)} ${maxWidth === undefined ? str(args) : full(args)}`);
   }
 }

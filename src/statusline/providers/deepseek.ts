@@ -15,18 +15,22 @@ export function normalizeDeepseekUsage(payload: unknown, capturedAt = Date.now()
   for (const info of infos) {
     const object = asObject(info);
     const rawAmount = object?.total_balance;
-    const amount = typeof rawAmount === "string"
-      ? (/^\d+(?:\.\d+)?$/.test(rawAmount.trim()) ? Number(rawAmount.trim()) : undefined)
-      : asNumber(rawAmount);
+    const amount =
+      typeof rawAmount === "string"
+        ? /^\d+(?:\.\d+)?$/.test(rawAmount.trim())
+          ? Number(rawAmount.trim())
+          : undefined
+        : asNumber(rawAmount);
     const currency = typeof object?.currency === "string" ? object.currency.toUpperCase() : undefined;
     if (amount === undefined || !Number.isFinite(amount) || amount < 0) continue;
     if (currency === undefined || !/^[A-Z]{3}$/.test(currency)) continue;
     candidates.push({ amount, currency });
   }
-  const balance = candidates.find((entry) => entry.amount > 0 && entry.currency === "USD")
-    ?? candidates.find((entry) => entry.amount > 0)
-    ?? candidates.find((entry) => entry.currency === "USD")
-    ?? candidates[0];
+  const balance =
+    candidates.find((entry) => entry.amount > 0 && entry.currency === "USD") ??
+    candidates.find((entry) => entry.amount > 0) ??
+    candidates.find((entry) => entry.currency === "USD") ??
+    candidates[0];
   if (!balance) return undefined;
   return { provider: DEEPSEEK_PROVIDER, state: "ready", windows: [], balance, capturedAtMs: capturedAt };
 }

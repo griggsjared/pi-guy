@@ -50,21 +50,30 @@ test("parses Solid Seroval hydration with references and unquoted keys", () => {
 test("validates OpenCode reset values", () => {
   assert.equal(normalizeOpencodeGoUsage(`rollingUsage:{usagePercent:10,resetInSec:-1}`, capturedAt), undefined);
   assert.equal(normalizeOpencodeGoUsage(`rollingUsage:{usagePercent:10,resetInSec:1e308}`, capturedAt), undefined);
-  assert.equal(normalizeOpencodeGoUsage(`rollingUsage:{usagePercent:10,resetInSec:0}`, capturedAt)?.windows[0]?.resetAtMs, capturedAt);
-  assert.equal(normalizeOpencodeGoUsage(`rollingUsage:{usagePercent:10,resetInSec:.5}`, capturedAt)?.windows[0]?.resetAtMs, capturedAt + 500);
+  assert.equal(
+    normalizeOpencodeGoUsage(`rollingUsage:{usagePercent:10,resetInSec:0}`, capturedAt)?.windows[0]?.resetAtMs,
+    capturedAt,
+  );
+  assert.equal(
+    normalizeOpencodeGoUsage(`rollingUsage:{usagePercent:10,resetInSec:.5}`, capturedAt)?.windows[0]?.resetAtMs,
+    capturedAt + 500,
+  );
 });
 
 test("bounds malformed hydration scanning", () => {
-  const fragments = Array.from({ length: 300 }, () =>
-    `rollingUsage:{${"x".repeat(16_000)}`,
-  ).join(";");
+  const fragments = Array.from({ length: 300 }, () => `rollingUsage:{${"x".repeat(16_000)}`).join(";");
   const started = performance.now();
   assert.equal(normalizeOpencodeGoUsage(fragments, capturedAt), undefined);
   assert.ok(performance.now() - started < 500, "malformed hydration should be bounded");
 });
 
 test("rejects invalid OpenCode fields and omits unrelated secrets", () => {
-  assert.equal(normalizeOpencodeGoUsage(`<div>rollingUsage: {"usagePercent":"secret","resetInSec":1}</div>`), undefined);
-  const usage = normalizeOpencodeGoUsage(`<div>rollingUsage: {"usagePercent":10,"resetInSec":1,"authCookie":"secret"}</div>`);
+  assert.equal(
+    normalizeOpencodeGoUsage(`<div>rollingUsage: {"usagePercent":"secret","resetInSec":1}</div>`),
+    undefined,
+  );
+  const usage = normalizeOpencodeGoUsage(
+    `<div>rollingUsage: {"usagePercent":10,"resetInSec":1,"authCookie":"secret"}</div>`,
+  );
   assert.equal(JSON.stringify(usage).includes("secret"), false);
 });

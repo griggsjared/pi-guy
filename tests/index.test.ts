@@ -28,14 +28,28 @@ test("the package entry registers everything each factory registers", async (t) 
     else Reflect.deleteProperty(globalThis, "__dirname");
     await rm(home, { recursive: true, force: true });
   });
-  Object.defineProperty(globalThis, "__dirname", { configurable: true, value: join(import.meta.dirname, "..", "src", "subagents") });
+  Object.defineProperty(globalThis, "__dirname", {
+    configurable: true,
+    value: join(import.meta.dirname, "..", "src", "subagents"),
+  });
   t.mock.method(os, "homedir", () => home);
   syncBuiltinESMExports();
 
   const fromEntry = recorder();
   await entry(fromEntry.pi);
   const fromFactories = recorder();
-  for (const factory of [agentsLocal, askUser, btw, context, githubPr, header, statusline, subagents, webSearch, workingIndicator]) {
+  for (const factory of [
+    agentsLocal,
+    askUser,
+    btw,
+    context,
+    githubPr,
+    header,
+    statusline,
+    subagents,
+    webSearch,
+    workingIndicator,
+  ]) {
     await factory(fromFactories.pi);
   }
 
@@ -47,10 +61,12 @@ function recorder() {
   const calls: string[] = [];
   const target: Record<PropertyKey, unknown> = { events: createEventBus() };
   const pi = new Proxy(target, {
-    get: (target, method) => target[method] ?? ((first: unknown) => {
-      const name = typeof first === "string" ? first : (first as { name?: string }).name;
-      calls.push(`${String(method)} ${name}`);
-    }),
+    get: (target, method) =>
+      target[method] ??
+      ((first: unknown) => {
+        const name = typeof first === "string" ? first : (first as { name?: string }).name;
+        calls.push(`${String(method)} ${name}`);
+      }),
   }) as unknown as ExtensionAPI;
   return { pi, calls };
 }
