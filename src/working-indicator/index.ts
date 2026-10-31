@@ -159,7 +159,10 @@ type WorkingPattern = (typeof WORKING_PATTERNS)[number];
 type PaletteColor = (typeof THEME_COLORS)[number];
 type ColorIntensity = "bright" | "normal" | "dim";
 type IntensityDirection = "brighten" | "darken";
-type PatternColor = { color: PaletteColor; intensity: ColorIntensity };
+interface PatternColor {
+  color: PaletteColor;
+  intensity: ColorIntensity;
+}
 
 const SPINNER_SYMBOLS = ["✻", "✽", "✻", "✾"];
 
@@ -338,10 +341,9 @@ export default function (pi: ExtensionAPI) {
       };
     });
     const styleColor = (styledColor: PatternColor, text: string): string => {
+      if (styledColor.intensity === "dim") return ctx.ui.theme.style(text, { fg: styledColor.color, dim: true });
       const colored = ctx.ui.theme.fg(styledColor.color, text);
-      if (styledColor.intensity === "bright") return ctx.ui.theme.bold(colored);
-      if (styledColor.intensity === "dim") return `\x1b[2m${colored}\x1b[22m`;
-      return colored;
+      return styledColor.intensity === "bright" ? ctx.ui.theme.bold(colored) : colored;
     };
     let lastSpinnerFrame = "";
     let lastWordCycle = -1;

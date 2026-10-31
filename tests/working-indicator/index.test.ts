@@ -31,7 +31,7 @@ function createContext() {
       mode: "tui",
       hasUI: true,
       ui: {
-        theme: fakeTheme(),
+        theme: { ...fakeTheme(), style: (text: string) => text },
         setWorkingMessage(message?: string) { calls.messages.push(message); },
         setWorkingIndicator(indicator?: unknown) { calls.indicators.push(indicator); },
         setWorkingVisible(visible: boolean) { calls.visibility.push(visible); },
