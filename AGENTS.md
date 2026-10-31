@@ -9,7 +9,8 @@ One Pi package with one extension. `package.json` points Pi at `src/index.ts`, w
 
 ## Style
 
-- Indent with tabs, except `src/subagents/` and `tests/subagents/`, which use 2 spaces.
+- Indent with 2 spaces, as `.editorconfig` sets.
+- Use `interface` for object shapes. Use `type` for unions, intersections, function types, tuples, and types built from other types, such as `Pick<…>`.
 - Prefer `import type { … }` over `import { type X }`.
 - Use `!` for index access to values known to be present.
 - In tests, write literal characters such as `π` and `·`, not `\u` escapes.
@@ -17,9 +18,9 @@ One Pi package with one extension. `package.json` points Pi at `src/index.ts`, w
 
 ## Patterns
 
-- Each top-level folder under `src/` except `lib/` default-exports one `(pi: ExtensionAPI)` factory from `index.ts` that registers everything it owns. Don't start timers or processes in the factory: start session-wide ones in `session_start` and task-specific ones in the handler that needs them, and make sure `session_shutdown` releases anything still running.
+- Each top-level folder under `src/` except `lib/` default-exports one `(pi: ExtensionAPI)` factory from `index.ts` that registers everything it owns, directly or by calling the folder's own helpers, such as `registerStatusline(pi)` or `createSubagentTool(deps)`. Don't start timers or processes in the factory: start session-wide ones in `session_start` and task-specific ones in the handler that needs them, and make sure `session_shutdown` releases anything still running.
 - Keep state inside the factory. Module-level state needs a comment giving the reason.
-- Start with `index.ts`. Move code to a named file in the same folder only when it has a separate job, such as `picker.ts`. Put types shared within a folder in `types.ts`. Code goes in `src/lib/` only when three or more folders share it with the same contract.
+- Start with `index.ts`. Move code to a named file in the same folder only when it has a separate job, such as `picker.ts`. Keep each type in the file that owns it, exported when another file needs it. Use `types.ts` only for types that several files in the folder share and no one file owns. Code goes in `src/lib/` only when three or more folders share it with the same contract.
 - Export only what other files in `src/` import. Pure parse, normalize, and format functions may also be exported for tests; test everything else through the factory or tool. Types and interfaces may stay exported.
 - Tools define their TypeBox schema as a module-level constant, throw on failure, and render safely when details are missing or the result is partial.
 - Commands report errors with `ctx.ui.notify(…, "error")`. Background work may fail quietly and keep its last good value.

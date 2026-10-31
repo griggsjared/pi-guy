@@ -4,425 +4,425 @@ import { extractReadableContent, isWeakContent, MAX_TEXT_CHARS, parseDuckDuckGoL
 import type { SearchResult } from "./html.ts";
 
 const USER_AGENT =
-	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 const CACHE_TTL_MS = 30_000;
 const TAVILY_ENDPOINT = "https://api.tavily.com/search";
 const TAVILY_MAX_RESULTS = 10;
 const TAVILY_TIMEOUT_MS = 15_000;
 
 const WebSearchParams = Type.Object({
-	query: Type.String({ description: "Search query." }),
+  query: Type.String({ description: "Search query." }),
 });
 
 const WebFetchParams = Type.Object({
-	url: Type.String({ description: "URL of the page to fetch and read." }),
+  url: Type.String({ description: "URL of the page to fetch and read." }),
 });
 
 type SearchBackend = "duckduckgo-lite" | "tavily";
 type SearchResponse = { backend: SearchBackend; results: SearchResult[] };
 type FetchedPage = {
-	url: string;
-	title: string;
-	description: string;
-	text: string;
-	charCount: number;
-	truncated: boolean;
+  url: string;
+  title: string;
+  description: string;
+  text: string;
+  charCount: number;
+  truncated: boolean;
 };
 
 function parseTavilyResponse(body: unknown): SearchResult[] | undefined {
-	if (!body || typeof body !== "object") return undefined;
-	const rawResults = (body as { results?: unknown }).results;
-	if (!Array.isArray(rawResults)) return undefined;
+  if (!body || typeof body !== "object") return undefined;
+  const rawResults = (body as { results?: unknown }).results;
+  if (!Array.isArray(rawResults)) return undefined;
 
-	return rawResults.flatMap((rawResult): SearchResult[] => {
-		if (!rawResult || typeof rawResult !== "object") return [];
-		const result = rawResult as Record<string, unknown>;
-		const title = typeof result.title === "string" ? result.title.trim() : "";
-		const url = typeof result.url === "string" ? result.url.trim() : "";
-		const snippet = typeof result.content === "string" ? result.content.trim() : "";
-		return title && url ? [{ title, url, snippet }] : [];
-	});
+  return rawResults.flatMap((rawResult): SearchResult[] => {
+    if (!rawResult || typeof rawResult !== "object") return [];
+    const result = rawResult as Record<string, unknown>;
+    const title = typeof result.title === "string" ? result.title.trim() : "";
+    const url = typeof result.url === "string" ? result.url.trim() : "";
+    const snippet = typeof result.content === "string" ? result.content.trim() : "";
+    return title && url ? [{ title, url, snippet }] : [];
+  });
 }
 
 function looksLikeErrorPage(body: string): boolean {
-	const text = body.toLowerCase();
-	return (
-		text.includes("if this persists") ||
-		text.includes("error-lite") ||
-		text.includes("captcha") ||
-		text.includes("unusual traffic") ||
-		text.includes("are you a robot") ||
-		text.includes("verify you are human")
-	);
+  const text = body.toLowerCase();
+  return (
+    text.includes("if this persists") ||
+    text.includes("error-lite") ||
+    text.includes("captcha") ||
+    text.includes("unusual traffic") ||
+    text.includes("are you a robot") ||
+    text.includes("verify you are human")
+  );
 }
 
 function classifySearchFailure(status: number, body: string): string {
-	const blocked = status === 403 || status === 429 || looksLikeErrorPage(body);
-	if (blocked) {
-		return "DuckDuckGo blocked or rate-limited the request. Try again shortly or rephrase the query.";
-	}
-	if (status >= 400) return `DuckDuckGo request failed with HTTP ${status}.`;
-	return "DuckDuckGo returned an unreadable response.";
+  const blocked = status === 403 || status === 429 || looksLikeErrorPage(body);
+  if (blocked) {
+    return "DuckDuckGo blocked or rate-limited the request. Try again shortly or rephrase the query.";
+  }
+  if (status >= 400) return `DuckDuckGo request failed with HTTP ${status}.`;
+  return "DuckDuckGo returned an unreadable response.";
 }
 
 function classifyTavilyFailure(status: number, body: string): string {
-	const text = body.toLowerCase();
-	if (status === 401 || status === 403 || text.includes("api key")) {
-		return "Tavily rejected the API key. Check TAVILY_API_KEY.";
-	}
-	if (status === 429 || text.includes("rate limit") || text.includes("credit")) {
-		return "Tavily rate limit or credit limit reached.";
-	}
-	if (status >= 400) return `Tavily request failed with HTTP ${status}.`;
-	return "Tavily returned an unreadable response.";
+  const text = body.toLowerCase();
+  if (status === 401 || status === 403 || text.includes("api key")) {
+    return "Tavily rejected the API key. Check TAVILY_API_KEY.";
+  }
+  if (status === 429 || text.includes("rate limit") || text.includes("credit")) {
+    return "Tavily rate limit or credit limit reached.";
+  }
+  if (status >= 400) return `Tavily request failed with HTTP ${status}.`;
+  return "Tavily returned an unreadable response.";
 }
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function searchDuckDuckGo(query: string, signal?: AbortSignal): Promise<SearchResult[]> {
-	const endpoint = `https://lite.duckduckgo.com/lite/?${new URLSearchParams({ q: query }).toString()}`;
-	for (let attempt = 0; attempt < 2; attempt++) {
-		if (signal?.aborted) throw new Error("Search cancelled.");
-		const timeoutSignal = AbortSignal.timeout(15000);
-		const combined = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
-		let response: Response;
-		let body: string;
-		try {
-			response = await fetch(endpoint, {
-				headers: { "User-Agent": USER_AGENT },
-				signal: combined,
-			});
-			body = await response.text();
-		} catch (error) {
-			if (signal?.aborted) throw new Error("Search cancelled.");
-			if (attempt === 0) {
-				await wait(1500);
-				continue;
-			}
-			throw new Error(`DuckDuckGo request failed: ${error instanceof Error ? error.message : String(error)}`);
-		}
-		if (!response.ok || looksLikeErrorPage(body)) {
-			const retriable = response.status === 403 || response.status === 429 || response.status === 503;
-			if (retriable && attempt === 0) {
-				await wait(1500);
-				continue;
-			}
-			throw new Error(classifySearchFailure(response.status, body));
-		}
-		return parseDuckDuckGoLite(body);
-	}
-	throw new Error("DuckDuckGo request failed after retries.");
+  const endpoint = `https://lite.duckduckgo.com/lite/?${new URLSearchParams({ q: query }).toString()}`;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (signal?.aborted) throw new Error("Search cancelled.");
+    const timeoutSignal = AbortSignal.timeout(15000);
+    const combined = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+    let response: Response;
+    let body: string;
+    try {
+      response = await fetch(endpoint, {
+        headers: { "User-Agent": USER_AGENT },
+        signal: combined,
+      });
+      body = await response.text();
+    } catch (error) {
+      if (signal?.aborted) throw new Error("Search cancelled.");
+      if (attempt === 0) {
+        await wait(1500);
+        continue;
+      }
+      throw new Error(`DuckDuckGo request failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    if (!response.ok || looksLikeErrorPage(body)) {
+      const retriable = response.status === 403 || response.status === 429 || response.status === 503;
+      if (retriable && attempt === 0) {
+        await wait(1500);
+        continue;
+      }
+      throw new Error(classifySearchFailure(response.status, body));
+    }
+    return parseDuckDuckGoLite(body);
+  }
+  throw new Error("DuckDuckGo request failed after retries.");
 }
 
 async function searchTavily(query: string, signal?: AbortSignal): Promise<SearchResult[]> {
-	const apiKey = process.env.TAVILY_API_KEY?.trim();
-	if (!apiKey) throw new Error("TAVILY_API_KEY is not set.");
+  const apiKey = process.env.TAVILY_API_KEY?.trim();
+  if (!apiKey) throw new Error("TAVILY_API_KEY is not set.");
 
-	const timeoutSignal = AbortSignal.timeout(TAVILY_TIMEOUT_MS);
-	const combined = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
-	let response: Response;
-	try {
-		response = await fetch(TAVILY_ENDPOINT, {
-			method: "POST",
-			headers: {
-				Accept: "application/json",
-				Authorization: `Bearer ${apiKey}`,
-				"Content-Type": "application/json",
-			},
-			body: JSON.stringify({
-				query,
-				search_depth: "basic",
-				max_results: TAVILY_MAX_RESULTS,
-			}),
-			signal: combined,
-		});
-	} catch (error) {
-		if (signal?.aborted) throw new Error("Search cancelled.");
-		const err = error as Error;
-		if (err.name === "TimeoutError") throw new Error(`Tavily request timed out after ${TAVILY_TIMEOUT_MS / 1000} seconds.`);
-		throw new Error(`Tavily request failed: ${err.message}`);
-	}
+  const timeoutSignal = AbortSignal.timeout(TAVILY_TIMEOUT_MS);
+  const combined = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+  let response: Response;
+  try {
+    response = await fetch(TAVILY_ENDPOINT, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        query,
+        search_depth: "basic",
+        max_results: TAVILY_MAX_RESULTS,
+      }),
+      signal: combined,
+    });
+  } catch (error) {
+    if (signal?.aborted) throw new Error("Search cancelled.");
+    const err = error as Error;
+    if (err.name === "TimeoutError") throw new Error(`Tavily request timed out after ${TAVILY_TIMEOUT_MS / 1000} seconds.`);
+    throw new Error(`Tavily request failed: ${err.message}`);
+  }
 
-	let body: string;
-	try {
-		body = await response.text();
-	} catch (error) {
-		if (signal?.aborted) throw new Error("Search cancelled.");
-		if (timeoutSignal.aborted || (error as Error | null | undefined)?.name === "TimeoutError") {
-			throw new Error(`Tavily request timed out after ${TAVILY_TIMEOUT_MS / 1000} seconds.`);
-		}
-		throw error;
-	}
-	if (!response.ok) throw new Error(classifyTavilyFailure(response.status, body));
+  let body: string;
+  try {
+    body = await response.text();
+  } catch (error) {
+    if (signal?.aborted) throw new Error("Search cancelled.");
+    if (timeoutSignal.aborted || (error as Error | null | undefined)?.name === "TimeoutError") {
+      throw new Error(`Tavily request timed out after ${TAVILY_TIMEOUT_MS / 1000} seconds.`);
+    }
+    throw error;
+  }
+  if (!response.ok) throw new Error(classifyTavilyFailure(response.status, body));
 
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(body);
-	} catch {
-		throw new Error("Tavily returned invalid JSON.");
-	}
-	const results = parseTavilyResponse(parsed);
-	if (!results) throw new Error("Tavily returned an unreadable response.");
-	return results;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    throw new Error("Tavily returned invalid JSON.");
+  }
+  const results = parseTavilyResponse(parsed);
+  if (!results) throw new Error("Tavily returned an unreadable response.");
+  return results;
 }
 
 async function searchWithFallback(query: string, signal?: AbortSignal): Promise<SearchResponse> {
-	if (process.env.PI_WEB_SEARCH_BACKEND?.trim().toLowerCase() === "tavily") {
-		return { backend: "tavily", results: await searchTavily(query, signal) };
-	}
+  if (process.env.PI_WEB_SEARCH_BACKEND?.trim().toLowerCase() === "tavily") {
+    return { backend: "tavily", results: await searchTavily(query, signal) };
+  }
 
-	try {
-		return { backend: "duckduckgo-lite", results: await searchDuckDuckGo(query, signal) };
-	} catch (duckDuckGoError) {
-		if (signal?.aborted) throw duckDuckGoError;
-		if (!process.env.TAVILY_API_KEY?.trim()) throw duckDuckGoError;
+  try {
+    return { backend: "duckduckgo-lite", results: await searchDuckDuckGo(query, signal) };
+  } catch (duckDuckGoError) {
+    if (signal?.aborted) throw duckDuckGoError;
+    if (!process.env.TAVILY_API_KEY?.trim()) throw duckDuckGoError;
 
-		try {
-			return { backend: "tavily", results: await searchTavily(query, signal) };
-		} catch (tavilyError) {
-			if (signal?.aborted) throw tavilyError;
-			const primary = duckDuckGoError instanceof Error ? duckDuckGoError.message : String(duckDuckGoError);
-			const fallback = tavilyError instanceof Error ? tavilyError.message : String(tavilyError);
-			throw new Error(`Search failed. DuckDuckGo: ${primary} Tavily: ${fallback}`);
-		}
-	}
+    try {
+      return { backend: "tavily", results: await searchTavily(query, signal) };
+    } catch (tavilyError) {
+      if (signal?.aborted) throw tavilyError;
+      const primary = duckDuckGoError instanceof Error ? duckDuckGoError.message : String(duckDuckGoError);
+      const fallback = tavilyError instanceof Error ? tavilyError.message : String(tavilyError);
+      throw new Error(`Search failed. DuckDuckGo: ${primary} Tavily: ${fallback}`);
+    }
+  }
 }
 
 type CachedSearch = SearchResponse & { expires: number };
 function formatResults(query: string, results: SearchResult[]): string {
-	if (results.length === 0) return `No results found for "${query}".`;
-	const lines = [`${results.length} results for "${query}":`];
-	for (let index = 0; index < results.length; index++) {
-		const result = results[index]!;
-		lines.push(`${index + 1}. ${result.title}`);
-		lines.push(`   ${result.url}`);
-		if (result.snippet) lines.push(`   ${result.snippet}`);
-	}
-	return lines.join("\n");
+  if (results.length === 0) return `No results found for "${query}".`;
+  const lines = [`${results.length} results for "${query}":`];
+  for (let index = 0; index < results.length; index++) {
+    const result = results[index]!;
+    lines.push(`${index + 1}. ${result.title}`);
+    lines.push(`   ${result.url}`);
+    if (result.snippet) lines.push(`   ${result.snippet}`);
+  }
+  return lines.join("\n");
 }
 
 const BINARY_MEDIA_TYPES = new Set([
-	"application/gzip",
-	"application/pdf",
-	"application/postscript",
-	"application/wasm",
-	"application/x-7z-compressed",
-	"application/x-bzip2",
-	"application/x-rar-compressed",
-	"application/x-tar",
-	"application/zip",
+  "application/gzip",
+  "application/pdf",
+  "application/postscript",
+  "application/wasm",
+  "application/x-7z-compressed",
+  "application/x-bzip2",
+  "application/x-rar-compressed",
+  "application/x-tar",
+  "application/zip",
 ]);
 
 function isClearlyBinaryContentType(contentType: string): boolean {
-	const mediaType = contentType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
-	if (/^(audio|font|video)\//.test(mediaType)) return true;
-	if (mediaType.startsWith("image/") && mediaType !== "image/svg+xml") return true;
-	if (BINARY_MEDIA_TYPES.has(mediaType)) return true;
-	return /^application\/vnd\.(?:ms-|openxmlformats-officedocument\.)/.test(mediaType);
+  const mediaType = contentType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  if (/^(audio|font|video)\//.test(mediaType)) return true;
+  if (mediaType.startsWith("image/") && mediaType !== "image/svg+xml") return true;
+  if (BINARY_MEDIA_TYPES.has(mediaType)) return true;
+  return /^application\/vnd\.(?:ms-|openxmlformats-officedocument\.)/.test(mediaType);
 }
 
 function looksLikeBinaryContent(bytes: Uint8Array): boolean {
-	const sample = bytes.subarray(0, Math.min(bytes.length, 8192));
-	if (sample.length === 0) return false;
-	if (
-		(sample[0] === 0xff && sample[1] === 0xfe) ||
-		(sample[0] === 0xfe && sample[1] === 0xff)
-	) return false;
-	let controlBytes = 0;
-	for (const byte of sample) {
-		if (byte === 0) return true;
-		if (byte < 8 || (byte > 13 && byte < 32) || byte === 127) controlBytes++;
-	}
-	return controlBytes / sample.length > 0.02;
+  const sample = bytes.subarray(0, Math.min(bytes.length, 8192));
+  if (sample.length === 0) return false;
+  if (
+    (sample[0] === 0xff && sample[1] === 0xfe) ||
+    (sample[0] === 0xfe && sample[1] === 0xff)
+  ) return false;
+  let controlBytes = 0;
+  for (const byte of sample) {
+    if (byte === 0) return true;
+    if (byte < 8 || (byte > 13 && byte < 32) || byte === 127) controlBytes++;
+  }
+  return controlBytes / sample.length > 0.02;
 }
 
 async function fetchPage(url: string, signal?: AbortSignal): Promise<FetchedPage> {
-	let parsed: URL;
-	try {
-		parsed = new URL(url);
-	} catch {
-		throw new Error(`Invalid URL: ${url}`);
-	}
-	if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-		throw new Error(`Unsupported protocol ${parsed.protocol} — only http and https can be fetched.`);
-	}
-	const timeoutSignal = AbortSignal.timeout(15000);
-	const combined = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
-	let response: Response;
-	try {
-		response = await fetch(url, {
-			headers: {
-				"User-Agent": USER_AGENT,
-				Accept: "text/html,application/xhtml+xml,text/plain,text/markdown,application/json,application/xml,*/*;q=0.5",
-			},
-			redirect: "follow",
-			signal: combined,
-		});
-	} catch (error) {
-		if (signal?.aborted) throw new Error("Fetch cancelled.");
-		const err = error as Error;
-		if (err.name === "TimeoutError") throw new Error(`Fetch timed out after 15 seconds: ${url}`);
-		throw new Error(`Fetch failed: ${err.message}`);
-	}
-	if (!response.ok) {
-		const blocked = response.status === 403 || response.status === 429;
-		throw new Error(
-			blocked
-				? `Fetch blocked or rate-limited (HTTP ${response.status}). Try the page later or rely on web_search snippets.`
-				: `Fetch failed with HTTP ${response.status}.`,
-		);
-	}
-	const contentType = response.headers?.get?.("content-type") ?? "";
-	const mediaType = contentType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
-	if (isClearlyBinaryContentType(contentType)) {
-		throw new Error(`Unsupported binary content type "${mediaType}".`);
-	}
-	const bytes = new Uint8Array(await response.arrayBuffer());
-	if (looksLikeBinaryContent(bytes)) {
-		throw new Error(
-			`Unsupported content type "${mediaType || "unknown"}" — the response appears to be binary.`,
-		);
-	}
-	const charset =
-		contentType.match(/charset\s*=\s*["']?([^;"'\s]+)/i)?.[1] ??
-		(bytes[0] === 0xff && bytes[1] === 0xfe
-			? "utf-16le"
-			: bytes[0] === 0xfe && bytes[1] === 0xff
-				? "utf-16be"
-				: "utf-8");
-	let body: string;
-	try {
-		body = new TextDecoder(charset).decode(bytes);
-	} catch {
-		throw new Error(
-			`Unsupported content type "${mediaType || "unknown"}" — the response is not decodable text.`,
-		);
-	}
-	const isHtml =
-		mediaType === "text/html" ||
-		mediaType === "application/xhtml+xml" ||
-		/^\s*(?:<!doctype\s+html|<html\b)/i.test(body);
-	if (isHtml) {
-		const extracted = extractReadableContent(body);
-		if (isWeakContent(body, extracted.text)) {
-			throw new Error("Page content is not readable (requires JavaScript or is empty). Rely on web_search snippets instead.");
-		}
-		return { url: response.url || url, ...extracted };
-	}
-	const text = body.trim();
-	if (!text) throw new Error("The response contains no readable text.");
-	const charCount = text.length;
-	const truncated = charCount > MAX_TEXT_CHARS;
-	const finalText = truncated
-		? `${text.slice(0, MAX_TEXT_CHARS).trimEnd()}\n…[truncated at ${charCount} characters]`
-		: text;
-	return {
-		url: response.url || url,
-		title: "",
-		description: "",
-		text: finalText,
-		charCount,
-		truncated,
-	};
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error(`Invalid URL: ${url}`);
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(`Unsupported protocol ${parsed.protocol} — only http and https can be fetched.`);
+  }
+  const timeoutSignal = AbortSignal.timeout(15000);
+  const combined = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      headers: {
+        "User-Agent": USER_AGENT,
+        Accept: "text/html,application/xhtml+xml,text/plain,text/markdown,application/json,application/xml,*/*;q=0.5",
+      },
+      redirect: "follow",
+      signal: combined,
+    });
+  } catch (error) {
+    if (signal?.aborted) throw new Error("Fetch cancelled.");
+    const err = error as Error;
+    if (err.name === "TimeoutError") throw new Error(`Fetch timed out after 15 seconds: ${url}`);
+    throw new Error(`Fetch failed: ${err.message}`);
+  }
+  if (!response.ok) {
+    const blocked = response.status === 403 || response.status === 429;
+    throw new Error(
+      blocked
+        ? `Fetch blocked or rate-limited (HTTP ${response.status}). Try the page later or rely on web_search snippets.`
+        : `Fetch failed with HTTP ${response.status}.`,
+    );
+  }
+  const contentType = response.headers?.get?.("content-type") ?? "";
+  const mediaType = contentType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  if (isClearlyBinaryContentType(contentType)) {
+    throw new Error(`Unsupported binary content type "${mediaType}".`);
+  }
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (looksLikeBinaryContent(bytes)) {
+    throw new Error(
+      `Unsupported content type "${mediaType || "unknown"}" — the response appears to be binary.`,
+    );
+  }
+  const charset =
+    contentType.match(/charset\s*=\s*["']?([^;"'\s]+)/i)?.[1] ??
+    (bytes[0] === 0xff && bytes[1] === 0xfe
+      ? "utf-16le"
+      : bytes[0] === 0xfe && bytes[1] === 0xff
+        ? "utf-16be"
+        : "utf-8");
+  let body: string;
+  try {
+    body = new TextDecoder(charset).decode(bytes);
+  } catch {
+    throw new Error(
+      `Unsupported content type "${mediaType || "unknown"}" — the response is not decodable text.`,
+    );
+  }
+  const isHtml =
+    mediaType === "text/html" ||
+    mediaType === "application/xhtml+xml" ||
+    /^\s*(?:<!doctype\s+html|<html\b)/i.test(body);
+  if (isHtml) {
+    const extracted = extractReadableContent(body);
+    if (isWeakContent(body, extracted.text)) {
+      throw new Error("Page content is not readable (requires JavaScript or is empty). Rely on web_search snippets instead.");
+    }
+    return { url: response.url || url, ...extracted };
+  }
+  const text = body.trim();
+  if (!text) throw new Error("The response contains no readable text.");
+  const charCount = text.length;
+  const truncated = charCount > MAX_TEXT_CHARS;
+  const finalText = truncated
+    ? `${text.slice(0, MAX_TEXT_CHARS).trimEnd()}\n…[truncated at ${charCount} characters]`
+    : text;
+  return {
+    url: response.url || url,
+    title: "",
+    description: "",
+    text: finalText,
+    charCount,
+    truncated,
+  };
 }
 
 function formatPage(page: FetchedPage): string {
-	const lines: string[] = [];
-	if (page.title) lines.push(`Title: ${page.title}`);
-	lines.push(`URL: ${page.url}`);
-	if (page.description) lines.push(`Description: ${page.description}`);
-	lines.push("");
-	lines.push(page.text || "(no readable text)");
-	return lines.join("\n");
+  const lines: string[] = [];
+  if (page.title) lines.push(`Title: ${page.title}`);
+  lines.push(`URL: ${page.url}`);
+  if (page.description) lines.push(`Description: ${page.description}`);
+  lines.push("");
+  lines.push(page.text || "(no readable text)");
+  return lines.join("\n");
 }
 
 export default function (pi: ExtensionAPI) {
-	const cache = new Map<string, CachedSearch>();
+  const cache = new Map<string, CachedSearch>();
 
-	function getCached(query: string): SearchResponse | undefined {
-		const entry = cache.get(query);
-		if (!entry) return undefined;
-		if (entry.expires < Date.now()) {
-			cache.delete(query);
-			return undefined;
-		}
-		return { backend: entry.backend, results: entry.results };
-	}
+  function getCached(query: string): SearchResponse | undefined {
+    const entry = cache.get(query);
+    if (!entry) return undefined;
+    if (entry.expires < Date.now()) {
+      cache.delete(query);
+      return undefined;
+    }
+    return { backend: entry.backend, results: entry.results };
+  }
 
-	function setCached(query: string, response: SearchResponse): void {
-		cache.set(query, { ...response, expires: Date.now() + CACHE_TTL_MS });
-	}
+  function setCached(query: string, response: SearchResponse): void {
+    cache.set(query, { ...response, expires: Date.now() + CACHE_TTL_MS });
+  }
 
-	pi.registerTool({
-		name: "web_search",
-		label: "Web Search",
-		description:
-			"Search the web via DuckDuckGo and return ranked results with titles, URLs, and snippets. If TAVILY_API_KEY is set, retry through Tavily when DuckDuckGo is blocked or unavailable. Set PI_WEB_SEARCH_BACKEND=tavily to force Tavily. Use for current, external, or factual information not in the conversation or codebase.",
-		promptSnippet: "Search the web for current or external information",
-		promptGuidelines: [
-			"Use web_search for questions needing current, external, or factual information that is not in the conversation or codebase.",
-			"Use web_fetch to read the full content of a specific page (found via web_search or given by the user).",
-			"Prefer web_search and web_fetch over shell/network commands (curl, Invoke-WebRequest, npm view/search/pack, direct HTTP URLs) for web research.",
-		],
-		parameters: WebSearchParams,
-		outputSchema: Type.Object({
-			backend: Type.Union([Type.Literal("duckduckgo-lite"), Type.Literal("tavily")]),
-			query: Type.String(),
-			results: Type.Array(Type.Object({
-				title: Type.String(),
-				url: Type.String(),
-				snippet: Type.String(),
-			})),
-		}),
-		async execute(_toolCallId, params, signal) {
-			const query = params.query.trim();
-			if (!query) throw new Error("Query must not be empty.");
-			const cached = getCached(query);
-			const response = cached ?? (await searchWithFallback(query, signal));
-			if (!cached) setCached(query, response);
-			const details = { backend: response.backend, query, results: response.results };
-			return {
-				content: [{ type: "text", text: formatResults(query, response.results) }],
-				details,
-				structuredContent: details,
-			};
-		},
-	});
-	pi.registerTool({
-		name: "web_fetch",
-		label: "Web Fetch",
-		description:
-			"Fetch a URL and return its readable text content, truncated at 4000 characters. HTML pages use readability extraction; Markdown, JSON, XML, source files, and other text responses are returned directly. JavaScript-rendered pages and binary formats such as PDFs fail with a clear error.",
-		promptSnippet: "Read the text content of a web page",
-		promptGuidelines: [
-			"Use web_fetch to read a specific page when its full content matters; combine with web_search to discover pages first.",
-		],
-		parameters: WebFetchParams,
-		outputSchema: Type.Object({
-			backend: Type.Literal("http"),
-			url: Type.String(),
-			title: Type.String(),
-			description: Type.String(),
-			text: Type.String(),
-			charCount: Type.Integer({ minimum: 0 }),
-			truncated: Type.Boolean(),
-		}),
-		async execute(_toolCallId, params, signal) {
-			const url = params.url.trim();
-			if (!url) throw new Error("URL must not be empty.");
-			const page = await fetchPage(url, signal);
-			return {
-				content: [{ type: "text", text: formatPage(page) }],
-				details: {
-					backend: "http",
-					url: page.url,
-					title: page.title,
-					description: page.description,
-					charCount: page.charCount,
-					truncated: page.truncated,
-				},
-				structuredContent: { backend: "http", ...page },
-			};
-		},
-	});
+  pi.registerTool({
+    name: "web_search",
+    label: "Web Search",
+    description:
+      "Search the web via DuckDuckGo and return ranked results with titles, URLs, and snippets. If TAVILY_API_KEY is set, retry through Tavily when DuckDuckGo is blocked or unavailable. Set PI_WEB_SEARCH_BACKEND=tavily to force Tavily. Use for current, external, or factual information not in the conversation or codebase.",
+    promptSnippet: "Search the web for current or external information",
+    promptGuidelines: [
+      "Use web_search for questions needing current, external, or factual information that is not in the conversation or codebase.",
+      "Use web_fetch to read the full content of a specific page (found via web_search or given by the user).",
+      "Prefer web_search and web_fetch over shell/network commands (curl, Invoke-WebRequest, npm view/search/pack, direct HTTP URLs) for web research.",
+    ],
+    parameters: WebSearchParams,
+    outputSchema: Type.Object({
+      backend: Type.Union([Type.Literal("duckduckgo-lite"), Type.Literal("tavily")]),
+      query: Type.String(),
+      results: Type.Array(Type.Object({
+        title: Type.String(),
+        url: Type.String(),
+        snippet: Type.String(),
+      })),
+    }),
+    async execute(_toolCallId, params, signal) {
+      const query = params.query.trim();
+      if (!query) throw new Error("Query must not be empty.");
+      const cached = getCached(query);
+      const response = cached ?? (await searchWithFallback(query, signal));
+      if (!cached) setCached(query, response);
+      const details = { backend: response.backend, query, results: response.results };
+      return {
+        content: [{ type: "text", text: formatResults(query, response.results) }],
+        details,
+        structuredContent: details,
+      };
+    },
+  });
+  pi.registerTool({
+    name: "web_fetch",
+    label: "Web Fetch",
+    description:
+      "Fetch a URL and return its readable text content, truncated at 4000 characters. HTML pages use readability extraction; Markdown, JSON, XML, source files, and other text responses are returned directly. JavaScript-rendered pages and binary formats such as PDFs fail with a clear error.",
+    promptSnippet: "Read the text content of a web page",
+    promptGuidelines: [
+      "Use web_fetch to read a specific page when its full content matters; combine with web_search to discover pages first.",
+    ],
+    parameters: WebFetchParams,
+    outputSchema: Type.Object({
+      backend: Type.Literal("http"),
+      url: Type.String(),
+      title: Type.String(),
+      description: Type.String(),
+      text: Type.String(),
+      charCount: Type.Integer({ minimum: 0 }),
+      truncated: Type.Boolean(),
+    }),
+    async execute(_toolCallId, params, signal) {
+      const url = params.url.trim();
+      if (!url) throw new Error("URL must not be empty.");
+      const page = await fetchPage(url, signal);
+      return {
+        content: [{ type: "text", text: formatPage(page) }],
+        details: {
+          backend: "http",
+          url: page.url,
+          title: page.title,
+          description: page.description,
+          charCount: page.charCount,
+          truncated: page.truncated,
+        },
+        structuredContent: { backend: "http", ...page },
+      };
+    },
+  });
 }

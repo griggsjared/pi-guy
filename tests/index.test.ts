@@ -19,38 +19,38 @@ import webSearch from "../src/web-search/index.ts";
 import workingIndicator from "../src/working-indicator/index.ts";
 
 test("the package entry registers everything each factory registers", async (t) => {
-	const home = await mkdtemp(join(os.tmpdir(), "pi-guy-entry-"));
-	const dirname = Object.getOwnPropertyDescriptor(globalThis, "__dirname");
-	t.after(async () => {
-		t.mock.restoreAll();
-		syncBuiltinESMExports();
-		if (dirname) Object.defineProperty(globalThis, "__dirname", dirname);
-		else Reflect.deleteProperty(globalThis, "__dirname");
-		await rm(home, { recursive: true, force: true });
-	});
-	Object.defineProperty(globalThis, "__dirname", { configurable: true, value: join(import.meta.dirname, "..", "src", "subagents") });
-	t.mock.method(os, "homedir", () => home);
-	syncBuiltinESMExports();
+  const home = await mkdtemp(join(os.tmpdir(), "pi-guy-entry-"));
+  const dirname = Object.getOwnPropertyDescriptor(globalThis, "__dirname");
+  t.after(async () => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+    if (dirname) Object.defineProperty(globalThis, "__dirname", dirname);
+    else Reflect.deleteProperty(globalThis, "__dirname");
+    await rm(home, { recursive: true, force: true });
+  });
+  Object.defineProperty(globalThis, "__dirname", { configurable: true, value: join(import.meta.dirname, "..", "src", "subagents") });
+  t.mock.method(os, "homedir", () => home);
+  syncBuiltinESMExports();
 
-	const fromEntry = recorder();
-	await entry(fromEntry.pi);
-	const fromFactories = recorder();
-	for (const factory of [agentsLocal, askUser, btw, context, githubPr, header, statusline, subagents, webSearch, workingIndicator]) {
-		await factory(fromFactories.pi);
-	}
+  const fromEntry = recorder();
+  await entry(fromEntry.pi);
+  const fromFactories = recorder();
+  for (const factory of [agentsLocal, askUser, btw, context, githubPr, header, statusline, subagents, webSearch, workingIndicator]) {
+    await factory(fromFactories.pi);
+  }
 
-	assert.ok(fromFactories.calls.length > 0);
-	assert.deepEqual(fromEntry.calls.sort(), fromFactories.calls.sort());
+  assert.ok(fromFactories.calls.length > 0);
+  assert.deepEqual(fromEntry.calls.sort(), fromFactories.calls.sort());
 });
 
 function recorder() {
-	const calls: string[] = [];
-	const target: Record<PropertyKey, unknown> = { events: createEventBus() };
-	const pi = new Proxy(target, {
-		get: (target, method) => target[method] ?? ((first: unknown) => {
-			const name = typeof first === "string" ? first : (first as { name?: string }).name;
-			calls.push(`${String(method)} ${name}`);
-		}),
-	}) as unknown as ExtensionAPI;
-	return { pi, calls };
+  const calls: string[] = [];
+  const target: Record<PropertyKey, unknown> = { events: createEventBus() };
+  const pi = new Proxy(target, {
+    get: (target, method) => target[method] ?? ((first: unknown) => {
+      const name = typeof first === "string" ? first : (first as { name?: string }).name;
+      calls.push(`${String(method)} ${name}`);
+    }),
+  }) as unknown as ExtensionAPI;
+  return { pi, calls };
 }

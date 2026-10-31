@@ -14,5 +14,5 @@ import workingIndicator from "./working-indicator/index.ts";
 const factories: ExtensionFactory[] = [agentsLocal, askUser, btw, context, githubPr, header, webSearch, statusline, subagents, workingIndicator];
 
 export default async function (pi: ExtensionAPI) {
-	for (const factory of factories) await factory(pi);
+  for (const factory of factories) await factory(pi);
 }
