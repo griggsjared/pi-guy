@@ -295,7 +295,7 @@ test("extension selects profiles explicitly and uses the headless fallback", asy
           notify: (text: string) => notices.push(text),
           custom: customProfilePicker((component) => {
             titles.push(renderText(component).split("\n")[0]!.trimEnd());
-            if (/→ backup/.test(renderText(component))) component.handleInput!("\u001b[A");
+            if (/→ backup/.test(renderText(component))) component.handleInput!("\x1b[A");
             component.handleInput!("\r");
           }),
           setWidget: () => {},
@@ -438,7 +438,7 @@ test("extension selects profiles explicitly and uses the headless fallback", asy
             ui: {
               ...ctx.ui,
               custom: customProfilePicker((component) => {
-                component.handleInput!("\u001b[B");
+                component.handleInput!("\x1b[B");
                 component.handleInput!("\r");
               }),
             },
@@ -470,8 +470,8 @@ test("extension selects profiles explicitly and uses the headless fallback", asy
             ui: {
               ...resetCtx.ui,
               custom: customProfilePicker((component) => {
-                for (let step = 0; step < 3; step += 1) component.handleInput!("\u001b[B");
-                assert.match(renderText(component), /\u2192 off \(no subagents\)/);
+                for (let step = 0; step < 3; step += 1) component.handleInput!("\x1b[B");
+                assert.match(renderText(component), /→ off \(no subagents\)/);
                 assert.match(renderText(component), /Subagents are off/);
                 component.handleInput!("\r");
               }),

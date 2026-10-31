@@ -12,12 +12,12 @@ import {
 } from "../../src/subagents/format.ts";
 import type { SubagentUsage } from "../../src/subagents/types.ts";
 
-test("formatUsageStats keeps metadata without usage", () => {
+test("usage display keeps model and thinking level without usage", () => {
   assert.equal(formatUsageStats(undefined), "");
   assert.equal(formatUsageStats(undefined, "opencode-go/x", "high"), "opencode-go/x:high");
 });
 
-test("formatUsageStats renders non-zero fields with compact model and effort suffix", () => {
+test("usage display formats nonzero fields with model and thinking level", () => {
   const usage: SubagentUsage = {
     ...EMPTY_USAGE,
     turns: 2,
@@ -34,11 +34,11 @@ test("formatUsageStats renders non-zero fields with compact model and effort suf
   );
 });
 
-test("formatUsageStats omits zero fields", () => {
+test("usage display omits zero fields", () => {
   assert.equal(formatUsageStats({ ...EMPTY_USAGE, input: 1 }), "↑1");
 });
 
-test("normalizeTitle", () => {
+test("titles are trimmed, made inline-safe, and omitted when blank", () => {
   assert.equal(normalizeTitle(undefined), undefined);
   assert.equal(normalizeTitle(""), undefined);
   assert.equal(normalizeTitle("   "), undefined);
@@ -50,7 +50,7 @@ test("normalizeTitle", () => {
   assert.equal(normalizeTitle("\x1b]8;;https://example.com\x1b\\Review config\x1b]8;;\x1b\\"), "Review config");
 });
 
-test("shortLabel prefers title over task", () => {
+test("short labels prefer titles and truncate fallback tasks", () => {
   assert.equal(shortLabel("t", "task", 10), "t");
   assert.equal(shortLabel(undefined, "task", 10), "task");
   assert.equal(shortLabel(undefined, undefined, 10), "...");
@@ -58,26 +58,26 @@ test("shortLabel prefers title over task", () => {
   assert.equal(shortLabel("a very long title", "task", 6), "a very long title");
 });
 
-test("shortLabel truncates inline text by terminal columns", () => {
+test("fallback task labels normalize whitespace and fit terminal columns", () => {
   const label = shortLabel(undefined, "界界界", 4);
   assert.equal(label, "界…");
   assert.ok(visibleWidth(label) <= 4);
   assert.equal(shortLabel(undefined, "first\nsecond\tthird", 40), "first second third");
 });
 
-test("formatResultOutput", () => {
+test("result output combines text and errors or shows an empty placeholder", () => {
   assert.equal(formatResultOutput({ text: "", error: "" }), "(no output)");
   assert.equal(formatResultOutput({ text: "done", error: "" }), "done");
   assert.equal(formatResultOutput({ text: "", error: "boom" }), "boom");
   assert.equal(formatResultOutput({ text: "done", error: "boom" }), "done\nboom");
 });
 
-test("capOutput", () => {
+test("long output is capped with an ellipsis", () => {
   assert.equal(capOutput("short", 100), "short");
   assert.equal(capOutput("x".repeat(100), 10), `${"x".repeat(10)}\n…`);
 });
 
-test("toolCallLabel", () => {
+test("tool call labels describe commands, paths, ranges, and arguments", () => {
   assert.equal(toolCallLabel("bash", { command: "ls -la" }), "$ ls -la");
   assert.equal(toolCallLabel("bash", {}), "$ …");
   assert.equal(toolCallLabel("read", { file_path: "/a/b.ts" }), "read /a/b.ts");
@@ -92,7 +92,7 @@ test("toolCallLabel", () => {
   assert.equal(toolCallLabel("weird", { a: 1 }), 'weird {"a":1}');
 });
 
-test("toolCallLabel keeps nested subagent tools explicit and inline-safe", () => {
+test("subagent tool labels describe actions and keep text inline-safe", () => {
   assert.equal(
     toolCallLabel("subagent", { agent: "scout", task: "Review\nconfig" }),
     "subagent launch scout · Review config",
@@ -126,7 +126,7 @@ test("toolCallLabel keeps nested subagent tools explicit and inline-safe", () =>
   );
 });
 
-test("toolCallLabel explicit widths reveal more content than the default cap", () => {
+test("wider tool call labels reveal content hidden by the default cap", () => {
   const args = { command: `echo ${"argument ".repeat(10)}useful trailing details` };
   const short = toolCallLabel("bash", args, 20);
   const captured = toolCallLabel("bash", args);
@@ -138,7 +138,7 @@ test("toolCallLabel explicit widths reveal more content than the default cap", (
   assert.match(wide, /useful trailing details/);
 });
 
-test("toolCallLabel preserves path endings and read ranges at explicit widths", () => {
+test("width-limited tool call labels preserve path endings and read ranges", () => {
   const path = "/Users/jared/project/pi/.pi/agent/extensions/subagents/status-tools.ts";
   const narrow = toolCallLabel("read", { path }, 24);
   const medium = toolCallLabel("read", { path }, 40);
@@ -169,7 +169,7 @@ test("toolCallLabel preserves path endings and read ranges at explicit widths", 
   }
 });
 
-test("toolCallLabel explicit widths fit every subagent mode", () => {
+test("subagent tool labels fit the requested width", () => {
   const calls: [string, Record<string, unknown>][] = [
     ["subagent", { agent: "scout", task: "A long task description" }],
     ["subagent", { tasks: [{ agent: "scout", task: "A long task description" }] }],

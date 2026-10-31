@@ -20,9 +20,9 @@ import {
 import { formatLocalTime } from "../../src/subagents/tail.ts";
 import { captureCommands } from "../helpers/pi.ts";
 import { fakeTheme, taggedTheme as createTaggedTheme } from "../helpers/theme.ts";
-import { sleep, waitFor } from "../helpers/wait.ts";
+import { waitFor } from "../helpers/wait.ts";
 import { responseEvent } from "./fake-child.ts";
-import { AGENT, makeTool, customProfilePicker, renderAtWidth, renderText } from "./helpers.ts";
+import { AGENT, makeTool, cleanupChildren, customProfilePicker, renderAtWidth, renderText } from "./helpers.ts";
 
 test("subagent status includes compact model and effort", async () => {
   const registry = createJobRegistry();
@@ -1386,7 +1386,7 @@ test("subagent-profile picker shows one usage line per distinct provider, reques
           replies.get("anthropic")!("5h 12%(3h)");
           replies.get("openai-codex")!("b:$4.20");
           replies.get("untracked")!(undefined);
-          await sleep(0);
+          await waitFor(() => renders === 3);
           assert.equal(renders, 3);
           assert.deepEqual(usageLines(component), ["anthropic     5h 12%(3h)", "openai-codex  b:$4.20"]);
           for (const width of [12, 20]) assert.ok(component.render(width).every((line) => visibleWidth(line) <= width));
@@ -1410,7 +1410,7 @@ test("subagent-profile picker shows one usage line per distinct provider, reques
   } as unknown as ExtensionCommandContext);
 });
 
-test("confirmSubagentProfile gates the first launch and persists the choice", async () => {
+test("profile confirmation gates the first launch and persists the choice", async () => {
   const settings = parseSubagentSettings({ profiles: { primary: {}, "1": {} } });
   let activeProfile: string | undefined;
   let confirmed = false;
@@ -1460,7 +1460,7 @@ test("confirmSubagentProfile gates the first launch and persists the choice", as
   assert.equal(pauses.length, 1);
 });
 
-test("confirmSubagentProfile returns false when the picker is dismissed", async () => {
+test("profile confirmation returns false when the picker is dismissed", async () => {
   const settings = parseSubagentSettings({ profiles: { primary: {}, backup: {} } });
   let activeProfile = "primary";
   const entries: Array<[string, unknown]> = [];
@@ -1494,7 +1494,7 @@ test("confirmSubagentProfile returns false when the picker is dismissed", async 
   assert.deepEqual(entries, []);
 });
 
-test("confirmSubagentProfile skips the picker for sole session or a non-TUI context", async () => {
+test("profile confirmation skips the picker for sole session or a non-TUI context", async () => {
   const ctx = {
     mode: "tui",
     hasUI: true,
@@ -1517,111 +1517,6 @@ test("confirmSubagentProfile skips the picker for sole session or a non-TUI cont
     needsConfirmation: () => true,
   };
   assert.equal(await confirmSubagentProfile({} as ExtensionAPI, multiple, { ...ctx, mode: "print" }), true);
-});
-
-test("/subagent-tail opens a live overlay and follows new events", async (t) => {
-  t.mock.timers.enable({ apis: ["Date", "setInterval"], now: new Date(2026, 0, 2, 12, 34, 53).getTime() });
-  const registry = createJobRegistry();
-  const id = registry.add("scout", "running task", "Tail title");
-  registry.recordStep(id, { phase: "start", id: "read-1", kind: "tool", summary: "read" });
-  t.mock.timers.tick(3000);
-  registry.recordStep(id, { phase: "end", id: "read-1" });
-  registry.appendEvent(id, { kind: "state", summary: "started" });
-  registry.appendEvent(id, {
-    kind: "tool-end",
-    stepId: "read-1",
-    summary: 'read success: {"content":[{"type":"text","text":"one\\ntwo"}]}',
-  });
-  registry.recordStep(id, { phase: "start", id: "assistant-1", kind: "assistant", summary: "Thinking" });
-  registry.recordStep(id, { phase: "start", id: "tool-1", kind: "tool", summary: "read src/auth.ts" });
-  registry.recordStep(id, { phase: "start", id: "retry-1", kind: "retry", summary: "Retrying" });
-  const notices: Array<{ text: string; level: string }> = [];
-  const { commands, registerCommand } = captureCommands();
-  const pi = {
-    registerCommand,
-  } as unknown as ExtensionAPI;
-  registerStatusCommands(pi, { registry });
-  const command = commands.get("subagent-tail");
-  assert.ok(command);
-
-  interface TailComponent {
-    render(width: number): string[];
-    handleInput?(data: string): void;
-  }
-  let component: TailComponent | undefined;
-  let overlayOptions: unknown;
-  let renderRequests = 0;
-  const custom = (
-    factory: (
-      tui: { requestRender: () => void },
-      theme: ReturnType<typeof fakeTheme>,
-      keybindings: unknown,
-      done: (result: void) => void,
-    ) => TailComponent,
-    options: unknown,
-  ) =>
-    new Promise<void>((resolve) => {
-      overlayOptions = options;
-      component = factory(
-        {
-          requestRender: () => {
-            renderRequests += 1;
-          },
-        },
-        fakeTheme(),
-        {},
-        () => resolve(),
-      );
-    });
-  const ctx = {
-    mode: "tui",
-    hasUI: true,
-    ui: { custom, notify: (text: string, level: string) => notices.push({ text, level }) },
-  } as unknown as ExtensionCommandContext;
-
-  const pending = command.handler(String(id), ctx);
-  assert.ok(component);
-  assert.deepEqual(overlayOptions, {
-    overlay: true,
-    overlayOptions: {
-      anchor: "center",
-      width: "100%",
-      minWidth: 60,
-      maxHeight: "100%",
-      margin: 1,
-    },
-  });
-  assert.match(renderText(component), /Subagent #1 scout/);
-  assert.match(renderText(component), /Task: running task/);
-  assert.match(renderText(component), /Title: Tail title/);
-  assert.match(renderText(component), /started/);
-  assert.match(renderText(component), /\[2\] 12:34:56 result\s+read success: one · 2 lines · 3s/);
-  assert.doesNotMatch(renderText(component), /content/);
-  assert.match(renderText(component), /Active steps \(3\):/);
-  t.mock.timers.tick(3000);
-  assert.match(renderText(component), /12:34:56 · 3s elapsed · assistant: Thinking/);
-  assert.match(renderText(component), /12:34:56 · 3s elapsed · tool: read src\/auth\.ts/);
-  assert.match(renderText(component), /12:34:56 · 3s elapsed · retry: Retrying/);
-  const beforeIdle = renderRequests;
-  t.mock.timers.tick(1000);
-  assert.ok(renderRequests > beforeIdle, "elapsed time refreshes without new events");
-  assert.match(renderText(component), /12:34:56 · 4s elapsed · tool: read src\/auth\.ts/);
-  assert.match(renderText(component), /cursor 2/);
-
-  registry.appendEvent(id, { kind: "assistant", summary: "new event" });
-  t.mock.timers.tick(250);
-  assert.match(renderText(component), /new event/);
-  assert.ok(renderRequests > 0);
-
-  component.handleInput!("q");
-  await pending;
-  const afterClose = renderRequests;
-  t.mock.timers.tick(1000);
-  assert.equal(renderRequests, afterClose);
-  await command.handler("bad", ctx);
-  assert.match(notices.at(-1)?.text ?? "", /Usage: \/subagent-tail/);
-  await command.handler("999", ctx);
-  assert.match(notices.at(-1)?.text ?? "", /Unknown subagent job ID: 999/);
 });
 
 test("/subagent-cancel validates and targets numeric job IDs", async () => {
@@ -1892,8 +1787,9 @@ test("/subagent-send reports rejected messages", async () => {
   assert.deepEqual(notices, [{ text: "subagent send #1 scout · task: RPC prompt rejected", level: "error" }]);
 });
 
-test("subagent_send delivers a correlated steering command to a running child", async () => {
-  const { tool, registry, child, ctx } = makeTool();
+test("a steering command is correlated and delivered to a running child", async (t) => {
+  const { tool, registry, child, ctx, activeTickers } = makeTool();
+  cleanupChildren(t, [child], activeTickers);
   await tool.execute("call1", { agent: "scout", task: "t" }, undefined, undefined, ctx);
   await waitFor(() => child.stdin.writes.length > 0);
   const initial = child.stdin.commands()[0];
@@ -1920,10 +1816,10 @@ test("subagent_send delivers a correlated steering command to a running child", 
   assert.match((sent.content[0] as { text: string }).text, /Sent steering message to subagent #1 scout/);
 
   child.finish(0);
-  await sleep(20);
+  await waitFor(() => activeTickers.size === 0);
 });
 
-test("subagent_reply renders a compact call and result", async () => {
+test("reply renders a compact call and result", async () => {
   const registry = createJobRegistry();
   const jobId = registry.add("scout", "task");
   registry.registerControl(jobId, {

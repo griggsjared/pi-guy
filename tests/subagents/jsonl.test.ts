@@ -25,7 +25,7 @@ const rpcDelta = (type: "text_delta" | "thinking_delta", delta: string) => ({
   assistantMessageEvent: { type, delta },
 });
 
-test("parseJsonLine parses objects and ignores blank, malformed, and non-object lines", () => {
+test("JSON lines parse objects and ignore blank, malformed, and non-object lines", () => {
   assert.deepEqual(parseJsonLine('{"type":"turn_start"}'), { type: "turn_start" });
   assert.deepEqual(parseJsonLine('  {"id":"q1"}\n'), { id: "q1" });
   assert.equal(parseJsonLine(""), undefined);
@@ -35,7 +35,7 @@ test("parseJsonLine parses objects and ignores blank, malformed, and non-object 
   assert.equal(parseJsonLine("null"), undefined);
 });
 
-test("selectEvent keeps assistant messages and streaming updates", () => {
+test("assistant messages and streaming updates are selected for the stream", () => {
   assert.ok(selectEvent(end("x")));
   assert.ok(selectEvent(rpcDelta("text_delta", "x")));
   assert.ok(selectEvent(update("x")));
@@ -45,7 +45,7 @@ test("selectEvent keeps assistant messages and streaming updates", () => {
   assert.equal(selectEvent(undefined), undefined);
 });
 
-test("parseParentQuestion recognizes only marked input requests", () => {
+test("parent questions require marked input requests with an ID", () => {
   assert.deepEqual(
     parseParentQuestion({
       type: "extension_ui_request",
@@ -99,7 +99,7 @@ test("parseParentQuestion recognizes only marked input requests", () => {
   );
 });
 
-test("assistantText", () => {
+test("assistant text joins text parts and ignores other content", () => {
   assert.equal(assistantText("plain"), "plain");
   assert.equal(
     assistantText([
@@ -113,7 +113,7 @@ test("assistantText", () => {
   assert.equal(assistantText(42), "");
 });
 
-test("accumulateEvent: message_end string content and usage", () => {
+test("completed assistant messages update final text, model, and usage", () => {
   const state = createStreamState("default-model");
   accumulateEvent(
     state,
@@ -135,13 +135,13 @@ test("accumulateEvent: message_end string content and usage", () => {
   });
 });
 
-test("accumulateEvent: cost as object", () => {
+test("usage accepts cost as an object with a total", () => {
   const state = createStreamState("m");
   accumulateEvent(state, end("x", { usage: { cost: { total: 0.5 } } }));
   assert.equal(state.usage.cost, 0.5);
 });
 
-test("accumulateEvent: tool calls parsed, sanitized, and truncated", () => {
+test("completed messages retain sanitized tool calls", () => {
   const state = createStreamState("m");
   const longContent = Array.from({ length: 10 }, () => "line").join("\n");
   accumulateEvent(
@@ -174,7 +174,7 @@ test("stream retains the newest 20 tool calls", () => {
   );
 });
 
-test("accumulateEvent: message_update keeps the longest legacy chunk", () => {
+test("legacy streaming updates retain the longest text chunk", () => {
   const state = createStreamState("m");
   accumulateEvent(state, update("short"));
   accumulateEvent(state, update("much longer streaming chunk"));
@@ -183,7 +183,7 @@ test("accumulateEvent: message_update keeps the longest legacy chunk", () => {
   assert.equal(state.finalText, "");
 });
 
-test("accumulateEvent: assembles RPC text and thinking deltas", () => {
+test("streaming text and thinking deltas are assembled in order", () => {
   const state = createStreamState("m");
   accumulateEvent(state, rpcDelta("text_delta", "Hello"));
   accumulateEvent(state, rpcDelta("text_delta", " world"));
@@ -192,7 +192,7 @@ test("accumulateEvent: assembles RPC text and thinking deltas", () => {
   assert.equal(state.finalThinking, "checking");
 });
 
-test("accumulateEvent: ignores non-assistant and unparsed events", () => {
+test("non-assistant and unparsed events do not update the stream", () => {
   const state = createStreamState("m");
   accumulateEvent(state, { type: "message_end", message: { role: "user", content: "hi" } });
   accumulateEvent(state, undefined);
@@ -201,7 +201,7 @@ test("accumulateEvent: ignores non-assistant and unparsed events", () => {
   assert.equal(state.finalText, "");
 });
 
-test("extractFinalText: full stream, thinking fallback, and truncated tail", () => {
+test("final text extraction handles malformed lines, thinking fallback, and an unterminated line", () => {
   const stream = [JSON.stringify(update("partial")), JSON.stringify(end("final")), "garbage"].join("\n");
   assert.equal(extractFinalText(stream), "final");
   assert.equal(extractFinalText(JSON.stringify(end(""))), "");
@@ -214,7 +214,7 @@ test("extractFinalText: full stream, thinking fallback, and truncated tail", () 
   assert.equal(extractFinalText(""), "");
 });
 
-test("normalizeToolArgs", () => {
+test("tool arguments accept objects and JSON objects and ignore invalid values", () => {
   assert.deepEqual(normalizeToolArgs({ a: 1 }), { a: 1 });
   assert.deepEqual(normalizeToolArgs('{"a":1}'), { a: 1 });
   assert.deepEqual(normalizeToolArgs("not json"), {});
@@ -222,13 +222,13 @@ test("normalizeToolArgs", () => {
   assert.deepEqual(normalizeToolArgs([1, 2]), {});
 });
 
-test("sanitizeToolCallArgs drops content for write/edit only", () => {
+test("write and edit content is replaced by a line count", () => {
   assert.equal(sanitizeToolCallArgs("write", { content: "a\nb" }).contentLines, 2);
   assert.equal(sanitizeToolCallArgs("edit", { content: "a" }).contentLines, 1);
   assert.deepEqual(sanitizeToolCallArgs("read", { content: "a\nb" }), { content: "a\nb" });
 });
 
-test("truncateStrings truncates strings, arrays, and objects", () => {
+test("long strings are truncated inside arrays and objects", () => {
   assert.equal(truncateStrings("x".repeat(200)), `${"x".repeat(120)}…`);
   assert.deepEqual(truncateStrings([1, "y".repeat(200)]), [1, `${"y".repeat(120)}…`]);
   assert.deepEqual(truncateStrings({ k: "z".repeat(200) }), { k: `${"z".repeat(120)}…` });

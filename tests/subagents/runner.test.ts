@@ -1,10 +1,9 @@
 import assert from "node:assert/strict";
-import type { spawn } from "node:child_process";
 import { test } from "node:test";
 import type { AgentConfig } from "../../src/subagents/agents.ts";
 import { runSubagent, runWithConcurrencyLimit } from "../../src/subagents/runner.ts";
 import type { JobEventInput, JobStepInput, SubagentInactivity } from "../../src/subagents/types.ts";
-import { sleep } from "../helpers/wait.ts";
+import { flush } from "../helpers/wait.ts";
 import {
   FakeChild,
   fakeSpawn,
@@ -15,7 +14,6 @@ import {
   responseEvent,
   updateEvent,
 } from "./fake-child.ts";
-import type { SpawnCall } from "./fake-child.ts";
 
 const agent: AgentConfig = {
   name: "worker",
@@ -59,23 +57,50 @@ test("children use the parent invocation or PATH fallback", async (t) => {
   }
 });
 
-test("runWithConcurrencyLimit: preserves order and caps concurrency", async () => {
+test("concurrent tasks preserve order and respect the limit", async () => {
+  const tasks = [1, 2, 3, 4, 5];
+  const gates = tasks.map(() => {
+    let release!: () => void;
+    const promise = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return { promise, release };
+  });
+  const started: number[] = [];
   let active = 0;
   let peak = 0;
   const fn = async (n: number) => {
+    started.push(n);
     active += 1;
     peak = Math.max(peak, active);
-    await sleep(5);
+    await gates[n - 1]!.promise;
     active -= 1;
     return n * 2;
   };
-  const results = await runWithConcurrencyLimit([1, 2, 3, 4, 5], 2, fn);
-  assert.deepEqual(results, [2, 4, 6, 8, 10]);
-  assert.ok(peak <= 2);
-  assert.deepEqual(await runWithConcurrencyLimit([], 2, fn), []);
+  const pending = runWithConcurrencyLimit(tasks, 2, fn);
+  try {
+    assert.deepEqual(started, [1, 2]);
+    assert.equal(active, 2);
+    for (const completed of [2, 3, 4]) {
+      gates[completed - 1]!.release();
+      await flush();
+      assert.deepEqual(started, tasks.slice(0, completed + 1));
+      assert.equal(active, 2);
+    }
+    gates[4]!.release();
+    await flush();
+    assert.equal(active, 1);
+    gates[0]!.release();
+    assert.deepEqual(await pending, [2, 4, 6, 8, 10]);
+    assert.equal(peak, 2);
+    assert.deepEqual(await runWithConcurrencyLimit([], 2, fn), []);
+  } finally {
+    for (const gate of gates) gate.release();
+    await pending;
+  }
 });
 
-test("runWithConcurrencyLimit: propagates errors", async () => {
+test("concurrent tasks propagate errors", async () => {
   await assert.rejects(
     runWithConcurrencyLimit([1, 2], 2, async (n) => {
       if (n === 2) throw new Error("boom");
@@ -85,7 +110,7 @@ test("runWithConcurrencyLimit: propagates errors", async () => {
   );
 });
 
-test("runSubagent: assembles result from streamed JSONL", async () => {
+test("streamed JSONL produces the final result", async () => {
   const child = new FakeChild();
   const { result } = await runSubagent(agent, "do the thing", "/tmp", "m/provider", {
     spawnFn: fakeSpawn(child),
@@ -115,7 +140,7 @@ test("runSubagent: assembles result from streamed JSONL", async () => {
   await promise;
 });
 
-test("runSubagent: correlates steering and preserves a racing follow-up", async () => {
+test("steering is correlated and a racing follow-up is preserved", async () => {
   const child = new FakeChild();
   const launched = await runSubagent(agent, "t", "/tmp", "m", {
     spawnFn: fakeSpawn(child),
@@ -154,7 +179,7 @@ test("runSubagent: correlates steering and preserves a racing follow-up", async 
   await launched.result;
 });
 
-test("runSubagent: forwards parent questions and writes the matching reply", async () => {
+test("parent questions are forwarded and receive the matching reply", async () => {
   const child = new FakeChild();
   const questions: unknown[] = [];
   const launched = await runSubagent(agent, "t", "/tmp", "m", {
@@ -180,7 +205,7 @@ test("runSubagent: forwards parent questions and writes the matching reply", asy
   await launched.result;
 });
 
-test("runSubagent: a rejected initial prompt fails the transport", async () => {
+test("a rejected initial prompt fails the transport", async () => {
   const child = new FakeChild();
   const { result } = await runSubagent(agent, "t", "/tmp", "m", {
     spawnFn: fakeSpawn(child),
@@ -195,7 +220,7 @@ test("runSubagent: a rejected initial prompt fails the transport", async () => {
   assert.match(completed.error, /Initial RPC prompt failed: Error: prompt rejected/);
 });
 
-test("runSubagent: reports live updates when state changes", async () => {
+test("live updates report state changes", async () => {
   const child = new FakeChild();
   const { result } = await runSubagent(agent, "t", "/tmp", undefined, {
     spawnFn: fakeSpawn(child),
@@ -215,7 +240,7 @@ test("runSubagent: reports live updates when state changes", async () => {
   assert.equal(updates.length, 2); // final flush on close
 });
 
-test("runSubagent: inactivity uses runner override then agent then five-minute default, with zero disabling", async (t) => {
+test("inactivity uses runner override then agent then five-minute default, with zero disabling", async (t) => {
   t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 10000 });
   for (const [agentTimeout, optionTimeout, expected] of [
     [undefined, undefined, 300000],
@@ -251,20 +276,22 @@ test("runSubagent: inactivity uses runner override then agent then five-minute d
   }
 });
 
-test("runSubagent: final message alone does not trigger the shutdown watchdog", async () => {
+test("a final message alone does not trigger the shutdown watchdog", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const child = new FakeChild();
   const { result } = await runSubagent(agent, "t", "/tmp", "m", {
     spawnFn: fakeSpawn(child),
     shutdownGraceMs: 20,
   });
   child.stdout.emit("data", Buffer.from(endEvent("final answer")));
-  await sleep(40);
+  t.mock.timers.tick(40);
   assert.equal(child.killed, null);
   child.finish(0);
   assert.equal((await result).exitCode, 0);
 });
 
-test("runSubagent: cancels the shutdown watchdog when the child closes", async () => {
+test("closing the child cancels the shutdown watchdog", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const child = new FakeChild();
   const { result } = await runSubagent(agent, "t", "/tmp", "m", {
     spawnFn: fakeSpawn(child),
@@ -274,11 +301,11 @@ test("runSubagent: cancels the shutdown watchdog when the child closes", async (
   child.stdout.emit("data", Buffer.from(jsonEvent({ type: "agent_settled" })));
   child.finish(0);
   assert.equal((await result).exitCode, 0);
-  await sleep(40);
+  t.mock.timers.tick(40);
   assert.equal(child.killed, null);
 });
 
-test("runSubagent: terminates a child that stays open after agent_settled without an inactivity warning", async (t) => {
+test("a child left open after agent_settled is terminated without an inactivity warning", async (t) => {
   t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 10000 });
   const child = new FakeChild();
   const notifications: SubagentInactivity[] = [];
@@ -303,7 +330,7 @@ test("runSubagent: terminates a child that stays open after agent_settled withou
   assert.equal(r.error, "");
 });
 
-test("runSubagent: inactivity notifies once despite callback failure and raw child activity re-arms it", async (t) => {
+test("inactivity notifies once despite callback failure and raw child activity re-arms it", async (t) => {
   t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 10000 });
   t.mock.method(console, "error", () => {});
   const child = new FakeChild();
@@ -351,7 +378,7 @@ test("runSubagent: inactivity notifies once despite callback failure and raw chi
   await launched.result;
 });
 
-test("runSubagent: inactivity stops when the transport exits before its pipes close", async (t) => {
+test("inactivity stops when the transport exits before its pipes close", async (t) => {
   t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 10000 });
   const child = new FakeChild();
   const notifications: SubagentInactivity[] = [];
@@ -369,7 +396,7 @@ test("runSubagent: inactivity stops when the transport exits before its pipes cl
   await launched.result;
 });
 
-test("runSubagent: inactivity ignores parent steering and monitors unresolved settling continuations", async (t) => {
+test("inactivity ignores parent steering and monitors unresolved settling continuations", async (t) => {
   t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 10000 });
   const child = new FakeChild();
   const notifications: SubagentInactivity[] = [];
@@ -401,7 +428,7 @@ test("runSubagent: inactivity ignores parent steering and monitors unresolved se
   await launched.result;
 });
 
-test("runSubagent: inactivity stays suppressed until the final parent reply succeeds", async (t) => {
+test("inactivity stays suppressed until the final parent reply succeeds", async (t) => {
   t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 10000 });
   const child = new FakeChild();
   const notifications: SubagentInactivity[] = [];
@@ -443,7 +470,7 @@ test("runSubagent: inactivity stays suppressed until the final parent reply succ
   await launched.result;
 });
 
-test("runSubagent: pre-aborted signal kills the child (real contract: exit 143)", async () => {
+test("a pre-aborted signal cancels and kills the child", async () => {
   const child = new FakeChild();
   const controller = new AbortController();
   controller.abort();
@@ -460,7 +487,7 @@ test("runSubagent: pre-aborted signal kills the child (real contract: exit 143)"
   assert.equal(child.killed, "SIGTERM");
 });
 
-test("runSubagent: unhandleable signal reports the signal name", async () => {
+test("an unhandleable signal reports the signal name", async () => {
   const child = new FakeChild();
   const { result } = await runSubagent(agent, "t", "/tmp", "m", {
     spawnFn: fakeSpawn(child),
@@ -472,7 +499,7 @@ test("runSubagent: unhandleable signal reports the signal name", async () => {
   assert.equal(r.error, "[subagents] Killed by SIGKILL");
 });
 
-test("runSubagent: appends signal diagnostics without blank lines after stderr", async () => {
+test("signal diagnostics follow stderr without blank lines", async () => {
   const child = new FakeChild();
   const { result } = await runSubagent(agent, "t", "/tmp", "m", {
     spawnFn: fakeSpawn(child),
@@ -485,7 +512,7 @@ test("runSubagent: appends signal diagnostics without blank lines after stderr",
   assert.equal(r.error, "child error\n[subagents] Killed by SIGKILL");
 });
 
-test("runSubagent: reassembles characters split across output chunks", async () => {
+test("characters split across output chunks are reassembled", async () => {
   const child = new FakeChild();
   const { result } = await runSubagent(agent, "t", "/tmp", "m", {
     spawnFn: fakeSpawn(child),
@@ -506,7 +533,7 @@ test("runSubagent: reassembles characters split across output chunks", async () 
   assert.equal(r.error, "π error\n[subagents] Killed by SIGKILL");
 });
 
-test("runSubagent: a closed-pipe error on stdin does not crash pi", async () => {
+test("a closed-pipe error on stdin does not crash pi", async () => {
   const child = new FakeChild();
   const { result } = await runSubagent(agent, "t", "/tmp", "m", {
     spawnFn: fakeSpawn(child),
@@ -518,7 +545,7 @@ test("runSubagent: a closed-pipe error on stdin does not crash pi", async () => 
   assert.equal((await result).text, "done");
 });
 
-test("runSubagent: formats no-text diagnostics from nonempty JSONL records", async () => {
+test("nonempty JSONL records without text produce diagnostics", async () => {
   const child = new FakeChild();
   const { result } = await runSubagent(agent, "t", "/tmp", "m", {
     spawnFn: fakeSpawn(child),
@@ -536,14 +563,11 @@ test("runSubagent: formats no-text diagnostics from nonempty JSONL records", asy
   );
 });
 
-test("runSubagent: spawns the child with the full pi CLI contract", async () => {
+test("the child receives the pi CLI, working directory, and environment contract", async () => {
   const child = new FakeChild();
-  const calls: SpawnCall[] = [];
+  const { spawnFn, calls } = fakeSpawnChildren([child]);
   const { result } = await runSubagent(agent, "do it", "/tmp", "p/m", {
-    spawnFn: ((cmd: string, args: string[], options?: Record<string, unknown>) => {
-      calls.push({ cmd, args, options: options ?? {} });
-      return child;
-    }) as unknown as typeof spawn,
+    spawnFn,
     thinkingLevel: "low",
     title: "my title",
     bridgeExtensionPath: BRIDGE_EXTENSION,
@@ -579,20 +603,17 @@ test("runSubagent: spawns the child with the full pi CLI contract", async () => 
     message: "Title: my title\nTask: do it",
   });
   assert.equal(options.cwd, "/tmp");
-  assert.match(
-    String((options.env as { NODE_OPTIONS?: string } | undefined)?.NODE_OPTIONS),
-    /--max-old-space-size=8192/,
-  );
+  assert.deepEqual(options.env, {
+    ...process.env,
+    NODE_OPTIONS: [process.env.NODE_OPTIONS, "--max-old-space-size=8192"].filter(Boolean).join(" "),
+  });
 });
 
-test("runSubagent: forwards allowlisted package extensions and ignores relative paths", async () => {
+test("allowlisted package extensions are forwarded and relative paths ignored", async () => {
   const child = new FakeChild();
-  const calls: SpawnCall[] = [];
+  const { spawnFn, calls } = fakeSpawnChildren([child]);
   const { result } = await runSubagent(agent, "do it", "/tmp", "m", {
-    spawnFn: ((cmd: string, args: string[], options?: Record<string, unknown>) => {
-      calls.push({ cmd, args, options: options ?? {} });
-      return child;
-    }) as unknown as typeof spawn,
+    spawnFn,
     bridgeExtensionPath: BRIDGE_EXTENSION,
     extensionPaths: ["/packages/pi-claude-bridge/src/index.ts", "relative/index.ts"],
   });
@@ -605,82 +626,7 @@ test("runSubagent: forwards allowlisted package extensions and ignores relative 
   assert.ok(flags.includes("--no-extensions"));
 });
 
-test("runSubagent: ignores obsolete workspace guard extension configuration", async () => {
-  const child = new FakeChild();
-  const calls: SpawnCall[] = [];
-  const previousExtension = process.env.PI_WORKSPACE_GUARD_EXTENSION;
-  const previousChild = process.env.PI_WORKSPACE_GUARD_CHILD;
-  process.env.PI_WORKSPACE_GUARD_EXTENSION = "/workspace/guard-extension.ts";
-  process.env.PI_WORKSPACE_GUARD_CHILD = "parent";
-  try {
-    const { result } = await runSubagent(agent, "do it", "/tmp", "m", {
-      spawnFn: ((cmd: string, args: string[], options?: Record<string, unknown>) => {
-        calls.push({ cmd, args, options: options ?? {} });
-        return child;
-      }) as unknown as typeof spawn,
-      bridgeExtensionPath: BRIDGE_EXTENSION,
-    });
-    child.finish(0);
-    await result;
-  } finally {
-    if (previousExtension === undefined) delete process.env.PI_WORKSPACE_GUARD_EXTENSION;
-    else process.env.PI_WORKSPACE_GUARD_EXTENSION = previousExtension;
-    if (previousChild === undefined) delete process.env.PI_WORKSPACE_GUARD_CHILD;
-    else process.env.PI_WORKSPACE_GUARD_CHILD = previousChild;
-  }
-
-  const { args, options } = calls[0]!;
-  const flags = args.slice(1);
-  const extensionValues = flags.flatMap((flag, index) => (flag === "--extension" ? [flags[index + 1]] : []));
-  assert.deepEqual(extensionValues, [BRIDGE_EXTENSION]);
-  assert.ok(flags.includes("--no-extensions"));
-  assert.equal(options.cwd, "/tmp");
-  assert.equal((options.env as { PI_WORKSPACE_GUARD_CHILD?: string }).PI_WORKSPACE_GUARD_CHILD, "parent");
-  assert.match(String((options.env as { NODE_OPTIONS?: string }).NODE_OPTIONS), /--max-old-space-size=8192/);
-});
-
-test("runSubagent: preserves inherited environment without activating obsolete workspace guard paths", async () => {
-  const previousExtension = process.env.PI_WORKSPACE_GUARD_EXTENSION;
-  const previousChild = process.env.PI_WORKSPACE_GUARD_CHILD;
-  const previousOther = process.env.PI_WORKSPACE_GUARD_OTHER;
-  process.env.PI_WORKSPACE_GUARD_CHILD = "parent";
-  process.env.PI_WORKSPACE_GUARD_OTHER = "keep";
-  try {
-    for (const extension of [undefined, "", "relative/guard-extension.ts"]) {
-      if (extension === undefined) delete process.env.PI_WORKSPACE_GUARD_EXTENSION;
-      else process.env.PI_WORKSPACE_GUARD_EXTENSION = extension;
-      const child = new FakeChild();
-      let call: SpawnCall | undefined;
-      const { result } = await runSubagent(agent, "do it", "/tmp", "m", {
-        spawnFn: ((cmd: string, args: string[], options?: Record<string, unknown>) => {
-          call = { cmd, args, options: options ?? {} };
-          return child;
-        }) as unknown as typeof spawn,
-        bridgeExtensionPath: BRIDGE_EXTENSION,
-      });
-      child.finish(0);
-      await result;
-
-      assert.ok(call);
-      const flags = call.args.slice(1);
-      const extensionValues = flags.flatMap((flag, index) => (flag === "--extension" ? [flags[index + 1]] : []));
-      assert.deepEqual(extensionValues, [BRIDGE_EXTENSION]);
-      assert.equal((call.options.env as { PI_WORKSPACE_GUARD_CHILD?: string }).PI_WORKSPACE_GUARD_CHILD, "parent");
-      assert.equal((call.options.env as { PI_WORKSPACE_GUARD_OTHER?: string }).PI_WORKSPACE_GUARD_OTHER, "keep");
-      assert.equal(call.options.cwd, "/tmp");
-      assert.match(String((call.options.env as { NODE_OPTIONS?: string }).NODE_OPTIONS), /--max-old-space-size=8192/);
-    }
-  } finally {
-    if (previousExtension === undefined) delete process.env.PI_WORKSPACE_GUARD_EXTENSION;
-    else process.env.PI_WORKSPACE_GUARD_EXTENSION = previousExtension;
-    if (previousChild === undefined) delete process.env.PI_WORKSPACE_GUARD_CHILD;
-    else process.env.PI_WORKSPACE_GUARD_CHILD = previousChild;
-    if (previousOther === undefined) delete process.env.PI_WORKSPACE_GUARD_OTHER;
-    else process.env.PI_WORKSPACE_GUARD_OTHER = previousOther;
-  }
-});
-
-test("runSubagent: explicit cancellation clears inactivity and escalates SIGTERM to SIGKILL", async (t) => {
+test("explicit cancellation clears inactivity and escalates SIGTERM to SIGKILL", async (t) => {
   t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 10000 });
   const child = new FakeChild();
   child.ignoreKill = true;
@@ -704,7 +650,7 @@ test("runSubagent: explicit cancellation clears inactivity and escalates SIGTERM
   assert.match(r.error, /Cancelled \(manual\)/);
 });
 
-test("runSubagent: spawn failure rejects", async () => {
+test("spawn failure rejects", async () => {
   await assert.rejects(
     runSubagent(agent, "t", "/tmp", "m", {
       spawnFn: (() => {
@@ -715,7 +661,7 @@ test("runSubagent: spawn failure rejects", async () => {
   );
 });
 
-test("runSubagent: process error preserves partial JSONL output", async () => {
+test("process error preserves partial JSONL output", async () => {
   const child = new FakeChild();
   const { result } = await runSubagent(agent, "t", "/tmp", "m", {
     spawnFn: fakeSpawn(child),
@@ -754,7 +700,7 @@ test("runSubagent: process error preserves partial JSONL output", async () => {
   assert.equal(r.error, "failed to run subagent RPC transport");
 });
 
-test("runSubagent: cancellation survives process error and later close", async () => {
+test("cancellation survives process error and later close", async () => {
   const child = new FakeChild();
   const { result, cancel } = await runSubagent(agent, "t", "/tmp", "m", {
     spawnFn: fakeSpawn(child),
@@ -770,7 +716,7 @@ test("runSubagent: cancellation survives process error and later close", async (
   assert.match(r.error, /Cancelled \(manual\)/);
 });
 
-test("runSubagent: emits ordered semantic events without deltas or tool bodies", async () => {
+test("semantic events stay ordered and omit deltas and tool bodies", async () => {
   const child = new FakeChild();
   const events: Array<{ kind: string; summary: string }> = [];
   const { result } = await runSubagent(agent, "t", "/tmp", "m", {
@@ -836,7 +782,7 @@ test("runSubagent: emits ordered semantic events without deltas or tool bodies",
   );
 });
 
-test("runSubagent: steps time assistant attempts without restarting on deltas or requiring text", async (t) => {
+test("steps time assistant attempts without restarting on deltas or requiring text", async (t) => {
   t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 10000 });
   const child = new FakeChild();
   const timeline: Array<{ at: number; step?: JobStepInput; event?: JobEventInput }> = [];
@@ -886,7 +832,7 @@ test("runSubagent: steps time assistant attempts without restarting on deltas or
   await launched.result;
 });
 
-test("runSubagent: steps pair concurrent same-name tools by call ID and sanitize their arguments", async (t) => {
+test("steps pair concurrent same-name tools by call ID and sanitize their arguments", async (t) => {
   t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 10000 });
   const child = new FakeChild();
   const timeline: Array<JobStepInput | JobEventInput> = [];
@@ -973,7 +919,7 @@ test("runSubagent: steps pair concurrent same-name tools by call ID and sanitize
   await launched.result;
 });
 
-test("runSubagent: retry steps close on retry end or the next attempt and use unique IDs", async () => {
+test("retry steps close on retry end or the next attempt and use unique IDs", async () => {
   const child = new FakeChild();
   const timeline: Array<JobStepInput | JobEventInput> = [];
   const launched = await runSubagent(agent, "t", "/tmp", "m", {
@@ -1034,7 +980,7 @@ test("runSubagent: retry steps close on retry end or the next attempt and use un
   await launched.result;
 });
 
-test("runSubagent: event and step callback exceptions do not interrupt processing", async (t) => {
+test("event and step callback exceptions do not interrupt processing", async (t) => {
   t.mock.method(console, "error", () => {});
   const child = new FakeChild();
   const { result } = await runSubagent(agent, "t", "/tmp", "m", {

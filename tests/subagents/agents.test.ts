@@ -13,19 +13,19 @@ import {
 } from "../../src/subagents/agents.ts";
 import { tempDir } from "../helpers/fs.ts";
 
-test("parseFrontmatter extracts meta and body", () => {
+test("frontmatter separates metadata from the body", () => {
   const { meta, body } = parseFrontmatter("---\nname: scout\ndescription: Fast\n---\n\nBody text");
   assert.deepEqual(meta, { name: "scout", description: "Fast" });
   assert.equal(body, "Body text");
 });
 
-test("parseFrontmatter handles missing frontmatter", () => {
+test("text without frontmatter remains the body", () => {
   const { meta, body } = parseFrontmatter("just body");
   assert.deepEqual(meta, {});
   assert.equal(body, "just body");
 });
 
-test("parseFrontmatter skips lines without a colon", () => {
+test("frontmatter skips lines without a colon", () => {
   const { meta } = parseFrontmatter("---\nnot a key value pair\nname: x\n---\nbody");
   assert.deepEqual(meta, { name: "x" });
 });
@@ -80,7 +80,7 @@ test("discovery falls back to filename and validates inactivityTimeoutMs strictl
   }
 });
 
-test("discoverAgents loads only readable .md files, in name order", async (t) => {
+test("discovery loads only readable .md files, in name order", async (t) => {
   const dir = await tempDir(t, "subagents-test-");
   const agentsDir = join(dir, "agents");
   await mkdir(agentsDir);
@@ -95,12 +95,12 @@ test("discoverAgents loads only readable .md files, in name order", async (t) =>
   );
 });
 
-test("discoverAgents tolerates a missing agents dir", async (t) => {
+test("discovery returns no agents for a missing directory", async (t) => {
   const dir = await tempDir(t, "subagents-test-");
   assert.deepEqual(await discoverAgents(join(dir, "agents")), []);
 });
 
-test("parseSubagentSettings maps legacy settings to default and validates overrides", () => {
+test("legacy settings become the default profile with validated overrides", () => {
   const settings = parseSubagentSettings({
     defaults: { model: "gpt-5", thinkingLevel: "max", tools: ["edit"] },
     agents: {
@@ -114,7 +114,7 @@ test("parseSubagentSettings maps legacy settings to default and validates overri
   assert.equal(settings.profiles.default!.agents.invalid, undefined);
 });
 
-test("parseSubagentSettings preserves timeout-only overrides and validates inactivityTimeoutMs", () => {
+test("timeout-only overrides survive when inactivityTimeoutMs is valid", () => {
   for (const value of [0, 2147483647, -1, 2147483648, 1.5, "100", null, NaN, Infinity]) {
     const settings = parseSubagentSettings({
       profiles: {
@@ -127,7 +127,7 @@ test("parseSubagentSettings preserves timeout-only overrides and validates inact
   }
 });
 
-test("loadSubagentSettings uses session for missing or malformed configuration", async (t) => {
+test("missing or malformed configuration uses the session profile", async (t) => {
   const dir = await tempDir(t, "subagents-test-");
   const file = join(dir, "subagents.json");
   const fallback = join(dir, "settings.json");
@@ -142,7 +142,7 @@ test("loadSubagentSettings uses session for missing or malformed configuration",
   assert.deepEqual(await loadSubagentSettings(file, fallback), empty);
 });
 
-test("loadSubagentSettings uses the configured agent directory and prefers subagents.json over settings.json", async (t) => {
+test("configuration uses the agent directory and prefers subagents.json over settings.json", async (t) => {
   const dir = await tempDir(t, "subagents-test-");
   const previous = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = dir;
@@ -160,7 +160,7 @@ test("loadSubagentSettings uses the configured agent directory and prefers subag
   }
 });
 
-test("loadSubagentSettings rejects reserved session profiles in dedicated and fallback configuration", async (t) => {
+test("dedicated and fallback configuration reject reserved session profiles", async (t) => {
   const dir = await tempDir(t, "subagents-test-");
   const file = join(dir, "subagents.json");
   const fallback = join(dir, "settings.json");
@@ -172,7 +172,7 @@ test("loadSubagentSettings rejects reserved session profiles in dedicated and fa
   await assert.rejects(loadSubagentSettings(file, fallback), /profile name "session" is reserved/);
 });
 
-test("parseSubagentSettings keeps only well-formed npm package specs", () => {
+test("extension settings keep only well-formed npm package specs", () => {
   const settings = parseSubagentSettings({
     extensions: [
       "npm:pi-claude-bridge",
@@ -188,13 +188,13 @@ test("parseSubagentSettings keeps only well-formed npm package specs", () => {
   assert.deepEqual(settings.extensions, ["npm:pi-claude-bridge", "npm:@scope/pkg"]);
 });
 
-test("parseSubagentSettings keeps extensions when no profiles are defined", () => {
+test("extensions are retained when no profiles are defined", () => {
   const settings = parseSubagentSettings({ extensions: ["npm:pi-claude-bridge"] });
   assert.deepEqual(settings.extensions, ["npm:pi-claude-bridge"]);
   assert.deepEqual(settings.profiles, { session: { defaults: {}, agents: {} } });
 });
 
-test("resolveExtensionPaths reads manifests in the configured agent npm directory and honors PI_PACKAGE_DIR", async (t) => {
+test("extension paths use package manifests and honor the configured package directory", async (t) => {
   const dir = await tempDir(t, "subagents-test-");
   const previousAgent = process.env.PI_CODING_AGENT_DIR;
   const previousPackage = process.env.PI_PACKAGE_DIR;
@@ -225,7 +225,7 @@ test("resolveExtensionPaths reads manifests in the configured agent npm director
   }
 });
 
-test("resolveAgentSettings gives local overrides precedence over frontmatter and defaults", () => {
+test("agent overrides take precedence over frontmatter and profile defaults", () => {
   const settings = parseSubagentSettings({
     defaults: { model: "default/model", thinkingLevel: "low", inactivityTimeoutMs: 100 },
     agents: { scout: { model: "local/model", thinkingLevel: "high", inactivityTimeoutMs: 0 } },
@@ -270,7 +270,7 @@ test("resolveAgentSettings gives local overrides precedence over frontmatter and
   assert.equal(defaults.inactivityTimeoutMs, 100);
 });
 
-test("resolveAgentSettings ignores agent models for session while retaining agent thinking and inactivity", () => {
+test("the session profile ignores agent models but retains thinking and inactivity settings", () => {
   const settings = parseSubagentSettings({
     profiles: { other: { defaults: { model: "other/model", thinkingLevel: "low" } } },
   });
@@ -294,7 +294,7 @@ test("resolveAgentSettings ignores agent models for session while retaining agen
   assert.equal(withoutThinking.thinkingLevel, undefined);
 });
 
-test("parseSubagentSettings validates profiles and ignores defaultProfile", () => {
+test("invalid profiles and defaultProfile are ignored", () => {
   const settings = parseSubagentSettings({
     defaultProfile: "fast",
     profiles: {
@@ -310,7 +310,7 @@ test("parseSubagentSettings validates profiles and ignores defaultProfile", () =
   assert.deepEqual(settings.profiles.slow!.defaults, { model: "slow/model" });
 });
 
-test("parseSubagentSettings reserves session and off even for disabled or malformed profiles", () => {
+test("session and off remain reserved for disabled or malformed profiles", () => {
   for (const profile of [{}, { enabled: false }, null]) {
     assert.throws(
       () => parseSubagentSettings({ profiles: { session: profile } }),
@@ -320,7 +320,7 @@ test("parseSubagentSettings reserves session and off even for disabled or malfor
   }
 });
 
-test("parseSubagentSettings enables profiles unless enabled is explicitly false", () => {
+test("profiles are enabled unless enabled is explicitly false", () => {
   for (const enabled of [undefined, true, "false", 0, null]) {
     const settings = parseSubagentSettings({
       defaultProfile: "disabled",
@@ -336,7 +336,7 @@ test("parseSubagentSettings enables profiles unless enabled is explicitly false"
   }
 });
 
-test("parseSubagentSettings does not privilege a profile named default or a former defaultProfile", () => {
+test("a profile named default and former defaultProfile are not privileged", () => {
   const settings = parseSubagentSettings({
     defaultProfile: "disabled",
     profiles: {
@@ -353,7 +353,7 @@ test("parseSubagentSettings does not privilege a profile named default or a form
   assert.equal(resolveAgentSettings(agent, settings, "disabled").model, undefined);
 });
 
-test("loadSubagentSettings leaves disabled profile configuration in the file", async (t) => {
+test("disabled profile configuration remains in the file and can be restored", async (t) => {
   const dir = await tempDir(t, "subagents-test-");
   const file = join(dir, "subagents.json");
   const config = {
@@ -379,7 +379,7 @@ test("loadSubagentSettings leaves disabled profile configuration in the file", a
   });
 });
 
-test("parseSubagentSettings uses session when every configured profile is disabled", () => {
+test("the session profile is used when every configured profile is disabled", () => {
   const extensions = ["npm:pi-claude-bridge"];
   const settings = parseSubagentSettings({
     defaultProfile: "disabled",
@@ -398,7 +398,7 @@ test("parseSubagentSettings uses session when every configured profile is disabl
   assert.equal(resolved.thinkingLevel, "high");
 });
 
-test("resolveAgentSettings can resolve an explicitly selected profile", () => {
+test("explicitly selected profiles determine agent settings", () => {
   const settings = parseSubagentSettings({
     defaultProfile: "fast",
     profiles: {

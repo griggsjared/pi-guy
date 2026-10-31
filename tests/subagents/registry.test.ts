@@ -26,7 +26,7 @@ function control(overrides: Partial<SubagentControl> = {}): SubagentControl {
   };
 }
 
-test("registry lifecycle: add -> complete -> pendingCompleted -> markCleared", () => {
+test("completed jobs retain their steps and remain recent after being cleared", () => {
   let time = 0;
   const registry = createJobRegistry({ now: () => time });
   const id = registry.add("worker", "task", "  title \n", { model: "served-model", thinkingLevel: "high" });
@@ -77,7 +77,7 @@ test("registry lifecycle: add -> complete -> pendingCompleted -> markCleared", (
   assert.equal(registry.recent(1).length, 1);
 });
 
-test("registry snapshots the launch profile without lifecycle overwrites", () => {
+test("jobs retain their launch profile while model and thinking level update", () => {
   const registry = createJobRegistry();
   const id = registry.add("worker", "task", undefined, {
     model: "launch-model",
@@ -93,7 +93,7 @@ test("registry snapshots the launch profile without lifecycle overwrites", () =>
   assert.equal(job.profile, "primary");
 });
 
-test("registry: event ring sequences, limits, cursors, and defensive copies", () => {
+test("job events support bounded history, cursors, limits, and defensive copies", () => {
   let time = 10;
   const registry = createJobRegistry({ now: () => time++ });
   const id = registry.add("worker", "task");
@@ -131,7 +131,7 @@ test("registry: event ring sequences, limits, cursors, and defensive copies", ()
   assert.equal(retained.droppedBefore, 4);
 });
 
-test("registry: concurrent same-name steps correlate events by ID and freeze timing", () => {
+test("concurrent same-name steps match events by ID and retain their timing", () => {
   let time = 10;
   const registry = createJobRegistry({ now: () => time });
   const id = registry.add("worker", "task");
@@ -187,7 +187,7 @@ test("registry: concurrent same-name steps correlate events by ID and freeze tim
   assert.equal(registry.readEvents(id)?.events.at(-1)?.durationMs, 0);
 });
 
-test("registry: active steps survive event eviction and retain the latest 20 completions", () => {
+test("active steps survive event eviction while only the latest 20 completed steps remain", () => {
   let time = 0;
   const registry = createJobRegistry({ now: () => time++ });
   const id = registry.add("worker", "task");
@@ -233,7 +233,7 @@ test("registry: active steps survive event eviction and retain the latest 20 com
   assert.ok(job.steps.every((step) => step.endedAt === job.endTime));
 });
 
-test("registry: event rings retain terminal jobs and are pruned with them", () => {
+test("completed job events remain readable until the job is pruned", () => {
   let time = 0;
   const registry = createJobRegistry({ now: () => time });
   const id = registry.add("worker", "task");
@@ -248,7 +248,7 @@ test("registry: event rings retain terminal jobs and are pruned with them", () =
   assert.equal(registry.readEvents(id), undefined);
 });
 
-test("registry: failed jobs keep error and are pruned after cutoff once cleared", () => {
+test("failed jobs retain errors and are pruned after the cutoff once cleared", () => {
   let time = 0;
   const registry = createJobRegistry({ now: () => time });
   const a = registry.add("worker", "task");
@@ -266,7 +266,7 @@ test("registry: failed jobs keep error and are pruned after cutoff once cleared"
   assert.ok(registry.jobs.has(b), "fresh completion must survive");
 });
 
-test("registry: updateLive ignores unknown ids and skips undefined fields", () => {
+test("live updates ignore unknown jobs and skip undefined fields", () => {
   const registry = createJobRegistry();
   const id = registry.add("worker", "task");
   registry.updateLive(id, { text: undefined, progress: "p" });
@@ -275,7 +275,7 @@ test("registry: updateLive ignores unknown ids and skips undefined fields", () =
   registry.updateLive(999, { text: "x" }); // no throw
 });
 
-test("registry: recent sorts by endTime descending and limits", () => {
+test("recent jobs appear newest first and respect the limit", () => {
   let time = 0;
   const registry = createJobRegistry({ now: () => time });
   const a = registry.add("a", "t");
@@ -294,7 +294,7 @@ test("registry: recent sorts by endTime descending and limits", () => {
   );
 });
 
-test("registry: cancellation before registration is delivered once and freezes steps", () => {
+test("cancellation before control registration is delivered once and freezes steps", () => {
   let time = 10;
   const registry = createJobRegistry({ now: () => time });
   const id = registry.add("worker", "task");
@@ -329,7 +329,7 @@ test("registry: cancellation before registration is delivered once and freezes s
   );
 });
 
-test("registry: unknown, terminal, and duplicate handles cannot become unreachable", () => {
+test("controls for unknown, terminal, and duplicate jobs are cancelled", () => {
   const registry = createJobRegistry();
   const unknown: string[] = [];
   registry.registerControl(999, control({ cancel: (reason) => unknown.push(reason) }));
@@ -351,7 +351,7 @@ test("registry: unknown, terminal, and duplicate handles cannot become unreachab
   assert.deepEqual(terminal, ["timeout"]);
 });
 
-test("registry: cancellation reasons are first-wins for all lifecycle causes", () => {
+test("the first cancellation reason wins for every supported cause", () => {
   for (const reason of ["manual", "timeout", "parent-abort", "session-shutdown"] as const) {
     const registry = createJobRegistry();
     const id = registry.add("worker", "task");
@@ -366,7 +366,7 @@ test("registry: cancellation reasons are first-wins for all lifecycle causes", (
   }
 });
 
-test("registry: sends messages and resolves the matching pending question", async () => {
+test("messages are delivered and replies resolve the matching pending question", async () => {
   const registry = createJobRegistry({ now: () => 123 });
   const id = registry.add("worker", "task");
   const sends: unknown[][] = [];
@@ -402,7 +402,7 @@ test("registry: sends messages and resolves the matching pending question", asyn
   await assert.rejects(registry.reply(id, "q1", "again"), /Unknown or answered question q1/);
 });
 
-test("registry: concurrent replies cannot answer the same question twice", async () => {
+test("concurrent replies cannot answer the same question twice", async () => {
   const registry = createJobRegistry();
   const id = registry.add("worker", "task");
   let release: (() => void) | undefined;
@@ -424,7 +424,7 @@ test("registry: concurrent replies cannot answer the same question twice", async
   assert.deepEqual(registry.get(id)?.pendingQuestions, []);
 });
 
-test("registry: failed replies remain pending", async () => {
+test("failed replies leave questions pending", async () => {
   const registry = createJobRegistry();
   const id = registry.add("worker", "task");
   registry.registerControl(
@@ -444,7 +444,7 @@ test("registry: failed replies remain pending", async () => {
   );
 });
 
-test("registry: messaging rejects unknown, queued, cancelling, and terminal jobs", async () => {
+test("messaging rejects unknown, queued, cancelling, and terminal jobs", async () => {
   const registry = createJobRegistry();
   await assert.rejects(registry.send(999, "message", "steer"), /Unknown subagent job ID: 999/);
 

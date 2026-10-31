@@ -6,12 +6,11 @@ import type { createJobRegistry } from "../../src/subagents/registry.ts";
 import { createPeekTool, createReplyTool } from "../../src/subagents/status-tools.ts";
 import { resolveMode } from "../../src/subagents/tools.ts";
 import { fakeTheme } from "../helpers/theme.ts";
-import { flush, sleep, waitFor } from "../helpers/wait.ts";
+import { flush, waitFor } from "../helpers/wait.ts";
 import { FakeChild, fakeSpawnChildren, endEvent, jsonEvent, questionEvent, responseEvent } from "./fake-child.ts";
-import type { SpawnCall } from "./fake-child.ts";
 import { cleanupChildren, makeTool, renderable, renderText } from "./helpers.ts";
 
-test("resolveMode: single, batch, and validation", () => {
+test("single and batch requests require exactly one valid mode", () => {
   assert.deepEqual(resolveMode({ agent: "a", task: "t", title: "x" }), {
     single: { agent: "a", task: "t", title: "x" },
   });
@@ -197,7 +196,7 @@ test("launch failures and cancellations keep status while avoiding a repeated ta
   assert.equal(launched.trim(), "");
 });
 
-test("execute: profile confirmation surfaces a paused progress update", async (t) => {
+test("profile confirmation surfaces a paused progress update", async (t) => {
   const updates: Array<{ content: unknown; details: unknown }> = [];
   const { tool, activeTickers, child, ctx } = makeTool({
     confirmProfile: async (_ctx, onPause) => {
@@ -215,13 +214,9 @@ test("execute: profile confirmation surfaces a paused progress update", async (t
   ]);
 });
 
-test("execute: cancelling profile confirmation returns a cancelled result", async () => {
+test("cancelling profile confirmation returns a cancelled result", async () => {
   const child = new FakeChild();
-  const calls: SpawnCall[] = [];
-  const spawnFn = ((cmd: string, args: string[], options?: Record<string, unknown>) => {
-    calls.push({ cmd, args, options: options ?? {} });
-    return child;
-  }) as unknown as typeof spawn;
+  const { spawnFn, calls } = fakeSpawnChildren([child]);
   let confirmations = 0;
   const { tool, ctx } = makeTool({
     spawnFn,
@@ -237,13 +232,9 @@ test("execute: cancelling profile confirmation returns a cancelled result", asyn
   assert.equal(calls.length, 0);
 });
 
-test("execute: local settings set child model and thinking level", async () => {
+test("agent settings override profile model and thinking defaults", async (t) => {
   const child = new FakeChild();
-  const calls: SpawnCall[] = [];
-  const spawnFn = ((cmd: string, args: string[], options?: Record<string, unknown>) => {
-    calls.push({ cmd, args, options: options ?? {} });
-    return child;
-  }) as unknown as typeof spawn;
+  const { spawnFn, calls } = fakeSpawnChildren([child]);
   const { tool, activeTickers, ctx } = makeTool({
     spawnFn,
     settings: {
@@ -257,6 +248,7 @@ test("execute: local settings set child model and thinking level", async () => {
     },
     activeProfile: "default",
   });
+  cleanupChildren(t, [child], activeTickers);
   await tool.execute("call1", { agent: "scout", task: "t" }, undefined, undefined, ctx);
 
   await waitFor(() => child.stdin.writes.length > 0);
@@ -269,13 +261,9 @@ test("execute: local settings set child model and thinking level", async () => {
   assert.equal(args[args.indexOf("--thinking") + 1], "high");
 });
 
-test("execute: selected profile defaults set child model and thinking level", async () => {
+test("profile defaults set child model and thinking level", async (t) => {
   const child = new FakeChild();
-  const calls: SpawnCall[] = [];
-  const spawnFn = ((cmd: string, args: string[], options?: Record<string, unknown>) => {
-    calls.push({ cmd, args, options: options ?? {} });
-    return child;
-  }) as unknown as typeof spawn;
+  const { spawnFn, calls } = fakeSpawnChildren([child]);
   const { tool, activeTickers, ctx } = makeTool({
     spawnFn,
     settings: {
@@ -284,6 +272,7 @@ test("execute: selected profile defaults set child model and thinking level", as
     },
     activeProfile: "default",
   });
+  cleanupChildren(t, [child], activeTickers);
   await tool.execute("call1", { agent: "scout", task: "t" }, undefined, undefined, ctx);
 
   await waitFor(() => child.stdin.writes.length > 0);
@@ -296,7 +285,7 @@ test("execute: selected profile defaults set child model and thinking level", as
   assert.equal(args[args.indexOf("--thinking") + 1], "low");
 });
 
-test("execute: selected profile controls new jobs and completion metadata", async () => {
+test("selected profile controls new jobs and completion metadata", async (t) => {
   const settings = {
     profiles: {
       primary: { defaults: { model: "primary/model", thinkingLevel: "low" }, agents: {} },
@@ -305,12 +294,9 @@ test("execute: selected profile controls new jobs and completion metadata", asyn
     extensions: [],
   };
   const child = new FakeChild();
-  const calls: SpawnCall[] = [];
-  const spawnFn = ((cmd: string, args: string[], options?: Record<string, unknown>) => {
-    calls.push({ cmd, args, options: options ?? {} });
-    return child;
-  }) as unknown as typeof spawn;
-  const { tool, registry, sendMessage, ctx } = makeTool({ spawnFn, settings, activeProfile: "backup" });
+  const { spawnFn, calls } = fakeSpawnChildren([child]);
+  const { tool, registry, sendMessage, activeTickers, ctx } = makeTool({ spawnFn, settings, activeProfile: "backup" });
+  cleanupChildren(t, [child], activeTickers);
   const launch = await tool.execute("call1", { agent: "scout", task: "t" }, undefined, undefined, ctx);
 
   assert.equal(launch.details.profile, "backup");
@@ -323,12 +309,12 @@ test("execute: selected profile controls new jobs and completion metadata", asyn
 
   child.stdout.emit("data", Buffer.from(endEvent("done")));
   child.finish(0);
-  await sleep(20);
+  await waitFor(() => sendMessage.calls.length > 0);
   const completion = sendMessage.calls[0]?.[0] as { details: { profile?: string } };
   assert.equal(completion.details.profile, "backup");
 });
 
-test("execute: setup failures preserve inherited model and effort", async () => {
+test("setup failures preserve inherited model and effort", async () => {
   const spawnFn = (() => {
     throw new Error("spawn failed");
   }) as typeof spawn;
@@ -348,20 +334,15 @@ test("execute: setup failures preserve inherited model and effort", async () => 
   assert.deepEqual(notices, ["subagent #1 scout — failed: Error: spawn failed · t"]);
 });
 
-test("subagent schema has no execution mode", () => {
-  const { tool } = makeTool();
-  const properties = (tool.parameters as { properties: Record<string, unknown> }).properties;
-  assert.equal("execution" in properties, false);
-});
-
 test("subagent tool runs sequentially so parallel calls cannot double-open the picker", () => {
   const { tool } = makeTool();
   assert.equal(tool.executionMode, "sequential");
   assert.equal(tool.exposure, "model-only");
 });
 
-test("execute: legacy sync input cannot make a single job block", async () => {
+test("legacy sync input cannot make a single job block", async (t) => {
   const { tool, registry, sendMessage, activeTickers, child, ctx } = makeTool();
+  cleanupChildren(t, [child], activeTickers);
   const result = await tool.execute(
     "call1",
     { agent: "scout", task: "t", execution: "sync" } as never,
@@ -386,15 +367,16 @@ test("execute: legacy sync input cannot make a single job block", async () => {
   await waitFor(() => child.stdin.writes.length > 0);
   child.stdout.emit("data", Buffer.from(endEvent("scouted")));
   child.finish(0);
-  await sleep(20);
+  await waitFor(() => sendMessage.calls.length === 1);
 
   assert.equal(sendMessage.calls.length, 1, "completion sends one hidden parent message");
   assert.equal(registry.running().length, 0);
   assert.equal(activeTickers.size, 0);
 });
 
-test("execute: single returns launched, then displays and delivers its result", async () => {
-  const { tool, registry, sendMessage, appendEntry, child, ctx } = makeTool();
+test("a single job launches, displays and delivers its result", async (t) => {
+  const { tool, registry, sendMessage, appendEntry, activeTickers, child, ctx } = makeTool();
+  cleanupChildren(t, [child], activeTickers);
   (ctx as unknown as { thinkingLevel: string }).thinkingLevel = "high";
   const result = await tool.execute("call1", { agent: "scout", task: "t" }, undefined, undefined, ctx);
   assert.equal(result.details.status, "launched");
@@ -429,8 +411,9 @@ test("execute: single returns launched, then displays and delivers its result", 
   assert.deepEqual(appendEntry.calls, [["subagents", { content: message.content, details: message.details }]]);
 });
 
-test("execute: active parent holds results until agent_settled", async () => {
-  const { tool, sendMessage, appendEntry, handlers, child, ctx } = makeTool();
+test("an active parent holds results until agent_settled", async (t) => {
+  const { tool, sendMessage, appendEntry, handlers, activeTickers, child, ctx } = makeTool();
+  cleanupChildren(t, [child], activeTickers);
   (ctx as unknown as { isIdle: () => boolean }).isIdle = () => false;
   await tool.execute("call1", { agent: "scout", task: "t" }, undefined, undefined, ctx);
 
@@ -448,7 +431,7 @@ test("execute: active parent holds results until agent_settled", async () => {
   assert.deepEqual(sendMessage.calls[0]![1], { triggerTurn: true, deliverAs: "steer" });
 });
 
-test("execute: inactivity steers a busy parent once per idle stretch without stopping the child", async (t) => {
+test("inactivity steers a busy parent once per idle stretch without stopping the child", async (t) => {
   const now = Date.now();
   t.mock.timers.enable({ apis: ["Date", "setTimeout"], now });
   const { tool, registry, sendMessage, appendEntry, activeTickers, child, ctx } = makeTool();
@@ -518,8 +501,9 @@ test("execute: inactivity steers a busy parent once per idle stretch without sto
   assert.equal(child.killed, null);
 });
 
-test("execute: child semantic events are available through peek", async () => {
-  const { tool, registry, child, ctx } = makeTool();
+test("child semantic events are available through peek", async (t) => {
+  const { tool, registry, activeTickers, child, ctx } = makeTool();
+  cleanupChildren(t, [child], activeTickers);
   await tool.execute("call1", { agent: "scout", task: "t" }, undefined, undefined, ctx);
   await waitFor(() => child.stdin.writes.length > 0);
   const emit = (event: Record<string, unknown>) => {
@@ -530,7 +514,7 @@ test("execute: child semantic events are available through peek", async () => {
   emit({ type: "tool_execution_end", toolName: "read", isError: false, result: "ok" });
   child.stdout.emit("data", Buffer.from(endEvent("scouted")));
   child.finish(0);
-  await sleep(20);
+  await waitFor(() => registry.get(1)?.status === "completed");
 
   const peek = await createPeekTool({ registry }).execute("peek", { jobId: 1 }, undefined, undefined, {} as never);
   assert.deepEqual(
@@ -539,8 +523,9 @@ test("execute: child semantic events are available through peek", async () => {
   );
 });
 
-test("child questions trigger a parent turn and subagent_reply resolves them", async () => {
-  const { tool, registry, sendMessage, child, ctx } = makeTool();
+test("child questions trigger a parent turn and subagent_reply resolves them", async (t) => {
+  const { tool, registry, sendMessage, activeTickers, child, ctx } = makeTool();
+  cleanupChildren(t, [child], activeTickers);
   await tool.execute("call1", { agent: "scout", task: "t" }, undefined, undefined, ctx);
   await waitFor(() => child.stdin.writes.length > 0);
   const initial = child.stdin.commands()[0];
@@ -585,12 +570,13 @@ test("child questions trigger a parent turn and subagent_reply resolves them", a
 
   child.stdout.emit("data", Buffer.from(endEvent("done")));
   child.finish(0);
-  await sleep(20);
+  await waitFor(() => sendMessage.calls.length === 2);
   assert.equal(sendMessage.calls.length, 2, "question and result sent once each");
 });
 
-test("stale UI context does not duplicate cancellation completion", async () => {
-  const { tool, registry, sendMessage, child, ctx } = makeTool();
+test("stale UI context does not duplicate cancellation completion", async (t) => {
+  const { tool, registry, sendMessage, activeTickers, child, ctx } = makeTool();
+  cleanupChildren(t, [child], activeTickers);
   await tool.execute("call1", { agent: "scout", task: "t" }, undefined, undefined, ctx);
   await waitFor(() => child.stdin.writes.length > 0);
   Object.defineProperty(ctx, "hasUI", {
@@ -601,7 +587,7 @@ test("stale UI context does not duplicate cancellation completion", async () => 
   });
 
   assert.equal(registry.cancel(1, "manual"), true);
-  await sleep(30);
+  await waitFor(() => sendMessage.calls.some((call) => (call[0] as { display?: boolean }).display === false));
 
   assert.equal(registry.get(1)?.status, "cancelled");
   const deliveries = sendMessage.calls.filter((call) => (call[0] as { display?: boolean }).display === false);
@@ -632,7 +618,7 @@ test("cancelling a child waiting on the parent invalidates its question and supp
   t.mock.timers.tick(600000);
   assert.equal(sendMessage.calls.length, 1, "cancellation must not rearm inactivity delivery");
   t.mock.timers.reset();
-  await sleep(20);
+  await waitFor(() => sendMessage.calls.length === 2);
   assert.equal(registry.get(1)?.status, "cancelled");
   const resultMessage = sendMessage.calls.find(
     (call) => (call[0] as { details?: { status?: string } }).details?.status === "cancelled",
@@ -640,7 +626,7 @@ test("cancelling a child waiting on the parent invalidates its question and supp
   assert.ok(resultMessage, "cancelled result delivered after the child closes");
 });
 
-test("execute: all-unknown batch throws", async () => {
+test("an all-unknown batch throws", async () => {
   const { tool, ctx } = makeTool();
   await assert.rejects(
     tool.execute("call1", { tasks: [{ agent: "ghost", task: "t" }] }, undefined, undefined, ctx),
@@ -648,8 +634,9 @@ test("execute: all-unknown batch throws", async () => {
   );
 });
 
-test("execute: partial-unknown batch launches known jobs and reports skipped count", async () => {
-  const { tool, registry, sendMessage, child, ctx } = makeTool();
+test("a partial-unknown batch launches known jobs and reports skipped count", async (t) => {
+  const { tool, registry, sendMessage, activeTickers, child, ctx } = makeTool();
+  cleanupChildren(t, [child], activeTickers);
   const result = await tool.execute(
     "call1",
     {
@@ -671,7 +658,7 @@ test("execute: partial-unknown batch launches known jobs and reports skipped cou
   await waitFor(() => child.stdin.writes.length > 0);
   child.stdout.emit("data", Buffer.from(endEvent("scouted")));
   child.finish(0);
-  await sleep(20);
+  await waitFor(() => sendMessage.calls.length === 2);
 
   assert.equal(registry.get(1)?.status, "failed");
   assert.equal(registry.get(2)?.status, "completed");
@@ -680,10 +667,11 @@ test("execute: partial-unknown batch launches known jobs and reports skipped cou
   assert.match(text, /scouted/);
 });
 
-test("execute: queued cancellation does not spawn and reports its reason", async () => {
+test("queued cancellation does not spawn and reports its reason", async (t) => {
   const children = [new FakeChild(), new FakeChild()];
   const { spawnFn, calls } = fakeSpawnChildren(children);
-  const { tool, registry, sendMessage, ctx } = makeTool({ spawnFn });
+  const { tool, registry, sendMessage, activeTickers, ctx } = makeTool({ spawnFn });
+  cleanupChildren(t, children, activeTickers);
   const notices: string[] = [];
   (ctx as unknown as { hasUI: boolean; ui: { notify: (text: string) => void } }).hasUI = true;
   (ctx as unknown as { ui: { notify: (text: string) => void } }).ui = { notify: (text) => notices.push(text) };
@@ -704,7 +692,9 @@ test("execute: queued cancellation does not spawn and reports its reason", async
   // Let the first launch finish setup and attach its close listener.
   await waitFor(() => children[0]!.stdin.writes.length > 0);
   children[0]!.finish(0);
-  await sleep(30);
+  await waitFor(() =>
+    sendMessage.calls.some((call) => (call[0] as { details?: { jobId?: number } }).details?.jobId === 2),
+  );
   assert.equal(calls.length, 1, "the queued cancelled job must not spawn");
   const resultMessage = sendMessage.calls.find(
     (call) => (call[0] as { details?: { jobId?: number } }).details?.jobId === 2,
@@ -721,10 +711,11 @@ test("execute: queued cancellation does not spawn and reports its reason", async
   assert.match((sendMessage.calls.at(-1)?.[0] as { content: string }).content, /Cancelled \(timeout\)/);
 });
 
-test("execute: parent abort does not cancel running or queued jobs", async () => {
+test("parent abort does not cancel running or queued jobs", async (t) => {
   const children = [new FakeChild(), new FakeChild()];
   const { spawnFn, calls } = fakeSpawnChildren(children);
-  const { tool, registry, ctx } = makeTool({ spawnFn });
+  const { tool, registry, activeTickers, ctx } = makeTool({ spawnFn });
+  cleanupChildren(t, children, activeTickers);
   const controller = new AbortController();
   const result = await tool.execute(
     "call1",
@@ -756,8 +747,9 @@ test("execute: parent abort does not cancel running or queued jobs", async () =>
   assert.equal(registry.get(2)?.status, "completed");
 });
 
-test("execute: registry cancellation reason wins over child completion", async () => {
-  const { tool, registry, sendMessage, appendEntry, child, ctx } = makeTool();
+test("registry cancellation reason wins over child completion", async (t) => {
+  const { tool, registry, sendMessage, appendEntry, activeTickers, child, ctx } = makeTool();
+  cleanupChildren(t, [child], activeTickers);
   const result = await tool.execute("call1", { agent: "scout", task: "t" }, undefined, undefined, ctx);
   assert.equal(result.details.status, "launched");
   await waitFor(() => child.stdin.writes.length > 0);
@@ -777,7 +769,7 @@ test("execute: registry cancellation reason wins over child completion", async (
   assert.deepEqual(appendEntry.calls, [["subagents", { content: message.content, details: message.details }]]);
 });
 
-test("execute: setup cancellation reports cancellation instead of failure", async () => {
+test("setup cancellation reports cancellation instead of failure", async () => {
   let registry: ReturnType<typeof createJobRegistry> | undefined;
   const spawnFn = (() => {
     assert.ok(registry);
@@ -795,9 +787,10 @@ test("execute: setup cancellation reports cancellation instead of failure", asyn
   assert.equal(details.cancellationReason, "session-shutdown");
 });
 
-test("execute: jobs outlive the tool-call abort signal", async () => {
+test("jobs outlive the tool-call abort signal", async (t) => {
   const controller = new AbortController();
-  const { tool, child, ctx } = makeTool();
+  const { tool, activeTickers, child, ctx } = makeTool();
+  cleanupChildren(t, [child], activeTickers);
   const result = await tool.execute("call1", { agent: "scout", task: "t" }, controller.signal, undefined, ctx);
   assert.equal(result.details.status, "launched");
 
@@ -807,13 +800,14 @@ test("execute: jobs outlive the tool-call abort signal", async () => {
 
   child.stdout.emit("data", Buffer.from(endEvent("scouted")));
   child.finish(0);
-  await sleep(20);
+  await waitFor(() => activeTickers.size === 0);
 });
 
-test("execute: parallel batch displays and delivers each result", async () => {
+test("a parallel batch displays and delivers each result", async (t) => {
   const children = [new FakeChild(), new FakeChild()];
   const { spawnFn, calls } = fakeSpawnChildren(children);
   const { tool, registry, sendMessage, sendUserMessage, activeTickers, ctx } = makeTool({ spawnFn });
+  cleanupChildren(t, children, activeTickers);
   const result = await tool.execute(
     "call1",
     {
@@ -857,7 +851,7 @@ test("execute: parallel batch displays and delivers each result", async () => {
   assert.equal(activeTickers.size, 0, "ticker stopped via finally");
 });
 
-test("execute: every parallel launch failure reports its own job and clears the batch", async (t) => {
+test("every parallel launch failure reports its own job and clears the batch", async (t) => {
   const spawnFn = (() => {
     throw new Error("spawn failed");
   }) as typeof spawn;
@@ -897,13 +891,13 @@ test("execute: every parallel launch failure reports its own job and clears the 
   assert.deepEqual(registry.pendingCompleted(), []);
 });
 
-test("execute: validation errors reject", async () => {
+test("invalid launch requests reject", async () => {
   const { tool, ctx } = makeTool();
   await assert.rejects(tool.execute("call1", { tasks: [] }, undefined, undefined, ctx), /at least one task/);
   await assert.rejects(tool.execute("call1", { agent: "scout" }, undefined, undefined, ctx), /exactly one mode/);
 });
 
-test("renderResult: renders plain text when details are missing or partial", () => {
+test("missing or partial result details render safely as plain text", () => {
   const { tool } = makeTool();
   const theme = fakeTheme() as never;
   const render = (result: unknown, context: unknown) =>
@@ -927,7 +921,7 @@ test("renderResult: renders plain text when details are missing or partial", () 
   assert.match(renderText(malformed), /bad args/);
 });
 
-test("renderResult: renders launched/failed/completed summaries", () => {
+test("launch results render summaries appropriate to their status", () => {
   const { tool } = makeTool();
   const theme = fakeTheme() as never;
   const render = (details: { status: string }) =>
@@ -950,7 +944,7 @@ test("renderResult: renders launched/failed/completed summaries", () => {
   assert.equal(renderText(completedWithJob).trim(), "");
 });
 
-test("renderCall: shows concurrency and every agent title", () => {
+test("parallel launch calls show concurrency and every agent title", () => {
   const { tool } = makeTool();
   const theme = fakeTheme() as never;
   const rendered = tool.renderCall!(

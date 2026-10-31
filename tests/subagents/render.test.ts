@@ -9,7 +9,7 @@ import { fakeTheme, taggedTheme as createTaggedTheme } from "../helpers/theme.ts
 import { flush } from "../helpers/wait.ts";
 import { captureRenderers, complete, makeTool, renderable, renderAtWidth, renderText } from "./helpers.ts";
 
-test("refreshUi: keeps one widget component and requests in-place renders", () => {
+test("the widget is reused for updates and removed when no jobs remain", () => {
   const registry = createJobRegistry();
   registry.add("reviewer", "review safety fixes", "Review safety fixes");
   let factoryCalls = 0;
@@ -46,7 +46,7 @@ test("refreshUi: keeps one widget component and requests in-place renders", () =
   assert.equal(widgetContent, undefined);
 });
 
-test("refreshUi: clicks open the rendered job's tail and leave other mouse gestures alone", async (t) => {
+test("clicks open the rendered job's tail and leave other mouse gestures alone", async (t) => {
   const registry = createJobRegistry();
   const completedId = registry.add("scout", "finished task");
   const runningId = registry.add("worker", "running task");
@@ -122,7 +122,7 @@ test("refreshUi: clicks open the rendered job's tail and leave other mouse gestu
   tails[2]!.handleInput("q");
 });
 
-test("refreshUi: failed tail opens recover and disposed widgets cannot open tails", async () => {
+test("failed tail opens recover and disposed widgets cannot open tails", async () => {
   const registry = createJobRegistry();
   registry.add("scout", "task");
   interface Widget {
@@ -165,7 +165,7 @@ test("refreshUi: failed tail opens recover and disposed widgets cannot open tail
   replacement.dispose();
 });
 
-test("refreshUi: truncation rows and vanished jobs are not clickable", () => {
+test("truncation rows and vanished jobs are not clickable", () => {
   const registry = createJobRegistry();
   for (let index = 0; index < 11; index += 1) registry.add("scout", `task ${index}`);
   let widget:
