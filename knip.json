@@ -1,0 +1,5 @@
+{
+  "entry": ["src/index.ts", "tests/**/*.test.ts"],
+  "project": ["src/**/*.ts", "tests/**/*.ts"],
+  "rules": { "exports": "error", "types": "off", "dependencies": "error" }
+}

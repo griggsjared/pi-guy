@@ -1,0 +1,11 @@
+{
+  "printWidth": 120,
+  "tabWidth": 2,
+  "useTabs": false,
+  "endOfLine": "lf",
+  "insertFinalNewline": true,
+  "singleQuote": false,
+  "semi": true,
+  "trailingComma": "all",
+  "sortImports": { "newlinesBetween": false, "groups": ["builtin", "external", "parent", "sibling"] }
+}

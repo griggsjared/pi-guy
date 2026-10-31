@@ -9,7 +9,7 @@ const SIGNAL_NUMBERS: Record<string, number> = { SIGTERM: 15, SIGHUP: 1, SIGINT:
  * process closes with (143, null); only unhandleable signals (SIGKILL) close
  * with (null, signal).
  */
-export class FakeStdin extends EventEmitter {
+class FakeStdin extends EventEmitter {
   writes: string[] = [];
   ended = false;
   writeError: Error | undefined;
