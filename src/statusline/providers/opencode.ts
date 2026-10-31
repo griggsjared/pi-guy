@@ -10,6 +10,9 @@ const MAX_HTML_RESPONSE_BYTES = 256 * 1024;
 const MAX_HYDRATION_CANDIDATES = 256;
 const MAX_HYDRATION_SCAN_CHARS = 16 * 1024;
 const MAX_HYDRATION_SCAN_TOTAL = 256 * 1024;
+const MAX_HYDRATION_KEY_GAP_CHARS = 128;
+const MAX_HYDRATION_DECODE_PASSES = 2;
+const MAX_ELEMENT_SCAN_CHARS = 8192;
 
 interface HydrationBudget {
   candidates: number;
@@ -19,7 +22,7 @@ interface HydrationBudget {
 function findObjectAfter(html: string, start: number, budget: HydrationBudget): string | undefined {
   if (budget.candidates >= MAX_HYDRATION_CANDIDATES || budget.scanned >= MAX_HYDRATION_SCAN_TOTAL) return undefined;
   const open = html.indexOf("{", start);
-  if (open < 0 || open - start > 128) return undefined;
+  if (open < 0 || open - start > MAX_HYDRATION_KEY_GAP_CHARS) return undefined;
   budget.candidates++;
   const end = Math.min(html.length, open + MAX_HYDRATION_SCAN_CHARS);
   budget.scanned += end - open;
@@ -42,7 +45,7 @@ function findObjectAfter(html: string, start: number, budget: HydrationBudget): 
 function hydrationVariants(value: string): string[] {
   const variants = [value];
   let decoded = value;
-  for (let index = 0; index < 2; index++) {
+  for (let index = 0; index < MAX_HYDRATION_DECODE_PASSES; index++) {
     const next = decoded
       .replace(/\\u0022/g, '"')
       .replace(/\\"/g, '"')
@@ -72,7 +75,7 @@ function hydrationWindow(
     let position = 0;
     while ((position = variant.indexOf(name, position)) >= 0) {
       const colon = variant.indexOf(":", position + name.length);
-      if (colon >= 0 && colon - position < 128) {
+      if (colon >= 0 && colon - position < MAX_HYDRATION_KEY_GAP_CHARS) {
         const object = findObjectAfter(variant, colon + 1, budget);
         if (object) {
           const usagePercent = hydrationNumber(object, "usagePercent");
@@ -104,7 +107,7 @@ function balancedElementContent(
   tagPattern.lastIndex = contentStart;
   let depth = 1;
   for (const match of html.matchAll(tagPattern)) {
-    if (match.index - contentStart > 8192) return undefined;
+    if (match.index - contentStart > MAX_ELEMENT_SCAN_CHARS) return undefined;
     if (match[0].startsWith("</")) depth--;
     else if (!match[0].endsWith("/>")) depth++;
     if (depth === 0) return { content: html.slice(contentStart, match.index), end: match.index + match[0].length };
@@ -139,14 +142,14 @@ function parseUsageItems(html: string): ParsedHtmlWindow[] {
       mins: 60,
       minute: 60,
       minutes: 60,
-      h: 3600,
-      hr: 3600,
-      hrs: 3600,
-      hour: 3600,
-      hours: 3600,
-      d: 86400,
-      day: 86400,
-      days: 86400,
+      h: 60 * 60,
+      hr: 60 * 60,
+      hrs: 60 * 60,
+      hour: 60 * 60,
+      hours: 60 * 60,
+      d: 24 * 60 * 60,
+      day: 24 * 60 * 60,
+      days: 24 * 60 * 60,
     };
     let resetInSec = 0;
     let matchedUnit = false;

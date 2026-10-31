@@ -8,10 +8,11 @@ export const CODEX_CACHE_TTL_MS = 60_000;
 
 const CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 const WEEKLY_WINDOW_THRESHOLD_SECONDS = 24 * 60 * 60;
+const MILLISECONDS_EPOCH_THRESHOLD = 10_000_000_000;
 
 function normalizeResetAt(value: number | undefined): number | undefined {
   if (value === undefined || value < 0) return undefined;
-  return value > 10_000_000_000 ? Math.round(value / 1000) : Math.round(value);
+  return value > MILLISECONDS_EPOCH_THRESHOLD ? Math.round(value / 1000) : Math.round(value);
 }
 
 interface CodexUsageWindow {

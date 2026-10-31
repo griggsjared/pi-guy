@@ -8,6 +8,10 @@ import type { UsageStatus, UsageWindow } from "../usage-status.ts";
 export const CLAUDE_PROVIDER = "claude-bridge";
 export const CLAUDE_CACHE_TTL_MS = 300_000;
 
+const MAX_CLAUDE_OUTPUT_BYTES = 64 * 1024;
+const MAX_YEAR_ROLLOVER_MONTHS = 6;
+const MAX_TIMEZONE_ADJUST_ATTEMPTS = 3;
+
 function parseReset(reset: string, capturedAt: number): number | undefined {
   const match = /^(\w{3}) (\d{1,2}) at (\d{1,2}):(\d{2})(am|pm) \(([^)]+)\)$/i.exec(reset.trim());
   if (!match) return undefined;
@@ -33,11 +37,17 @@ function parseReset(reset: string, capturedAt: number): number | undefined {
     const current = Object.fromEntries(
       formatter.formatToParts(capturedAt).map((part) => [part.type, Number(part.value)]),
     );
-    const year = current.year! + (month + 1 - current.month! > 6 ? -1 : current.month! - month - 1 > 6 ? 1 : 0);
+    const year =
+      current.year! +
+      (month + 1 - current.month! > MAX_YEAR_ROLLOVER_MONTHS
+        ? -1
+        : current.month! - month - 1 > MAX_YEAR_ROLLOVER_MONTHS
+          ? 1
+          : 0);
     const target = Date.UTC(year, month, day, hour, minute);
     if (new Date(target).getUTCMonth() !== month) return undefined;
     let instant = target;
-    for (let attempt = 0; attempt < 3; attempt++) {
+    for (let attempt = 0; attempt < MAX_TIMEZONE_ADJUST_ATTEMPTS; attempt++) {
       const parts = Object.fromEntries(formatter.formatToParts(instant).map((part) => [part.type, Number(part.value)]));
       const delta =
         target - Date.UTC(parts.year!, parts.month! - 1, parts.day!, parts.hour!, parts.minute!, parts.second!);
@@ -95,7 +105,7 @@ export async function fetchClaudeUsage(_ctx: ExtensionContext, signal: AbortSign
         encoding: "utf8",
         signal,
         timeout: REQUEST_TIMEOUT_MS,
-        maxBuffer: 64 * 1024,
+        maxBuffer: MAX_CLAUDE_OUTPUT_BYTES,
         killSignal: "SIGKILL",
       },
       (error, stdout) => {

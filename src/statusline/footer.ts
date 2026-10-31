@@ -6,6 +6,15 @@ import type { UsageBalance, UsageStatus } from "./usage-status.ts";
 
 const WINDOW_ORDER = ["rolling", "weekly", "monthly"] as const;
 const CURRENCY_SYMBOLS: Record<string, string> = { USD: "$", CNY: "¥" };
+const MODES_STATUS_KEY = "modes";
+// Must match PROFILE_ENTRY_TYPE in src/subagents/constants.ts, which sets this status.
+const SUBAGENT_PROFILE_STATUS_KEY = "subagent-profile";
+const REDRAW_INTERVAL_MS = 60_000;
+const USAGE_ERROR_PERCENT = 95;
+const USAGE_WARNING_PERCENT = 90;
+const LOW_BALANCE_ERROR_USD = 0.5;
+const LOW_BALANCE_WARNING_USD = 1;
+const CONTEXT_USAGE_ERROR_TOKENS = 200_000;
 
 export function decodeFooterUsageStatus(value: string | undefined): UsageStatus | undefined {
   return value ? decodeUsageStatus(value) : undefined;
@@ -16,9 +25,9 @@ export function formatFooterReset(resetAtMs: number | undefined, now = Date.now(
   const seconds = Math.max(0, Math.round(resetAtMs / 1000 - now / 1000));
   if (seconds === 0) return "now";
   if (seconds < 60) return "1m";
-  const days = Math.floor(seconds / 86400);
-  const hours = Math.floor((seconds % 86400) / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
+  const days = Math.floor(seconds / (24 * 60 * 60));
+  const hours = Math.floor((seconds % (24 * 60 * 60)) / (60 * 60));
+  const minutes = Math.floor((seconds % (60 * 60)) / 60);
   if (days >= 7) return `${days}d`;
   if (days > 0) return `${days}d${hours > 0 ? `${hours}h` : ""}`;
   if (hours > 0) return `${hours}h${minutes > 0 ? `${minutes}m` : ""}`;
@@ -35,7 +44,12 @@ export function formatFooterUsage(
   const formatWindow = (window: UsageStatus["windows"][number], withReset: boolean): string => {
     const reset = withReset ? formatFooterReset(window.resetAtMs, now) : undefined;
     const text = `${Math.round(window.usedPercent)}%${reset ? `(${reset})` : ""}`;
-    const color = window.usedPercent >= 95 ? "error" : window.usedPercent >= 90 ? "warning" : "dim";
+    const color =
+      window.usedPercent >= USAGE_ERROR_PERCENT
+        ? "error"
+        : window.usedPercent >= USAGE_WARNING_PERCENT
+          ? "warning"
+          : "dim";
     return theme ? theme.fg(color, text) : text;
   };
   const full = windows.map((window) => formatWindow(window, true)).join(" ");
@@ -52,9 +66,9 @@ export function formatFooterUsage(
 export function formatFooterBalance(balance: UsageBalance, theme: Pick<Theme, "fg">): string {
   const symbol = CURRENCY_SYMBOLS[balance.currency] ?? `${balance.currency} `;
   const color =
-    balance.currency === "USD" && balance.amount < 0.5
+    balance.currency === "USD" && balance.amount < LOW_BALANCE_ERROR_USD
       ? "error"
-      : balance.currency === "USD" && balance.amount < 1
+      : balance.currency === "USD" && balance.amount < LOW_BALANCE_WARNING_USD
         ? "warning"
         : "dim";
   return theme.fg(color, `b:${symbol}${balance.amount.toFixed(2)}`);
@@ -95,7 +109,7 @@ export function registerStatusline(pi: ExtensionAPI) {
   pi.on("session_start", (_event, ctx) => {
     invalidateCacheHit();
     ctx.ui.setFooter((tui, theme, footerData) => {
-      const redrawTimer = setInterval(() => tui.invalidate(), 60_000);
+      const redrawTimer = setInterval(() => tui.invalidate(), REDRAW_INTERVAL_MS);
       return {
         dispose() {
           clearInterval(redrawTimer);
@@ -106,7 +120,7 @@ export function registerStatusline(pi: ExtensionAPI) {
           width -= margin * 2;
           // Extension statuses
           const statuses = footerData.getExtensionStatuses();
-          const rawMode = statuses.get("modes") ?? "";
+          const rawMode = statuses.get(MODES_STATUS_KEY) ?? "";
           const modeStatus = rawMode
             ? theme.fg(
                 rawMode === "build" ? "error" : rawMode === "plan" ? "borderAccent" : "accent",
@@ -127,7 +141,7 @@ export function registerStatusline(pi: ExtensionAPI) {
             line += theme.fg("success", ` ${ctx.thinkingLevel}`);
           }
 
-          const profile = statuses.get("subagent-profile");
+          const profile = statuses.get(SUBAGENT_PROFILE_STATUS_KEY);
           if (profile) {
             line += theme.fg("accent", ` s:${profile}`);
           }
@@ -137,7 +151,7 @@ export function registerStatusline(pi: ExtensionAPI) {
           if (contextUsage && contextUsage.tokens !== null && contextUsage.contextWindow > 0) {
             const used = formatTokens(contextUsage.tokens);
             const total = formatTokens(contextUsage.contextWindow);
-            line += ` ${theme.fg(contextUsage.tokens >= 200000 ? "error" : "borderAccent", `${used}/${total}`)}`;
+            line += ` ${theme.fg(contextUsage.tokens >= CONTEXT_USAGE_ERROR_TOKENS ? "error" : "borderAccent", `${used}/${total}`)}`;
           }
 
           const leafId = ctx.sessionManager.getLeafId();
@@ -182,7 +196,9 @@ export function registerStatusline(pi: ExtensionAPI) {
               : truncateToWidth(line, Math.max(0, width - visibleWidth("...")), "...");
 
           const rest = Array.from(statuses.entries())
-            .filter(([key]) => key !== "modes" && key !== "subagent-profile" && key !== USAGE_STATUS_KEY)
+            .filter(
+              ([key]) => key !== MODES_STATUS_KEY && key !== SUBAGENT_PROFILE_STATUS_KEY && key !== USAGE_STATUS_KEY,
+            )
             .sort(([a], [b]) => a.localeCompare(b))
             .map(([, text]) => text);
           return [result, ...rest.map((s) => truncateToWidth(s, width, theme.fg("dim", "...")))].map((line) =>
