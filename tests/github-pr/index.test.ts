@@ -87,44 +87,45 @@ function exposure(tool: Tool) {
 	return (tool as Tool & { exposure?: string }).exposure;
 }
 
-for (const failure of ["gh", "remote"] as const) {
-	test(`github_pr stays hidden when ${failure} capability is unavailable`, async (t) => {
-		const h = harness(t);
-		assert.equal(exposure(h.tool), "hidden");
-		h.state.failure = failure;
-		await h.lifecycle();
-		assert.equal(exposure(h.tool), "hidden");
-		await h.lifecycle("before_agent_start");
-		assert.equal(exposure(h.tool), "hidden");
-		assert.ok(!h.calls.some(({ args }) => args[0] === "pr" || args[0] === "api"));
-	});
-}
+test("github_pr stays hidden and explicit URLs stay unavailable when gh is missing", async (t) => {
+	const h = harness(t);
+	assert.equal(exposure(h.tool), "hidden");
+	h.state.failure = "gh";
+	await h.lifecycle();
+	assert.equal(exposure(h.tool), "hidden");
+	await h.lifecycle("before_agent_start");
+	assert.equal(exposure(h.tool), "hidden");
+	assert.equal(payload(await h.execute({ pr: `${repoUrl}/pull/42` })).available, false);
+	assert.ok(h.calls.every(({ command }) => command === "which"));
+});
 
-test("lifecycle availability uses only PATH and local remotes, hiding the tool when the remote disappears", async (t) => {
+test("lifecycle availability uses only PATH and follows gh presence without local or authenticated access", async (t) => {
 	const h = harness(t);
 	h.state.failure = "auth";
 	await h.lifecycle();
 	assert.equal(exposure(h.tool), "direct");
-	await h.lifecycle("before_agent_start");
-	assert.equal(exposure(h.tool), "direct");
-	assert.ok(h.calls.every(({ command, args }) => command === "which" || (command === "git" && args[0] === "remote")));
 	h.state.failure = "remote";
 	await h.lifecycle("before_agent_start");
+	assert.equal(exposure(h.tool), "direct");
+	h.state.failure = "gh";
+	await h.lifecycle("before_agent_start");
 	assert.equal(exposure(h.tool), "hidden");
-	const result = await h.execute({ action: "view" });
-	assert.equal((result.details as { available: boolean }).available, false);
-	assert.ok(!h.calls.some(({ args }) => args[0] === "pr"));
+	h.state.failure = undefined;
+	await h.lifecycle("before_agent_start");
+	assert.equal(exposure(h.tool), "direct");
+	assert.ok(h.calls.every(({ command }) => command === "which"));
 });
 
 for (const failure of ["auth", "repo"] as const) {
-	test(`tool execution reports ${failure} failure without hiding a locally available tool`, async (t) => {
+	test(`explicit URL execution reports target ${failure} failure without hiding the tool`, async (t) => {
 		const h = harness(t);
 		h.state.failure = failure;
 		await h.lifecycle();
-		const result = payload(await h.execute({ action: "view" }));
+		const result = payload(await h.execute({ action: "view", pr: `https://${host}/other/repository/pull/42` }));
 		assert.equal(result.available, false);
 		assert.match(result.reason, failure === "auth" ? /not authenticated/ : /cannot access/);
 		assert.equal(exposure(h.tool), "direct");
+		assert.ok(!h.calls.some(({ command }) => command === "git"));
 		assert.ok(!h.calls.some(({ args }) => args[0] === "pr" || args[0] === "api"));
 	});
 }
@@ -147,23 +148,27 @@ test("a GitHub SSH upstream remains available when origin is not on GitHub", asy
 	assert.equal(status.hostname, host);
 });
 
-test("non-github.com remotes do not expose the tool or trigger GitHub requests", async (t) => {
+test("non-github.com remotes leave local status unavailable without GitHub requests", async (t) => {
 	const h = harness(t);
 	h.state.remote = "origin\thttps://gitlab.example.test/team/project.git (fetch)\n";
 	await h.lifecycle();
 	await h.lifecycle("before_agent_start");
-	assert.equal(exposure(h.tool), "hidden");
+	assert.equal(exposure(h.tool), "direct");
 	assert.equal(payload(await h.execute({ action: "status" })).available, false);
 	assert.ok(!h.calls.some(({ command }) => command === "gh"));
 });
 
-test("GH_REPO cannot provide capability outside a local Git repository", async (t) => {
+test("GH_REPO cannot provide local status or number, branch, and omitted selectors outside a checkout", async (t) => {
 	const h = harness(t);
 	h.state.override = ({ command }) => command === "git" ? failed : undefined;
 	await h.lifecycle();
-	assert.equal(exposure(h.tool), "hidden");
-	assert.equal(((await h.execute({ action: "status" })).details as { available: boolean }).available, false);
-	assert.ok(!h.calls.some(({ args }) => args[0] === "repo" || args[0] === "pr" || args[0] === "api"));
+	assert.equal(exposure(h.tool), "direct");
+	for (const params of [{ action: "status" }, { pr: "42" }, { pr: "feature/explicit" }, {}]) {
+		const result = await h.execute(params);
+		assert.equal(payload(result).available, false);
+		assert.equal((result.details as { available: boolean }).available, false);
+	}
+	assert.ok(!h.calls.some(({ command }) => command === "gh"));
 });
 
 test("all actions use explicit local repository and host, with current branch isolated from GH_REPO", async (t) => {
@@ -212,15 +217,101 @@ test("all actions use explicit local repository and host, with current branch is
 	assert.equal(h.tool.annotations?.readOnlyHint, true);
 });
 
-for (const mismatch of ["request", "response"] as const) {
-	test(`cross-repository PR ${mismatch} is rejected before discussion requests`, async (t) => {
-		const h = harness(t);
-		await h.lifecycle();
-		if (mismatch === "response") h.state.pr = { ...pullRequest, url: `https://${host}/other/repository/pull/42` };
-		await assert.rejects(h.execute({ action: "feedback", pr: mismatch === "request" ? `https://${host}/other/repository/pull/42` : "42" }), /repository|match|local|different/i);
-		assert.ok(!h.calls.some(({ args }) => args[0] === "api"));
-	});
-}
+test("explicit cross-repository URLs route every action to the target without local Git access", async (t) => {
+	const h = harness(t);
+	const targetRepo = "other/repository";
+	const targetUrl = `https://${host}/${targetRepo}`;
+	const targetNumber = 73;
+	h.state.pr = { ...pullRequest, number: targetNumber, url: `${targetUrl}/pull/${targetNumber}` };
+	h.state.override = ({ command, args }) => {
+		if (command === "git") return failed;
+		if (args[0] === "repo") return ok({ nameWithOwner: targetRepo, url: targetUrl });
+		if (args[0] === "api" && args.some((arg) => arg.startsWith(`repos/${targetRepo}/`))) return ok([]);
+		return undefined;
+	};
+	await h.lifecycle();
+	assert.equal(exposure(h.tool), "direct");
+	for (const action of ["view", "checks", "feedback"]) {
+		const result = await h.execute({ action, pr: ` ${targetUrl}/pull/${targetNumber} ` });
+		const data = payload(result);
+		const summary = action === "view" ? data : data.pullRequest;
+		assert.equal(summary.repository, targetRepo);
+		assert.equal(summary.number, targetNumber);
+		assert.equal(summary.url, h.state.pr.url);
+		assert.equal(data.errors, undefined);
+		assert.equal((result.details as { repo: string }).repo, targetRepo);
+		assert.equal((result.details as { prNumber: number }).prNumber, targetNumber);
+	}
+	assert.ok(!h.calls.some(({ command }) => command === "git"));
+	assert.ok(h.calls.some(({ args }) => args[0] === "pr" && args[1] === "checks"));
+	assert.equal(h.calls.filter(({ args }) => args[0] === "api").length, 3);
+	for (const { command, args } of h.calls) {
+		if (command === "which") continue;
+		assert.equal(command, "gh");
+		if (args[0] === "auth") {
+			assert.equal(flag(args, "--hostname"), host);
+		} else if (args[0] === "repo") {
+			assert.equal(args[2], `${host}/${targetRepo}`);
+		} else if (args[0] === "pr") {
+			assert.equal(args[2], String(targetNumber));
+			assert.equal(flag(args, "--repo"), `${host}/${targetRepo}`);
+		} else {
+			assert.equal(flag(args, "--hostname"), host);
+			if (args.includes("graphql")) {
+				assert.equal(field(args, "owner"), "other");
+				assert.equal(field(args, "repo"), "repository");
+				assert.equal(field(args, "number"), String(targetNumber));
+			} else {
+				assert.ok(args.some((arg) => [`repos/${targetRepo}/issues/${targetNumber}/comments`, `repos/${targetRepo}/pulls/${targetNumber}/reviews`].includes(arg)));
+			}
+		}
+	}
+});
+
+test("unsafe or invalid explicit URLs fail before Git or GitHub access", async (t) => {
+	const h = harness(t);
+	for (const url of [
+		`http://${host}/${repo}/pull/42`,
+		`https://github.example.test/${repo}/pull/42`,
+		`https://user:secret@${host}/${repo}/pull/42`,
+		`https://${host}:444/${repo}/pull/42`,
+		`${repoUrl}/pull/0`,
+		`${repoUrl}/pull/9007199254740992`,
+		`https://${host}/team/invalid%20repo/pull/42`,
+		`${repoUrl}/issues/42`,
+	]) {
+		await assert.rejects(h.execute({ pr: url }), /pull request URLs/i);
+	}
+	assert.ok(h.calls.every(({ command }) => command === "which"));
+});
+
+test("mismatched target repository data prevents pull request and discussion access", async (t) => {
+	const h = harness(t);
+	for (const info of [
+		{ nameWithOwner: repo, url: `https://${host}/other/repository` },
+		{ nameWithOwner: "other/repository", url: repoUrl },
+	]) {
+		h.state.override = ({ args }) => args[0] === "repo" ? ok(info) : undefined;
+		const result = payload(await h.execute({ pr: `https://${host}/other/repository/pull/42` }));
+		assert.equal(result.available, false);
+		assert.match(result.reason, /mismatched repository/);
+	}
+	assert.ok(!h.calls.some(({ args }) => args[0] === "pr" || args[0] === "api"));
+});
+
+test("mismatched pull request repositories and numbers are rejected before discussion requests", async (t) => {
+	const h = harness(t);
+	for (const response of [
+		{ ...pullRequest, url: `https://${host}/other/repository/pull/42` },
+		{ ...pullRequest, url: `${repoUrl}/pull/43` },
+		{ ...pullRequest, number: 43, url: `${repoUrl}/pull/43` },
+		{ ...pullRequest, url: `https://untrusted.example.test/${repo}/pull/42` },
+	]) {
+		h.state.pr = response;
+		await assert.rejects(h.execute({ action: "feedback", pr: `${repoUrl}/pull/42` }), /repository|match|pull request URLs/i);
+	}
+	assert.ok(!h.calls.some(({ args }) => args[0] === "api"));
+});
 
 test("a killed command with exit code zero cannot expose the tool or return successful PR data", async (t) => {
 	const h = harness(t);
