@@ -15,6 +15,7 @@ import { boxed } from "../lib/box.ts";
 const SYSTEM_PROMPT =
   "You are answering a side question about the current conversation. Answer the question directly and concisely. Do not continue the main task, call tools, or propose changes unless the question explicitly asks for them.";
 const OVERLAY_MARGIN = 1;
+const OVERLAY_BORDER_ROWS = 2;
 
 interface Operation {
   controller: AbortController;
@@ -76,7 +77,7 @@ export function fitModalBody(
   chromeRows: number,
 ): { lines: string[]; scrollTop: number; viewportRows: number; maxScroll: number } {
   const maxOverlayRows = Math.max(1, Math.floor(terminalRows) - OVERLAY_MARGIN * 2);
-  const viewportRows = Math.max(0, maxOverlayRows - chromeRows - 2);
+  const viewportRows = Math.max(0, maxOverlayRows - chromeRows - OVERLAY_BORDER_ROWS);
   const maxScroll = Math.max(0, lines.length - viewportRows);
   const scrollTop = Math.min(maxScroll, Math.max(0, requestedScrollTop));
   return {
