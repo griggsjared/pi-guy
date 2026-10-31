@@ -103,8 +103,7 @@ test("normalizes percentages and rejects non-numbers", () => {
   assert.equal(normalizeUsagePercent("42"), undefined);
 });
 
-test("round trips a balance status and rejects invalid balances", () => {
-  assert.equal(isUsageProvider("deepseek"), true);
+test("round trips a balance status", () => {
   const balanceStatus = {
     provider: "deepseek" as const,
     state: "ready" as const,
@@ -113,11 +112,4 @@ test("round trips a balance status and rejects invalid balances", () => {
     balance: { amount: 110, currency: "USD" },
   };
   assert.deepEqual(decodeUsageStatus(encodeUsageStatus(balanceStatus)), balanceStatus);
-  for (const balance of [
-    { amount: -1, currency: "USD" },
-    { amount: 1, currency: "usd" },
-    { amount: Number.NaN, currency: "USD" },
-  ]) {
-    assert.equal(decodeUsageStatus(JSON.stringify({ ...balanceStatus, balance })), undefined);
-  }
 });

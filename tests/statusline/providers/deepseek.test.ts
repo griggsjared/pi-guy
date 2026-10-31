@@ -51,11 +51,11 @@ test("normalizes DeepSeek balance responses", () => {
     )?.balance,
     { amount: 3, currency: "CNY" },
   );
-  for (const total_balance of ["", "  ", "0x10", "1,234.56", "oops"]) {
+  for (const totalBalance of ["", "  ", "0x10", "1,234.56", "oops"]) {
     assert.equal(
-      normalizeDeepseekUsage({ balance_infos: [{ currency: "USD", total_balance }] }, capturedAt),
+      normalizeDeepseekUsage({ balance_infos: [{ currency: "USD", total_balance: totalBalance }] }, capturedAt),
       undefined,
-      total_balance,
+      totalBalance,
     );
   }
   assert.equal(

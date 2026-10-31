@@ -12,6 +12,7 @@ import {
 import { tempDir } from "../helpers/fs.ts";
 import { captureHandlers } from "../helpers/pi.ts";
 import { fakeTheme } from "../helpers/theme.ts";
+import { mountFooter } from "./helpers.ts";
 
 test("formats shared usage status", () => {
   assert.equal(
@@ -165,8 +166,6 @@ test("formats balances by currency", () => {
 });
 
 test("right-aligns balance beside DeepSeek", () => {
-  const { handlers, on } = captureHandlers();
-  let footer: ((...args: any[]) => any) | undefined;
   let rendered: any;
   const statuses = new Map([
     [
@@ -180,7 +179,6 @@ test("right-aligns balance beside DeepSeek", () => {
       }),
     ],
   ]);
-  registerStatusline({ on } as any);
   const context = {
     model: { name: "DeepSeek V4.1 Flash", provider: "deepseek" },
     thinkingLevel: "off",
@@ -189,15 +187,9 @@ test("right-aligns balance beside DeepSeek", () => {
       getLeafId: () => null,
       getBranch: () => [{ type: "message", message: { role: "assistant", usage: { cost: { total: 0.042 } } } }],
     },
-    ui: {
-      setFooter(callback: any) {
-        footer = callback;
-      },
-    },
   };
   try {
-    handlers.get("session_start")?.[0]?.({}, context);
-    rendered = footer?.({ invalidate() {} }, fakeTheme(), { getExtensionStatuses: () => statuses });
+    rendered = mountFooter(context, statuses);
     const line = rendered.render(120)[0];
     assert.match(line, /^ DeepSeek V4\.1 Flash {2,}b:\$42\.50 deepseek $/);
     assert.equal(line.length, 120);
@@ -210,13 +202,10 @@ test("right-aligns balance beside DeepSeek", () => {
 });
 
 test("right-aligns nonquota providers without a balance", () => {
-  const { handlers, on } = captureHandlers();
-  let footer: ((...args: any[]) => any) | undefined;
   let rendered: any;
   const statuses = new Map([
     ["provider-usage", JSON.stringify({ provider: "deepseek", state: "unknown", capturedAtMs: 0, windows: [] })],
   ]);
-  registerStatusline({ on } as any);
   const context = {
     model: { name: "DeepSeek V4.1 Flash", provider: "deepseek" },
     thinkingLevel: "off",
@@ -225,15 +214,9 @@ test("right-aligns nonquota providers without a balance", () => {
       getLeafId: () => null,
       getBranch: () => [{ type: "message", message: { role: "assistant", usage: { cost: { total: 0.042 } } } }],
     },
-    ui: {
-      setFooter(callback: any) {
-        footer = callback;
-      },
-    },
   };
   try {
-    handlers.get("session_start")?.[0]?.({}, context);
-    rendered = footer?.({ invalidate() {} }, fakeTheme(), { getExtensionStatuses: () => statuses });
+    rendered = mountFooter(context, statuses);
     for (const provider of ["deepseek", "google"]) {
       context.model.provider = provider;
       const line = rendered.render(120)[0];
@@ -567,29 +550,20 @@ test("never clips balance mid-number on narrow footers", () => {
 });
 
 test("renders the subagent profile inline and reflects updates without duplicating job rows", () => {
-  const { handlers, on } = captureHandlers();
-  let footer: any;
   let rendered: any;
   const statuses = new Map([
     ["subagents", "jobs:1 running"],
     ["modes", "plan"],
     ["other", "other status"],
   ]);
-  registerStatusline({ on } as any);
   const context = {
     model: { name: "model", provider: "anthropic" },
     thinkingLevel: "high" as string | undefined,
     getContextUsage: () => ({ tokens: 1000, contextWindow: 200000 }),
     sessionManager: { getLeafId: () => null, getBranch: () => [] },
-    ui: {
-      setFooter(callback: any) {
-        footer = callback;
-      },
-    },
   };
   try {
-    handlers.get("session_start")?.[0]?.({}, context);
-    rendered = footer({ invalidate() {} }, fakeTheme(), { getExtensionStatuses: () => statuses });
+    rendered = mountFooter(context, statuses);
     const absent = rendered.render(120);
     assert.match(absent[0], /^ \[p\] model high 1k\/200k/);
     assert.doesNotMatch(absent[0], /s:/);

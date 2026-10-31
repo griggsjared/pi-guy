@@ -7,6 +7,7 @@ import { claudeCapturedAt, claudeOutput, mockCli } from "../helpers/claude-cli.t
 import { captureHandlers } from "../helpers/pi.ts";
 import { fakeTheme } from "../helpers/theme.ts";
 import { flush } from "../helpers/wait.ts";
+import { mountProviderUsage } from "./helpers.ts";
 
 test("entry wiring registers the footer and publishes provider status", async () => {
   const { handlers, on } = captureHandlers();
@@ -52,27 +53,17 @@ test("entry wiring registers the footer and publishes provider status", async ()
   }
 });
 
-test("fetches DeepSeek balance from the fixed endpoint with an auth header", async () => {
-  const { handlers, on } = captureHandlers();
-  providerUsage({
-    events: {
-      on() {
-        return () => {};
-      },
-      emit() {},
-    },
-    on,
-  } as unknown as ExtensionAPI);
-  const originalFetch = globalThis.fetch;
+test("fetches DeepSeek balance from the fixed endpoint with an auth header", async (t) => {
+  const handlers = mountProviderUsage();
   let url: string | undefined;
   let request: RequestInit | undefined;
-  globalThis.fetch = async (target, init) => {
+  t.mock.method(globalThis, "fetch", async (target: string | URL | Request, init?: RequestInit) => {
     url = String(target);
     request = init;
     return new Response(
       JSON.stringify({ is_available: true, balance_infos: [{ currency: "USD", total_balance: "42.50" }] }),
     );
-  };
+  });
   const statuses: Array<string | undefined> = [];
   const context = {
     hasUI: true,
@@ -104,11 +95,10 @@ test("fetches DeepSeek balance from the fixed endpoint with an auth header", asy
     });
   } finally {
     handlers.get("session_shutdown")?.at(-1)?.({}, context);
-    globalThis.fetch = originalFetch;
   }
 });
 
-test("answers provider usage requests for non-active providers without touching the footer", async () => {
+test("answers provider usage requests for non-active providers without touching the footer", async (t) => {
   const { handlers, on } = captureHandlers();
   let request: ((data: unknown) => void) | undefined;
   providerUsage({
@@ -121,12 +111,12 @@ test("answers provider usage requests for non-active providers without touching 
     },
     on,
   } as unknown as ExtensionAPI);
-  const originalFetch = globalThis.fetch;
   let calls = 0;
-  globalThis.fetch = async () =>
+  t.mock.method(globalThis, "fetch", async () =>
     ++calls === 1
       ? new Response(JSON.stringify({ balance_infos: [{ currency: "USD", total_balance: "42.50" }] }))
-      : new Response("nope", { status: 503 });
+      : new Response("nope", { status: 503 }),
+  );
   const statuses: Array<string | undefined> = [];
   const context = {
     hasUI: true,
@@ -161,33 +151,23 @@ test("answers provider usage requests for non-active providers without touching 
     assert.equal(calls, 2);
   } finally {
     handlers.get("session_shutdown")?.at(-1)?.({}, context);
-    globalThis.fetch = originalFetch;
   }
 });
 
-test("rejects DeepSeek balance fetches to non-official endpoints", async () => {
-  const originalFetch = globalThis.fetch;
+test("rejects DeepSeek balance fetches to non-official endpoints", async (t) => {
+  let fetched = false;
+  t.mock.method(globalThis, "fetch", async () => {
+    fetched = true;
+    return new Response("{}");
+  });
   for (const baseUrl of [
     "https://api.deepseek.com.evil.tld/v1",
     "http://api.deepseek.com",
     "https://api.deepseek.com:8443/v1",
     "not a url",
   ]) {
-    const { handlers, on } = captureHandlers();
-    providerUsage({
-      events: {
-        on() {
-          return () => {};
-        },
-        emit() {},
-      },
-      on,
-    } as unknown as ExtensionAPI);
-    let fetched = false;
-    globalThis.fetch = async () => {
-      fetched = true;
-      return new Response("{}");
-    };
+    const handlers = mountProviderUsage();
+    fetched = false;
     const statuses: Array<string | undefined> = [];
     const context = {
       hasUI: true,
@@ -211,27 +191,17 @@ test("rejects DeepSeek balance fetches to non-official endpoints", async () => {
       handlers.get("session_shutdown")?.at(-1)?.({}, context);
     }
   }
-  globalThis.fetch = originalFetch;
 });
 
-test("does not fetch DeepSeek balance without an API key", async () => {
-  const originalFetch = globalThis.fetch;
+test("does not fetch DeepSeek balance without an API key", async (t) => {
+  let fetched = false;
+  t.mock.method(globalThis, "fetch", async () => {
+    fetched = true;
+    return new Response("{}");
+  });
   for (const auth of [undefined, { auth: {} }]) {
-    const { handlers, on } = captureHandlers();
-    providerUsage({
-      events: {
-        on() {
-          return () => {};
-        },
-        emit() {},
-      },
-      on,
-    } as unknown as ExtensionAPI);
-    let fetched = false;
-    globalThis.fetch = async () => {
-      fetched = true;
-      return new Response("{}");
-    };
+    const handlers = mountProviderUsage();
+    fetched = false;
     const statuses: Array<string | undefined> = [];
     const context = {
       hasUI: true,
@@ -255,28 +225,17 @@ test("does not fetch DeepSeek balance without an API key", async () => {
       handlers.get("session_shutdown")?.at(-1)?.({}, context);
     }
   }
-  globalThis.fetch = originalFetch;
 });
 
 test("bounds DeepSeek auth resolution so a later refresh can still run", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
-  const { handlers, on } = captureHandlers();
-  providerUsage({
-    events: {
-      on() {
-        return () => {};
-      },
-      emit() {},
-    },
-    on,
-  } as unknown as ExtensionAPI);
-  const originalFetch = globalThis.fetch;
+  const handlers = mountProviderUsage();
   let fetchCalls = 0;
   let authCalls = 0;
-  globalThis.fetch = async () => {
+  t.mock.method(globalThis, "fetch", async () => {
     fetchCalls++;
     return new Response(JSON.stringify({ balance_infos: [{ currency: "USD", total_balance: "5.00" }] }));
-  };
+  });
   const context = {
     hasUI: true,
     model: { provider: "deepseek" },
@@ -300,30 +259,20 @@ test("bounds DeepSeek auth resolution so a later refresh can still run", async (
     assert.equal(fetchCalls, 1);
   } finally {
     handlers.get("session_shutdown")?.at(-1)?.({}, context);
-    globalThis.fetch = originalFetch;
     t.mock.timers.reset();
   }
 });
 
-test("preserves a cached DeepSeek balance when a refresh fails", async () => {
-  const { handlers, on } = captureHandlers();
-  providerUsage({
-    events: {
-      on() {
-        return () => {};
-      },
-      emit() {},
-    },
-    on,
-  } as unknown as ExtensionAPI);
-  const originalFetch = globalThis.fetch;
-  const originalNow = Date.now;
-  let now = originalNow();
+test("preserves a cached DeepSeek balance when a refresh fails", async (t) => {
+  const handlers = mountProviderUsage();
+  let now = Date.now();
+  t.mock.method(Date, "now", () => now);
   let calls = 0;
-  globalThis.fetch = async () =>
+  t.mock.method(globalThis, "fetch", async () =>
     ++calls === 1
       ? new Response(JSON.stringify({ balance_infos: [{ currency: "USD", total_balance: "42.50" }] }))
-      : new Response("nope", { status: 503 });
+      : new Response("nope", { status: 503 }),
+  );
   const statuses: Array<string | undefined> = [];
   const context = {
     hasUI: true,
@@ -339,7 +288,6 @@ test("preserves a cached DeepSeek balance when a refresh fails", async () => {
     },
   };
   try {
-    Date.now = () => now;
     handlers.get("session_start")?.at(-1)?.({}, context);
     await flush();
     now += 10 * 60_000;
@@ -351,25 +299,13 @@ test("preserves a cached DeepSeek balance when a refresh fails", async () => {
     assert.equal(last.balance.amount, 42.5);
   } finally {
     handlers.get("session_shutdown")?.at(-1)?.({}, context);
-    Date.now = originalNow;
-    globalThis.fetch = originalFetch;
   }
 });
 
-test("fetches Anthropic plan usage from the OAuth usage endpoint", async () => {
-  const { handlers, on } = captureHandlers();
-  providerUsage({
-    events: {
-      on() {
-        return () => {};
-      },
-      emit() {},
-    },
-    on,
-  } as unknown as ExtensionAPI);
-  const originalFetch = globalThis.fetch;
+test("fetches Anthropic plan usage from the OAuth usage endpoint", async (t) => {
+  const handlers = mountProviderUsage();
   const requests: Array<{ url: string; init: RequestInit | undefined }> = [];
-  globalThis.fetch = async (target, init) => {
+  t.mock.method(globalThis, "fetch", async (target: string | URL | Request, init?: RequestInit) => {
     requests.push({ url: String(target), init });
     return new Response(
       JSON.stringify({
@@ -378,7 +314,7 @@ test("fetches Anthropic plan usage from the OAuth usage endpoint", async () => {
         seven_day_opus: null,
       }),
     );
-  };
+  });
   let apiKey = "sk-ant-oat01-test";
   const statuses: Array<string | undefined> = [];
   const context = {
@@ -416,21 +352,11 @@ test("fetches Anthropic plan usage from the OAuth usage endpoint", async () => {
     assert.deepEqual(keyUsage.windows, []);
   } finally {
     handlers.get("session_shutdown")?.at(-1)?.({}, context);
-    globalThis.fetch = originalFetch;
   }
 });
 
 test("publishes Anthropic usage from response headers", async () => {
-  const { handlers, on } = captureHandlers();
-  providerUsage({
-    events: {
-      on() {
-        return () => {};
-      },
-      emit() {},
-    },
-    on,
-  } as unknown as ExtensionAPI);
+  const handlers = mountProviderUsage();
   const statuses: Array<string | undefined> = [];
   let loads = 0;
   const context = {
@@ -480,24 +406,14 @@ test("publishes Anthropic usage from response headers", async () => {
   }
 });
 
-test("does not expose OpenCode credentials through status or errors", async () => {
-  const { handlers, on } = captureHandlers();
-  providerUsage({
-    events: {
-      on() {
-        return () => {};
-      },
-      emit() {},
-    },
-    on,
-  } as unknown as ExtensionAPI);
-  const originalFetch = globalThis.fetch;
+test("does not expose OpenCode credentials through status or errors", async (t) => {
+  const handlers = mountProviderUsage();
   const originalWorkspace = process.env.OPENCODE_GO_WORKSPACE_ID;
   const originalCookie = process.env.OPENCODE_GO_AUTH_COOKIE;
   const secret = "cookie-that-must-not-leak";
   process.env.OPENCODE_GO_WORKSPACE_ID = "wrk_test";
   process.env.OPENCODE_GO_AUTH_COOKIE = secret;
-  globalThis.fetch = async () => new Response("nope", { status: 503 });
+  t.mock.method(globalThis, "fetch", async () => new Response("nope", { status: 503 }));
   const statuses: Array<string | undefined> = [];
   const context = {
     hasUI: true,
@@ -517,7 +433,6 @@ test("does not expose OpenCode credentials through status or errors", async () =
     );
   } finally {
     handlers.get("session_shutdown")?.at(-1)?.({ type: "session_shutdown" }, context);
-    globalThis.fetch = originalFetch;
     if (originalWorkspace === undefined) delete process.env.OPENCODE_GO_WORKSPACE_ID;
     else process.env.OPENCODE_GO_WORKSPACE_ID = originalWorkspace;
     if (originalCookie === undefined) delete process.env.OPENCODE_GO_AUTH_COOKIE;
@@ -525,27 +440,18 @@ test("does not expose OpenCode credentials through status or errors", async () =
   }
 });
 
-test("preserves cached usage when a refresh fails", async () => {
-  const { handlers, on } = captureHandlers();
-  providerUsage({
-    events: {
-      on() {
-        return () => {};
-      },
-      emit() {},
-    },
-    on,
-  } as unknown as ExtensionAPI);
-  const originalFetch = globalThis.fetch;
+test("preserves cached usage when a refresh fails", async (t) => {
+  const handlers = mountProviderUsage();
   const originalWorkspace = process.env.OPENCODE_GO_WORKSPACE_ID;
   const originalCookie = process.env.OPENCODE_GO_AUTH_COOKIE;
   process.env.OPENCODE_GO_WORKSPACE_ID = "workspace";
   process.env.OPENCODE_GO_AUTH_COOKIE = "secret";
   let calls = 0;
-  globalThis.fetch = async () =>
+  t.mock.method(globalThis, "fetch", async () =>
     ++calls === 1
       ? new Response(`rollingUsage:{usagePercent:10,resetInSec:30}`)
-      : new Response("nope", { status: 503 });
+      : new Response("nope", { status: 503 }),
+  );
   const statuses: Array<string | undefined> = [];
   const context = {
     hasUI: true,
@@ -556,10 +462,9 @@ test("preserves cached usage when a refresh fails", async () => {
       },
     },
   };
-  const originalNow = Date.now;
-  let now = originalNow();
+  let now = Date.now();
+  t.mock.method(Date, "now", () => now);
   try {
-    Date.now = () => now;
     handlers.get("session_start")?.at(-1)?.({}, context);
     await flush();
     now += 10 * 60_000;
@@ -569,8 +474,6 @@ test("preserves cached usage when a refresh fails", async () => {
     assert.equal(JSON.parse(statuses.at(-1)!).state, "ready");
   } finally {
     handlers.get("session_shutdown")?.at(-1)?.({}, context);
-    Date.now = originalNow;
-    globalThis.fetch = originalFetch;
     if (originalWorkspace === undefined) delete process.env.OPENCODE_GO_WORKSPACE_ID;
     else process.env.OPENCODE_GO_WORKSPACE_ID = originalWorkspace;
     if (originalCookie === undefined) delete process.env.OPENCODE_GO_AUTH_COOKIE;
@@ -578,26 +481,16 @@ test("preserves cached usage when a refresh fails", async () => {
   }
 });
 
-test("Codex requests use the fixed endpoint, redirect policy, and auth headers", async () => {
-  const { handlers, on } = captureHandlers();
-  providerUsage({
-    events: {
-      on() {
-        return () => {};
-      },
-      emit() {},
-    },
-    on,
-  } as unknown as ExtensionAPI);
-  const originalFetch = globalThis.fetch;
+test("Codex requests use the fixed endpoint, redirect policy, and auth headers", async (t) => {
+  const handlers = mountProviderUsage();
   const account = "acct_test";
   const token = `x.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: account } })).toString("base64url")}.x`;
   let request: RequestInit | undefined;
-  globalThis.fetch = async (url, init) => {
+  t.mock.method(globalThis, "fetch", async (url: string | URL | Request, init?: RequestInit) => {
     assert.equal(url, "https://chatgpt.com/backend-api/wham/usage");
     request = init;
     return new Response(JSON.stringify({ rate_limit: { primary_window: { used_percent: 10 } } }));
-  };
+  });
   const context = {
     hasUI: true,
     model: { provider: "openai-codex" },
@@ -615,34 +508,27 @@ test("Codex requests use the fixed endpoint, redirect policy, and auth headers",
     assert.equal((request?.headers as Record<string, string>).Authorization, `Bearer ${token}`);
   } finally {
     handlers.get("session_shutdown")?.at(-1)?.({}, context);
-    globalThis.fetch = originalFetch;
   }
 });
 
-test("same-provider selection aborts the old request", async () => {
-  const { handlers, on } = captureHandlers();
-  providerUsage({
-    events: {
-      on() {
-        return () => {};
-      },
-      emit() {},
-    },
-    on,
-  } as unknown as ExtensionAPI);
-  const originalFetch = globalThis.fetch;
+test("same-provider selection aborts the old request", async (t) => {
+  const handlers = mountProviderUsage();
   let aborted = false;
-  globalThis.fetch = (_url, init) =>
-    new Promise<Response>((_, reject) => {
-      init?.signal?.addEventListener(
-        "abort",
-        () => {
-          aborted = true;
-          reject(new Error("aborted"));
-        },
-        { once: true },
-      );
-    });
+  t.mock.method(
+    globalThis,
+    "fetch",
+    (_url: string | URL | Request, init?: RequestInit) =>
+      new Promise<Response>((_, reject) => {
+        init?.signal?.addEventListener(
+          "abort",
+          () => {
+            aborted = true;
+            reject(new Error("aborted"));
+          },
+          { once: true },
+        );
+      }),
+  );
   const context = { hasUI: true, model: { provider: "opencode-go" }, ui: { setStatus() {} } };
   process.env.OPENCODE_GO_WORKSPACE_ID = "workspace";
   process.env.OPENCODE_GO_AUTH_COOKIE = "secret";
@@ -653,34 +539,27 @@ test("same-provider selection aborts the old request", async () => {
     assert.equal(aborted, true);
   } finally {
     handlers.get("session_shutdown")?.at(-1)?.({}, context);
-    globalThis.fetch = originalFetch;
     delete process.env.OPENCODE_GO_WORKSPACE_ID;
     delete process.env.OPENCODE_GO_AUTH_COOKIE;
   }
 });
 
-test("ignores a stale OpenCode response after switching providers", async () => {
-  const { handlers, on } = captureHandlers();
-  providerUsage({
-    events: {
-      on() {
-        return () => {};
-      },
-      emit() {},
-    },
-    on,
-  } as unknown as ExtensionAPI);
+test("ignores a stale OpenCode response after switching providers", async (t) => {
+  const handlers = mountProviderUsage();
 
   let resolveFetch: ((response: Response) => void) | undefined;
-  const originalFetch = globalThis.fetch;
   const originalWorkspace = process.env.OPENCODE_GO_WORKSPACE_ID;
   const originalCookie = process.env.OPENCODE_GO_AUTH_COOKIE;
   process.env.OPENCODE_GO_WORKSPACE_ID = "wrk_test";
   process.env.OPENCODE_GO_AUTH_COOKIE = "secret";
-  globalThis.fetch = () =>
-    new Promise<Response>((resolve) => {
-      resolveFetch = resolve;
-    });
+  t.mock.method(
+    globalThis,
+    "fetch",
+    () =>
+      new Promise<Response>((resolve) => {
+        resolveFetch = resolve;
+      }),
+  );
 
   const statuses: Array<string | undefined> = [];
   const context = {
@@ -701,7 +580,6 @@ test("ignores a stale OpenCode response after switching providers", async () => 
     assert.equal(statuses.at(-1), undefined);
   } finally {
     handlers.get("session_shutdown")?.at(-1)?.({ type: "session_shutdown" }, context);
-    globalThis.fetch = originalFetch;
     if (originalWorkspace === undefined) delete process.env.OPENCODE_GO_WORKSPACE_ID;
     else process.env.OPENCODE_GO_WORKSPACE_ID = originalWorkspace;
     if (originalCookie === undefined) delete process.env.OPENCODE_GO_AUTH_COOKIE;
@@ -711,11 +589,10 @@ test("ignores a stale OpenCode response after switching providers", async () => 
 
 test("Claude response headers update bridge usage and renew the CLI cache until fallback is due", async (t) => {
   const calls = mockCli(t, (call) => call.complete(null, claudeOutput));
-  const originalNow = Date.now;
   let now = claudeCapturedAt;
+  t.mock.method(Date, "now", () => now);
   const { handlers, context, statuses } = entryContext();
   try {
-    Date.now = () => now;
     handlers.get("session_start")?.at(-1)?.({}, context);
     await flush();
     assert.equal(JSON.parse(statuses.at(-1)!).windows[0].usedPercent, 10);
@@ -781,7 +658,6 @@ test("Claude response headers update bridge usage and renew the CLI cache until 
     assert.equal(JSON.parse(statuses.at(-1)!).windows[0].usedPercent, 10);
   } finally {
     handlers.get("session_shutdown")?.at(-1)?.({}, context);
-    Date.now = originalNow;
   }
 });
 
@@ -811,11 +687,10 @@ test("Claude wiring caches quotas for five minutes and retries failed refreshes 
     else if (reads <= 3) call.complete(new Error("secret CLI failure"), "");
     else call.complete(null, claudeOutput.replace("10% used", "20% used"));
   });
-  const originalNow = Date.now;
   let now = claudeCapturedAt;
+  t.mock.method(Date, "now", () => now);
   const { handlers, context, statuses } = entryContext();
   try {
-    Date.now = () => now;
     handlers.get("session_start")?.at(-1)?.({}, context);
     assert.equal(JSON.parse(statuses.at(-1)!).state, "unknown");
     await flush();
@@ -845,7 +720,6 @@ test("Claude wiring caches quotas for five minutes and retries failed refreshes 
     );
   } finally {
     handlers.get("session_shutdown")?.at(-1)?.({}, context);
-    Date.now = originalNow;
   }
 });
 
@@ -904,16 +778,7 @@ test("does not publish stale Claude results after selection, reload, or shutdown
 });
 
 function entryContext() {
-  const { handlers, on } = captureHandlers();
-  providerUsage({
-    events: {
-      on() {
-        return () => {};
-      },
-      emit() {},
-    },
-    on,
-  } as unknown as ExtensionAPI);
+  const handlers = mountProviderUsage();
   const statuses: Array<string | undefined> = [];
   const context = {
     hasUI: true,
