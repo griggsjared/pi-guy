@@ -16,13 +16,16 @@ const SYSTEM_PROMPT =
   "You are answering a side question about the current conversation. Answer the question directly and concisely. Do not continue the main task, call tools, or propose changes unless the question explicitly asks for them.";
 const OVERLAY_MARGIN = 1;
 
-type Operation = {
+interface Operation {
   controller: AbortController;
   generation: number;
   close?: () => void;
-};
+}
 
-type Turn = { question: string; answer: AssistantMessage };
+interface Turn {
+  question: string;
+  answer: AssistantMessage;
+}
 
 function answerLines(turns: Turn[], width: number, pendingQuestion?: string): string[] {
   const lines: string[] = [];
