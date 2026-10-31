@@ -20,7 +20,7 @@ async function readLocalFiles(cwd: string): Promise<Array<{ path: string; conten
   return files;
 }
 
-export default function agentsLocal(pi: ExtensionAPI) {
+export default function (pi: ExtensionAPI) {
   let sessionFiles: Array<{ path: string; content: string }> = [];
 
   pi.on("session_start", async (_event, ctx) => {
