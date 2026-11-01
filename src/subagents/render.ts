@@ -126,21 +126,25 @@ export async function openSubagentTail(
 export type UiContext = Pick<ExtensionContext, "hasUI" | "ui">;
 
 // refreshUi is called repeatedly from outside (the subagent tool), so the cache of installed widgets must outlive each call; the WeakMap lets a closed UI's TUI be collected.
-const widgetTuis = new WeakMap<object, TUI>();
+const widgetTuis = new WeakMap<object, { tui: TUI }>();
 
 export function refreshUi(ctx: UiContext, registry: JobRegistry): void {
+  let created: { tui: TUI } | undefined;
+  let uiKey: object | undefined;
   try {
     if (!ctx.hasUI) return;
-    const uiKey = ctx.ui as object;
+    uiKey = ctx.ui as object;
     const running = registry.running();
     if (running.length > 0 || registry.pendingCompleted().length > 0) {
-      const existingTui = widgetTuis.get(uiKey);
-      if (existingTui) {
-        existingTui.requestRender();
+      const existing = widgetTuis.get(uiKey);
+      if (existing) {
+        existing.tui.requestRender();
         return;
       }
       ctx.ui.setWidget(WIDGET_KEY, (tui: TUI, theme: Theme) => {
-        widgetTuis.set(uiKey, tui);
+        const installed = { tui };
+        created = installed;
+        widgetTuis.set(uiKey!, installed);
         let rows: ReturnType<typeof renderWidgetRows> = [];
         let tailOpen = false;
         let disposed = false;
@@ -173,16 +177,19 @@ export function refreshUi(ctx: UiContext, registry: JobRegistry): void {
             disposed = true;
             rows = [];
             tailOpen = false;
-            widgetTuis.delete(uiKey);
+            if (widgetTuis.get(uiKey!) === installed) {
+              widgetTuis.delete(uiKey!);
+            }
           },
         };
         return component;
       });
     } else {
-      widgetTuis.delete(uiKey);
       ctx.ui.setWidget(WIDGET_KEY, undefined);
+      widgetTuis.delete(uiKey);
     }
   } catch {
+    if (uiKey && created && widgetTuis.get(uiKey) === created) widgetTuis.delete(uiKey);
     /* ctx stale after session change */
   }
 }

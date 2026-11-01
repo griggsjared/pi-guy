@@ -11,7 +11,8 @@ import { captureRenderers, complete, makeTool, renderable, renderAtWidth, render
 
 test("the widget is reused for updates and removed when no jobs remain", () => {
   const registry = createJobRegistry();
-  registry.add("reviewer", "review safety fixes", "Review safety fixes");
+  const id = registry.add("reviewer", "review safety fixes", "Review safety fixes");
+  let widget: { render(width: number): string[] } | undefined;
   let factoryCalls = 0;
   let renderRequests = 0;
   let widgetContent: unknown;
@@ -25,7 +26,7 @@ test("the widget is reused for updates and removed when no jobs remain", () => {
       widgetContent = content;
       if (typeof content === "function") {
         factoryCalls += 1;
-        content(tui, fakeTheme());
+        widget = content(tui, fakeTheme());
       }
     },
   };
@@ -37,13 +38,48 @@ test("the widget is reused for updates and removed when no jobs remain", () => {
 
   assert.equal(factoryCalls, 1);
   assert.equal(renderRequests, 2);
+  assert.ok(widget);
+  assert.match(widget.render(80)[0]!, new RegExp(`#${id} reviewer`));
+
+  complete(registry, id);
+  refreshUi(ctx, registry);
+  const completedLines = widget.render(80);
+  assert.equal(completedLines.length, 1);
+  assert.match(completedLines[0]!, new RegExp(`#${id} reviewer`));
 
   registry.markCleared(registry.jobs.keys());
-  for (const job of registry.running()) {
-    registry.complete(job.id, { agent: job.agent, task: job.task, text: "done", exitCode: 0, error: "" });
-  }
   refreshUi(ctx, registry);
   assert.equal(widgetContent, undefined);
+});
+
+test("failed and headless refreshes stay quiet, and old disposal does not evict a replacement", () => {
+  const registry = createJobRegistry();
+  registry.add("scout", "task");
+  const widgets: Array<{ dispose(): void }> = [];
+  let renderRequests = 0;
+  let fail = false;
+  const ui = {
+    setWidget: (_key: string, factory: unknown) => {
+      if (typeof factory === "function") widgets.push(factory({ requestRender: () => renderRequests++ }, fakeTheme()));
+      if (fail) throw new Error("stale UI");
+    },
+  };
+  const ctx = { hasUI: true, ui } as never;
+  assert.doesNotThrow(() => refreshUi({ hasUI: false, ui } as never, registry));
+  assert.equal(widgets.length, 0);
+  fail = true;
+  assert.doesNotThrow(() => refreshUi(ctx, registry));
+  fail = false;
+  refreshUi(ctx, registry);
+  assert.equal(widgets.length, 2);
+  widgets[0]!.dispose();
+  refreshUi(ctx, registry);
+  assert.equal(widgets.length, 2);
+  assert.equal(renderRequests, 1);
+  widgets[1]!.dispose();
+  refreshUi(ctx, registry);
+  assert.equal(widgets.length, 3);
+  widgets[2]!.dispose();
 });
 
 test("clicks open the rendered job's tail and leave other mouse gestures alone", async (t) => {
@@ -129,6 +165,16 @@ test("clicks open the rendered job's tail and leave other mouse gestures alone",
   assert.deepEqual(widget.handleMouse({ type: "click", button: "left", y: 1 }), { handled: true });
   assert.match(renderText(tails[2]), new RegExp(`Subagent #${addedId}`));
   tails[2]!.handleInput("q");
+  await flush();
+
+  complete(registry, runningId);
+  complete(registry, addedId);
+  const completedLines = widget.render(80);
+  const firstCompletedJob = completedLines[0]!.match(/✓ #(\d+)/);
+  assert.ok(firstCompletedJob);
+  assert.deepEqual(widget.handleMouse({ type: "click", button: "left", y: 0 }), { handled: true });
+  assert.match(renderText(tails[3]), new RegExp(`Subagent #${firstCompletedJob[1]!}`));
+  tails[3]!.handleInput("q");
 });
 
 test("failed tail opens recover and disposed widgets cannot open tails", async () => {
@@ -199,7 +245,7 @@ test("truncation rows and vanished jobs are not clickable", () => {
   const lines = widget.render(20);
   assert.equal(lines.length, 10);
   assert.ok(lines.every((line) => visibleWidth(line) <= 20));
-  assert.ok(lines[0]?.startsWith(" "));
+  assert.match(lines[0]!, /#1 scout/);
   assert.match(lines[9]!, /widget trunca/);
   assert.equal(widget.handleMouse({ type: "click", button: "left", y: 9 }), undefined);
   registry.jobs.delete(1);

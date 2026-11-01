@@ -11,9 +11,82 @@ import subagentsExtension from "../../src/subagents/index.ts";
 import type { createSubagentTool } from "../../src/subagents/tools.ts";
 import { tempDir } from "../helpers/fs.ts";
 import { captureCommands, captureHandlers } from "../helpers/pi.ts";
+import { fakeTheme } from "../helpers/theme.ts";
 import { waitFor } from "../helpers/wait.ts";
 import { FakeChild, fakeSpawnChildren, endEvent } from "./fake-child.ts";
 import { spy, customProfilePicker, renderText } from "./helpers.ts";
+
+test("widget is reinstalled after disposal and removed on shutdown", async (t) => {
+  const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+  const dirname = Object.getOwnPropertyDescriptor(globalThis, "__dirname");
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+    if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+    if (dirname) Object.defineProperty(globalThis, "__dirname", dirname);
+    else Reflect.deleteProperty(globalThis, "__dirname");
+  });
+  const dir = await tempDir(t, "subagent-visibility-");
+  const agentsDir = join(dir, "resources", "subagents");
+  await mkdir(agentsDir, { recursive: true });
+  await writeFile(join(agentsDir, "scout.md"), "---\nname: scout\n---\nScout.");
+  process.env.PI_CODING_AGENT_DIR = join(dir, "config");
+  Object.defineProperty(globalThis, "__dirname", { configurable: true, value: join(dir, "src", "subagents") });
+  const children = [new FakeChild(), new FakeChild()];
+  const { spawnFn, calls } = fakeSpawnChildren(children);
+  t.mock.method(childProcess, "spawn", spawnFn);
+  syncBuiltinESMExports();
+  const { handlers, on } = captureHandlers();
+  const { registerCommand } = captureCommands();
+  const tools = new Map<string, ReturnType<typeof createSubagentTool>>();
+  const pi = {
+    events: { emit: () => {} },
+    registerFlag: () => {},
+    getFlag: () => undefined,
+    registerTool: (tool: ReturnType<typeof createSubagentTool>) => tools.set(tool.name, tool),
+    registerCommand,
+    registerShortcut: () => {},
+    registerEntryRenderer: () => {},
+    registerMessageRenderer: () => {},
+    on,
+    sendMessage: () => {},
+    appendEntry: () => {},
+  } as unknown as ExtensionAPI;
+  const widgets: Array<{ render(width: number): string[]; dispose(): void }> = [];
+  const ui = {
+    setStatus: () => {},
+    setWidget: (_key: string, content: unknown) => {
+      if (typeof content === "function") widgets.push(content({ requestRender: () => {} }, fakeTheme()));
+      else widgets.at(-1)?.dispose();
+    },
+  };
+  const ctx = {
+    cwd: dir,
+    tools: [],
+    mode: "tui",
+    model: { provider: "p", id: "m" },
+    hasUI: true,
+    isIdle: () => true,
+    sessionManager: { getEntries: () => [] },
+    ui,
+  } as unknown as ExtensionToolContext;
+  await subagentsExtension(pi);
+  await handlers.get("session_start")![0]!({}, ctx);
+  const tool = tools.get("subagent")!;
+  await tool.execute("first", { agent: "scout", task: "first" }, undefined, undefined, ctx);
+  await waitFor(() => calls.length === 1);
+  assert.equal(widgets.length, 1);
+  assert.match(widgets[0]!.render(80)[0]!, /#1 scout/);
+  widgets[0]!.dispose();
+  await tool.execute("second", { agent: "scout", task: "second" }, undefined, undefined, ctx);
+  await waitFor(() => calls.length === 2);
+  assert.equal(widgets.length, 2);
+  widgets[0]!.dispose();
+  assert.match(widgets[1]!.render(80).join("\n"), /#2 scout/);
+  await handlers.get("session_shutdown")![0]!({}, ctx);
+  assert.deepEqual(widgets[1]!.render(80), []);
+});
 
 test("extension selects profiles explicitly and uses the headless fallback", async (t) => {
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
@@ -260,6 +333,7 @@ test("extension selects profiles explicitly and uses the headless fallback", asy
       const profileNotes: string[] = [];
       let completions = 0;
       const pi = {
+        events: { on: () => {}, emit: () => {} },
         registerFlag: (name: string, options: { type: string }) => flags.push([name, options.type]),
         getFlag: (name: string) => (name === "subagent-profile" ? entry.flag : undefined),
         registerTool: (tool: ReturnType<typeof createSubagentTool>) => tools.set(tool.name, tool),
