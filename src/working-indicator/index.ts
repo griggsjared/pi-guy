@@ -1,5 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { Component } from "@earendil-works/pi-tui";
 import { formatDuration, formatTokens } from "../lib/format.ts";
+import { createWorkingAnimation, SPINNER_INTERVAL_MS, WORD_INTERVAL_MS } from "./animation.ts";
 import { PromptEditor } from "./prompt-editor.ts";
 
 type Phase = "thinking" | "writing" | "tooling" | "waiting";
@@ -605,24 +607,8 @@ const TOOL_WORDS: Record<string, string[]> = {
 const ALL_WORDS = [...THINKING_WORDS, ...WRITING_WORDS, ...WAITING_WORDS, ...Object.values(TOOL_WORDS).flat()];
 const TOOL_BUCKET_PREFIX = "tool:";
 
-const THEME_COLORS = ["error", "warning", "success", "accent", "borderAccent", "customMessageLabel"] as const;
-const WORKING_PATTERNS = ["shimmer", "bounce", "karaoke", "ripple", "sparkle", "rainbow", "palettePulse"] as const;
-const PLAN_COUNT = 12;
-const COLOR_INTERVAL_MS = 300;
-const PALETTE_PULSE_INTERVAL_MS = 1500;
-const WORD_INTERVAL_MS = 9000;
-const SPINNER_INTERVAL_MS = 150;
 const CHARS_PER_TOKEN = 4;
-type WorkingPattern = (typeof WORKING_PATTERNS)[number];
-type PaletteColor = (typeof THEME_COLORS)[number];
-type ColorIntensity = "bright" | "normal" | "dim";
-type IntensityDirection = "brighten" | "darken";
-interface PatternColor {
-  color: PaletteColor;
-  intensity: ColorIntensity;
-}
-
-const SPINNER_SYMBOLS = ["✻", "✽", "✻", "✾"];
+const WORKING_WIDGET_KEY = "working-indicator";
 
 // Timers live in a process-global registry, not per-instance state: a runtime
 // detached by /reload stops receiving events, so a timer created in the gap
@@ -655,63 +641,6 @@ function clearAllWorkingTimers(): void {
   liveTimers().clear();
 }
 
-function patternColor(
-  pattern: WorkingPattern,
-  index: number,
-  length: number,
-  offset: number,
-  colors: PaletteColor[],
-  intensityDirection: IntensityDirection,
-): PatternColor {
-  const color = colors[0] ?? "accent";
-  const intensity = (value: ColorIntensity): ColorIntensity => {
-    if (intensityDirection === "brighten") return value;
-    return value === "dim" ? "bright" : "normal";
-  };
-  const primary = { color, intensity: intensity("bright") };
-  const secondary = { color, intensity: intensity("normal") };
-  const base = { color, intensity: intensity("dim") };
-  switch (pattern) {
-    case "shimmer": {
-      const head = (offset % (length + 4)) - 2;
-      const distance = Math.abs(index - head);
-      return distance === 0 ? primary : distance === 1 ? secondary : base;
-    }
-    case "bounce": {
-      const pathLength = Math.max(1, length * 2 - 2);
-      const position = offset % pathLength;
-      const head = position < length ? position : pathLength - position;
-      const distance = Math.abs(index - head);
-      return distance === 0 ? primary : distance === 1 ? secondary : base;
-    }
-    case "karaoke": {
-      const progress = offset % (length * 2 + 2);
-      const edge = progress <= length ? progress : progress - length;
-      const active = progress <= length ? index < edge : index >= edge;
-      return index === edge ? secondary : active ? primary : base;
-    }
-    case "ripple": {
-      const radius = Math.ceil(length / 2);
-      const pathLength = radius * 2;
-      const position = offset % pathLength;
-      const ring = position <= radius ? position : pathLength - position;
-      const distance = Math.floor(Math.abs(index - (length - 1) / 2));
-      return distance === ring ? primary : Math.abs(distance - ring) === 1 ? secondary : base;
-    }
-    case "sparkle": {
-      const first = (offset * 3) % length;
-      const second = (offset * 5 + Math.floor(length / 2)) % length;
-      return index === first ? primary : index === second ? secondary : base;
-    }
-    case "rainbow":
-      return { color: colors[offset % colors.length] ?? color, intensity: "normal" };
-    case "palettePulse": {
-      const colorIndex = Math.floor((offset * COLOR_INTERVAL_MS) / PALETTE_PULSE_INTERVAL_MS) % colors.length;
-      return { color: colors[colorIndex] ?? color, intensity: "normal" };
-    }
-  }
-}
-
 function messageCharacters(
   content: readonly { type: string; text?: string; thinking?: string; arguments?: unknown }[],
 ): number {
@@ -723,23 +652,9 @@ function messageCharacters(
   }, 0);
 }
 
-function styleWorkingText(
-  text: string,
-  colorize: (color: PatternColor, text: string) => string,
-  pattern: WorkingPattern,
-  offset: number,
-  colors: PaletteColor[],
-  intensityDirection: IntensityDirection,
-): string {
-  const characters = [...text];
-  return characters
-    .map((character, index) =>
-      colorize(patternColor(pattern, index, characters.length, offset, colors, intensityDirection), character),
-    )
-    .join("");
-}
-
 export default function (pi: ExtensionAPI) {
+  let editorSession: symbol | undefined;
+
   let workingRunId = 0;
   let runtimeGeneration: symbol | undefined;
   let startedAt = 0;
@@ -792,36 +707,15 @@ export default function (pi: ExtensionAPI) {
     currentTool = undefined;
     activeTools.clear();
 
-    const firstPatternIndex = Math.floor(Math.random() * WORKING_PATTERNS.length);
-    const plans = Array.from({ length: PLAN_COUNT }, (_, index) => {
-      const pattern = WORKING_PATTERNS[(firstPatternIndex + index) % WORKING_PATTERNS.length] ?? "shimmer";
-      const color = THEME_COLORS[Math.floor(Math.random() * THEME_COLORS.length)] ?? "accent";
-      const randomizeIntensity =
-        pattern === "shimmer" || pattern === "bounce" || pattern === "ripple" || pattern === "sparkle";
-      const intensityDirection: IntensityDirection = randomizeIntensity && Math.random() < 0.5 ? "darken" : "brighten";
-      return {
-        pattern,
-        colors: pattern === "rainbow" || pattern === "palettePulse" ? [...THEME_COLORS] : [color],
-        intensityDirection,
-      };
-    });
-    const styleColor = (styledColor: PatternColor, text: string): string => {
-      if (styledColor.intensity === "dim") return ctx.ui.theme.style(text, { fg: styledColor.color, dim: true });
-      const colored = ctx.ui.theme.fg(styledColor.color, text);
-      return styledColor.intensity === "bright" ? ctx.ui.theme.bold(colored) : colored;
-    };
+    const animate = createWorkingAnimation();
     let lastSpinnerFrame = "";
     let lastWordCycle = -1;
     let lastBucket = "";
     let currentWord = "";
     let lastWorkingMessage = "";
-    let lastWorkingSecond = -1;
-    let lastWorkingBucket = "";
-    let lastWorkingTokens = "";
-    let lastWorkingColorFrame = -1;
     renderWorkingMessage = () => {
       if (runId !== workingRunId || !isCurrentWorkingGeneration(generation)) return;
-      const elapsed = Date.now() - startedAt;
+      const elapsed = Math.max(0, Date.now() - startedAt);
       const cycle = Math.floor(elapsed / WORD_INTERVAL_MS);
       const bucket = bucketFor(currentPhase, currentTool);
       if (bucket !== lastBucket || cycle !== lastWordCycle) {
@@ -829,41 +723,12 @@ export default function (pi: ExtensionAPI) {
         lastWordCycle = cycle;
         currentWord = pickWord(bucket);
       }
-      const plan = plans[cycle % plans.length];
-      if (!plan) return;
-      const { pattern, colors, intensityDirection } = plan;
-      const colorFrame = Math.floor(elapsed / COLOR_INTERVAL_MS);
-      const text = `${currentWord}…`;
-      const symbol = SPINNER_SYMBOLS[Math.floor(elapsed / SPINNER_INTERVAL_MS) % SPINNER_SYMBOLS.length] ?? "✻";
-      const spinnerFrame = styleColor(
-        patternColor(pattern, 0, [...text].length, colorFrame, colors, intensityDirection),
-        symbol,
-      );
-      if (spinnerFrame !== lastSpinnerFrame) {
-        lastSpinnerFrame = spinnerFrame;
-        ctx.ui.setWorkingIndicator({ frames: [spinnerFrame], intervalMs: SPINNER_INTERVAL_MS });
+      const { spinner, message } = animate(ctx.ui.theme, `${currentWord}…`, elapsed);
+      if (spinner !== lastSpinnerFrame) {
+        lastSpinnerFrame = spinner;
+        ctx.ui.setWorkingIndicator({ frames: [spinner], intervalMs: SPINNER_INTERVAL_MS });
       }
-      const second = Math.floor(elapsed / 1000);
       const tokenDisplay = formatTokens(outputTokens);
-      if (
-        second === lastWorkingSecond &&
-        bucket === lastWorkingBucket &&
-        tokenDisplay === lastWorkingTokens &&
-        colorFrame === lastWorkingColorFrame
-      )
-        return;
-      lastWorkingSecond = second;
-      lastWorkingBucket = bucket;
-      lastWorkingTokens = tokenDisplay;
-      lastWorkingColorFrame = colorFrame;
-      const message = styleWorkingText(
-        text,
-        (style, character) => styleColor(style, character),
-        pattern,
-        colorFrame,
-        colors,
-        intensityDirection,
-      );
       const details = `(${formatDuration(elapsed)} · ↓ ${tokenDisplay} tokens)`;
       const workingMessage = `${message} ${ctx.ui.theme.fg("dim", details)}`;
       if (workingMessage !== lastWorkingMessage) {
@@ -988,6 +853,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_shutdown", (_event, ctx) => {
     if (runtimeGeneration === undefined || !isCurrentWorkingGeneration(runtimeGeneration)) return;
     runtimeGeneration = undefined;
+    editorSession = undefined;
     workingRunId++;
     clearAllWorkingTimers();
     renderWorkingMessage = undefined;
@@ -996,16 +862,64 @@ export default function (pi: ExtensionAPI) {
     inFlightTokens = 0;
     inFlightCharacters = 0;
     outputTokens = 0;
+    ctx.ui.setWidget(WORKING_WIDGET_KEY, undefined);
     ctx.ui.setWorkingMessage();
     ctx.ui.setWorkingIndicator();
     ctx.ui.setWorkingVisible(false);
   });
 
   pi.on("session_start", (_event, ctx) => {
+    editorSession = undefined;
     if (ctx.mode === "tui") {
-      ctx.ui.setEditorComponent(
-        (tui, theme, keybindings) => new PromptEditor(tui, theme, keybindings, { paddingX: 2 }),
+      const session = (editorSession = Symbol());
+      let editorInstance: symbol | undefined;
+      let currentComponent: Component | undefined;
+      let ownsCurrentEditor: (() => boolean) | undefined;
+      let disposed = false;
+      let requestRender: (() => void) | undefined;
+      ctx.ui.setWidget(
+        WORKING_WIDGET_KEY,
+        (tui) => {
+          requestRender = () => tui.requestRender();
+          return {
+            render: (width) => (ownsCurrentEditor?.() ? (currentComponent?.render(width) ?? []) : []),
+            invalidate: () => {
+              if (ownsCurrentEditor?.()) currentComponent?.invalidate();
+            },
+            dispose: () => {
+              disposed = true;
+              currentComponent = undefined;
+              ownsCurrentEditor = undefined;
+              requestRender = undefined;
+            },
+          };
+        },
+        { placement: "aboveEditor" },
       );
+      const factory: NonNullable<Parameters<typeof ctx.ui.setEditorComponent>[0]> = (tui, theme, keybindings) => {
+        const instance = (editorInstance = Symbol());
+        currentComponent = undefined;
+        ownsCurrentEditor = undefined;
+        requestRender?.();
+        let editorDetached = false;
+        const ownsEditor = () => {
+          if (ctx.ui.getEditorComponent() !== factory) editorDetached = true;
+          return editorSession === session && editorInstance === instance && !editorDetached && !disposed;
+        };
+        return new PromptEditor(
+          tui,
+          theme,
+          keybindings,
+          () => ctx.ui.theme,
+          (component) => {
+            if (!ownsEditor()) return;
+            currentComponent = component;
+            ownsCurrentEditor = ownsEditor;
+            requestRender?.();
+          },
+        );
+      };
+      ctx.ui.setEditorComponent(factory);
     }
     if (ctx.hasUI === false) return;
     // Invalidate callbacks from a runtime being replaced during reload. A
