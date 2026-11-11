@@ -1,6 +1,6 @@
 ---
 name: planner
-description: Read-only implementation planning for complex or cross-cutting tasks; inspect the codebase and return a concrete, scoped plan
+description: Use when a complex or cross-cutting task needs a plan before editing; read-only
 thinkingLevel: high
 tools: read, grep, find, ls, bash
 ---

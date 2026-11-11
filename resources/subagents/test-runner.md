@@ -1,6 +1,6 @@
 ---
 name: test-runner
-description: Run a project test suite or focused subset and report concise results without flooding the parent context
+description: Use to run tests and get a short summary
 thinkingLevel: low
 tools: read, grep, find, ls, bash
 ---

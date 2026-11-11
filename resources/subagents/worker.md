@@ -1,6 +1,6 @@
 ---
 name: worker
-description: General-purpose implementation agent for bounded edits within explicit file scope; no opportunistic refactors or commits
+description: Use for bounded edits to named files, including parallel edits to separate files
 thinkingLevel: high
 tools: read, grep, find, ls, bash, edit, write
 ---

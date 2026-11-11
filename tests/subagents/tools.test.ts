@@ -1,14 +1,39 @@
 import assert from "node:assert/strict";
 import type { spawn } from "node:child_process";
 import { test } from "node:test";
+import { discoverAgents } from "../../src/subagents/agents.ts";
 import { QUESTION_ENTRY_TYPE } from "../../src/subagents/constants.ts";
 import type { createJobRegistry } from "../../src/subagents/registry.ts";
 import { createPeekTool, createReplyTool } from "../../src/subagents/status-tools.ts";
-import { resolveMode } from "../../src/subagents/tools.ts";
+import { createSubagentTool, resolveMode } from "../../src/subagents/tools.ts";
 import { fakeTheme } from "../helpers/theme.ts";
 import { flush, waitFor } from "../helpers/wait.ts";
 import { FakeChild, fakeSpawnChildren, endEvent, jsonEvent, questionEvent, responseEvent } from "./fake-child.ts";
 import { cleanupChildren, makeTool, renderable, renderText } from "./helpers.ts";
+
+test("tool description lists discovered agents and their descriptions", async () => {
+  const agents = await discoverAgents("resources/subagents");
+  assert.equal(agents.length, 6);
+  const { pi, registry, activeTickers } = makeTool();
+  const tool = createSubagentTool({
+    pi,
+    agents,
+    settings: { profiles: {}, extensions: [] },
+    getActiveProfile: () => undefined,
+    confirmProfile: async () => true,
+    discover: async () => agents,
+    registry,
+    activeTickers,
+    onUiContext: () => {},
+    refresh: () => {},
+    bridgeExtensionPath: "/extensions/child-bridge.ts",
+    extensionPaths: [],
+  });
+  for (const agent of agents) {
+    assert.ok(agent.description);
+    assert.ok(tool.description.includes(`${agent.name}: ${agent.description}`));
+  }
+});
 
 test("single and batch requests require exactly one valid mode", () => {
   assert.deepEqual(resolveMode({ agent: "a", task: "t", title: "x" }), {

@@ -1,6 +1,6 @@
 ---
 name: reviewer
-description: Read-only review only when the user explicitly requests a review, audit, or independent verification; no edits or commits
+description: Use only when the user explicitly asks for a review, audit, or independent verification; read-only
 thinkingLevel: high
 tools: read, grep, find, ls, bash
 ---

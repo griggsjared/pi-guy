@@ -1,6 +1,6 @@
 ---
 name: log-scanner
-description: Read-only analysis of logs, build output, or other verbose output; return only errors, warnings, and anomalies
+description: Use to check logs, build output, or other long output for errors
 thinkingLevel: minimal
 tools: read, grep, find, ls, bash
 ---

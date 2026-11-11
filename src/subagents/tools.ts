@@ -216,10 +216,18 @@ function startTicker(tickers: Set<ReturnType<typeof setInterval>>, fn: () => voi
   };
 }
 
+function buildDescription(agents: AgentConfig[]): string {
+  const introduction =
+    "Delegate work to specialized subagents. Returns job IDs immediately, not results; each result arrives later as a follow-up message, so end your turn when you have no independent work.";
+  return agents.length > 0
+    ? `${introduction} Available agents:\n${agents.map((agent) => `- ${agent.name}: ${agent.description || "no description"}`).join("\n")}`
+    : `${introduction} Agents are discovered from the agents directory.`;
+}
+
 function buildGuidelines(agents: AgentConfig[]): string[] {
   const agentGuidance =
     agents.length > 0
-      ? `Use the subagent tool with these available agents: ${agents.map((agent) => `${agent.name} (${agent.description || "no description"})`).join("; ")}.`
+      ? "Use the subagent tool with the agents listed in its description."
       : "Use the subagent tool with an available agent discovered from the agents directory.";
   return [
     agentGuidance,
@@ -461,8 +469,7 @@ export function createSubagentTool(deps: SubagentToolDeps): ToolDefinition<typeo
   return {
     name: "subagent",
     label: "Subagent Launch",
-    description:
-      "Delegate work to specialized subagents. Jobs always run asynchronously and deliver their results as follow-up messages.",
+    description: buildDescription(deps.agents),
     parameters: SubagentParams,
     exposure: "model-only",
     promptGuidelines: buildGuidelines(deps.agents),
