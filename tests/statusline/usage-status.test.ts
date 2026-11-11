@@ -34,6 +34,7 @@ test("recognizes claude-bridge quota status and round trips Claude windows", () 
     ],
   };
   assert.equal(isQuotaProvider("claude-bridge"), true);
+  assert.equal(isQuotaProvider("claude-code"), true);
   assert.deepEqual(decodeUsageStatus(encodeUsageStatus(status)), status);
 });
 

@@ -9,7 +9,17 @@ import {
   fetchAnthropicUsage,
   normalizeAnthropicHeaders,
 } from "./providers/anthropic.ts";
-import { CLAUDE_CACHE_TTL_MS, CLAUDE_PROVIDER, fetchClaudeUsage } from "./providers/claude.ts";
+import {
+  CLAUDE_BRIDGE_CACHE_TTL_MS,
+  CLAUDE_BRIDGE_PROVIDER,
+  fetchClaudeBridgeUsage,
+} from "./providers/claude-bridge.ts";
+import {
+  CLAUDE_CODE_CACHE_TTL_MS,
+  CLAUDE_CODE_PROVIDER,
+  CLAUDE_CODE_TURN_CACHE_TTL_MS,
+  fetchClaudeCodeUsage,
+} from "./providers/claude-code.ts";
 import { CODEX_CACHE_TTL_MS, CODEX_PROVIDER, fetchCodexUsage } from "./providers/codex.ts";
 import { DEEPSEEK_CACHE_TTL_MS, DEEPSEEK_PROVIDER, fetchDeepseekUsage } from "./providers/deepseek.ts";
 import { OPENCODE_CACHE_TTL_MS, OPENCODE_PROVIDER, fetchOpencodeUsage } from "./providers/opencode.ts";
@@ -20,12 +30,19 @@ const REFRESH_INTERVAL_MS = 60_000;
 
 interface UsageAdapter {
   cacheTtlMs: number;
+  /** Shorter cache lifetime for refreshes after a turn, when usage has just changed. */
+  turnCacheTtlMs?: number;
   load(ctx: ExtensionContext, signal: AbortSignal): Promise<UsageStatus>;
 }
 
 const USAGE_ADAPTERS: Record<UsageProvider, UsageAdapter> = {
   [ANTHROPIC_PROVIDER]: { cacheTtlMs: ANTHROPIC_CACHE_TTL_MS, load: fetchAnthropicUsage },
-  [CLAUDE_PROVIDER]: { cacheTtlMs: CLAUDE_CACHE_TTL_MS, load: fetchClaudeUsage },
+  [CLAUDE_BRIDGE_PROVIDER]: { cacheTtlMs: CLAUDE_BRIDGE_CACHE_TTL_MS, load: fetchClaudeBridgeUsage },
+  [CLAUDE_CODE_PROVIDER]: {
+    cacheTtlMs: CLAUDE_CODE_CACHE_TTL_MS,
+    turnCacheTtlMs: CLAUDE_CODE_TURN_CACHE_TTL_MS,
+    load: fetchClaudeCodeUsage,
+  },
   [CODEX_PROVIDER]: { cacheTtlMs: CODEX_CACHE_TTL_MS, load: fetchCodexUsage },
   [OPENCODE_PROVIDER]: { cacheTtlMs: OPENCODE_CACHE_TTL_MS, load: (_ctx, signal) => fetchOpencodeUsage(signal) },
   [DEEPSEEK_PROVIDER]: { cacheTtlMs: DEEPSEEK_CACHE_TTL_MS, load: fetchDeepseekUsage },
@@ -59,6 +76,7 @@ export default function (pi: ExtensionAPI) {
   let activeProvider: string | undefined;
   let latestUsage: UsageStatus | undefined;
   let lastFetchedAt = 0;
+  let lastAttemptAt: number | undefined;
   let generation = 0;
   let refreshPromise: Promise<void> | undefined;
   let requestController: AbortController | undefined;
@@ -90,6 +108,7 @@ export default function (pi: ExtensionAPI) {
   const clearUsage = (ctx: ExtensionContext): void => {
     latestUsage = undefined;
     lastFetchedAt = 0;
+    lastAttemptAt = undefined;
     if (ctx.hasUI) ctx.ui.setStatus(USAGE_STATUS_KEY, undefined);
   };
 
@@ -115,7 +134,7 @@ export default function (pi: ExtensionAPI) {
     );
   };
 
-  const refresh = (ctx: ExtensionContext): Promise<void> => {
+  const refresh = (ctx: ExtensionContext, afterTurn = false): Promise<void> => {
     const provider = ctx.model?.provider;
     if (!ctx.hasUI || !supported(provider)) {
       if (ctx.hasUI && supported(activeProvider)) clearUsage(ctx);
@@ -123,12 +142,23 @@ export default function (pi: ExtensionAPI) {
     }
 
     const adapter = USAGE_ADAPTERS[provider];
-    if (latestUsage?.provider === provider && Date.now() - lastFetchedAt < adapter.cacheTtlMs) {
+    const cacheTtlMs = (afterTurn && adapter.turnCacheTtlMs) || adapter.cacheTtlMs;
+    if (latestUsage?.provider === provider && Date.now() - lastFetchedAt < cacheTtlMs) {
       publish(ctx, latestUsage);
       return Promise.resolve();
     }
     if (refreshPromise) return refreshPromise;
+    if (
+      afterTurn &&
+      adapter.turnCacheTtlMs &&
+      lastAttemptAt !== undefined &&
+      Date.now() - lastAttemptAt < adapter.turnCacheTtlMs
+    ) {
+      publish(ctx, latestUsage?.provider === provider ? latestUsage : undefined);
+      return Promise.resolve();
+    }
 
+    lastAttemptAt = Date.now();
     const requestGeneration = generation;
     const controller = new AbortController();
     requestController = controller;
@@ -222,6 +252,7 @@ export default function (pi: ExtensionAPI) {
     refreshTimer = undefined;
     latestUsage = undefined;
     lastFetchedAt = 0;
+    lastAttemptAt = undefined;
     sessionActive = true;
     activeContext = ctx;
     activeProvider = ctx.model?.provider;
@@ -258,10 +289,11 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("after_provider_response", (event, ctx) => {
     const provider = ctx.model?.provider;
-    if (!sessionActive || !ctx.hasUI || (provider !== ANTHROPIC_PROVIDER && provider !== CLAUDE_PROVIDER)) return;
+    if (!sessionActive || !ctx.hasUI || (provider !== ANTHROPIC_PROVIDER && provider !== CLAUDE_BRIDGE_PROVIDER))
+      return;
     const usage = normalizeAnthropicHeaders(event.headers);
     if (usage) {
-      if (provider === CLAUDE_PROVIDER && latestUsage?.provider === provider && latestUsage.state === "ready") {
+      if (provider === CLAUDE_BRIDGE_PROVIDER && latestUsage?.provider === provider && latestUsage.state === "ready") {
         usage.windows.push(
           ...latestUsage.windows.filter((window) => !usage.windows.some((update) => update.kind === window.kind)),
         );
@@ -279,7 +311,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("turn_end", (_event, ctx) => {
     activeContext = ctx;
-    if (supported(ctx.model?.provider)) void refresh(ctx);
+    if (supported(ctx.model?.provider)) void refresh(ctx, true);
   });
 
   pi.on("session_shutdown", (_event, ctx) => {
@@ -293,6 +325,7 @@ export default function (pi: ExtensionAPI) {
     activeProvider = undefined;
     latestUsage = undefined;
     lastFetchedAt = 0;
+    lastAttemptAt = undefined;
     if (ctx.hasUI) ctx.ui.setStatus(USAGE_STATUS_KEY, undefined);
   });
 }

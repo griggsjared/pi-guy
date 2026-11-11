@@ -79,6 +79,14 @@ export async function fetchAnthropicUsage(ctx: ExtensionContext, signal: AbortSi
   // API keys have no plan quota to report.
   if (!token.startsWith("sk-ant-oat"))
     return { provider: ANTHROPIC_PROVIDER, state: "ready", windows: [], capturedAtMs: Date.now() };
+  return requestAnthropicUsage(token, signal);
+}
+
+/**
+ * Fetches plan usage for a Claude subscription OAuth access token.
+ * The result is labelled anthropic; callers serving another provider must relabel it.
+ */
+export async function requestAnthropicUsage(token: string, signal: AbortSignal): Promise<UsageStatus> {
   const response = await fetch(ANTHROPIC_USAGE_URL, {
     headers: {
       Accept: "application/json",

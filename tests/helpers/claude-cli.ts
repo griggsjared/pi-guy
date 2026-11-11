@@ -17,6 +17,16 @@ export interface CliCall {
 }
 
 export function mockCli(t: TestContext, load: (call: CliCall) => void): CliCall[] {
+  const previousConfigDir = process.env.CLAUDE_CONFIG_DIR;
+  delete process.env.CLAUDE_CONFIG_DIR;
+  t.after(() => {
+    if (previousConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+    else process.env.CLAUDE_CONFIG_DIR = previousConfigDir;
+  });
+  t.mock.property(process, "platform", "darwin");
+  t.mock.method(globalThis, "fetch", async () => {
+    throw new Error("unexpected fetch");
+  });
   const calls: CliCall[] = [];
   t.mock.method(childProcess, "execFile", (file: string, args: string[], options: any, callback: any) => {
     const call: CliCall = {
