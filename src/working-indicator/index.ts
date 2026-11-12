@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { Component } from "@earendil-works/pi-tui";
-import { formatDuration, formatTokens } from "../lib/format.ts";
+import { formatDuration } from "../lib/format.ts";
 import { createWorkingAnimation, SPINNER_INTERVAL_MS, WORD_INTERVAL_MS } from "./animation.ts";
 import { PromptEditor } from "./prompt-editor.ts";
 
@@ -607,7 +607,6 @@ const TOOL_WORDS: Record<string, string[]> = {
 const ALL_WORDS = [...THINKING_WORDS, ...WRITING_WORDS, ...WAITING_WORDS, ...Object.values(TOOL_WORDS).flat()];
 const TOOL_BUCKET_PREFIX = "tool:";
 
-const CHARS_PER_TOKEN = 4;
 const WORKING_WIDGET_KEY = "working-indicator";
 
 // Timers live in a process-global registry, not per-instance state: a runtime
@@ -641,29 +640,12 @@ function clearAllWorkingTimers(): void {
   liveTimers().clear();
 }
 
-function messageCharacters(
-  content: readonly { type: string; text?: string; thinking?: string; arguments?: unknown }[],
-): number {
-  return content.reduce((total, block) => {
-    if (block.type === "text") return total + (block.text?.length ?? 0);
-    if (block.type === "thinking") return total + (block.thinking?.length ?? 0);
-    if (block.type === "toolCall") return total + JSON.stringify(block.arguments ?? {}).length;
-    return total;
-  }, 0);
-}
-
 export default function (pi: ExtensionAPI) {
   let editorSession: symbol | undefined;
 
   let workingRunId = 0;
   let runtimeGeneration: symbol | undefined;
   let startedAt = 0;
-  // Task totals, kept across agent runs (reset on each new user prompt):
-  // usage of completed messages plus the message currently streaming.
-  let settledTokens = 0;
-  let inFlightTokens = 0;
-  let inFlightCharacters = 0;
-  let outputTokens = 0;
   let renderWorkingMessage: (() => void) | undefined;
   let currentPhase: Phase = "thinking";
   let currentTool: string | undefined;
@@ -728,9 +710,7 @@ export default function (pi: ExtensionAPI) {
         lastSpinnerFrame = spinner;
         ctx.ui.setWorkingIndicator({ frames: [spinner], intervalMs: SPINNER_INTERVAL_MS });
       }
-      const tokenDisplay = formatTokens(outputTokens);
-      const details = `(${formatDuration(elapsed)} · ↓ ${tokenDisplay} tokens)`;
-      const workingMessage = `${message} ${ctx.ui.theme.fg("dim", details)}`;
+      const workingMessage = `${message} ${ctx.ui.theme.fg("dim", formatDuration(elapsed))}`;
       if (workingMessage !== lastWorkingMessage) {
         lastWorkingMessage = workingMessage;
         ctx.ui.setWorkingMessage(workingMessage);
@@ -754,30 +734,11 @@ export default function (pi: ExtensionAPI) {
   pi.on("input", (event) => {
     if (event.streamingBehavior === "steer" || event.streamingBehavior === "followUp") return;
     startedAt = Date.now();
-    settledTokens = 0;
-    inFlightTokens = 0;
-    inFlightCharacters = 0;
-    outputTokens = 0;
     renderWorkingMessage?.();
   });
 
   pi.on("message_update", (event) => {
     if (event.message.role !== "assistant") return;
-
-    if (event.message.usage.output > 0) {
-      inFlightTokens = event.message.usage.output;
-    } else {
-      const update = event.assistantMessageEvent;
-      if ("delta" in update && typeof update.delta === "string") {
-        inFlightCharacters += update.delta.length;
-      }
-      if (update.type === "thinking_end" || update.type === "text_end" || update.type === "toolcall_end") {
-        inFlightCharacters = Math.max(inFlightCharacters, messageCharacters(event.message.content));
-      }
-      const estimate = Math.ceil(inFlightCharacters / CHARS_PER_TOKEN);
-      if (estimate > inFlightTokens) inFlightTokens = estimate;
-    }
-    outputTokens = settledTokens + inFlightTokens;
     switch (event.assistantMessageEvent.type) {
       case "thinking_start":
       case "thinking_delta":
@@ -795,16 +756,6 @@ export default function (pi: ExtensionAPI) {
         currentPhase = "tooling";
         break;
     }
-    renderWorkingMessage?.();
-  });
-
-  pi.on("message_end", (event) => {
-    if (event.message.role !== "assistant") return;
-    const usageOutput = event.message.usage.output;
-    settledTokens += usageOutput > 0 ? usageOutput : inFlightTokens;
-    inFlightTokens = 0;
-    inFlightCharacters = 0;
-    outputTokens = settledTokens;
     renderWorkingMessage?.();
   });
 
@@ -858,10 +809,6 @@ export default function (pi: ExtensionAPI) {
     clearAllWorkingTimers();
     renderWorkingMessage = undefined;
     startedAt = 0;
-    settledTokens = 0;
-    inFlightTokens = 0;
-    inFlightCharacters = 0;
-    outputTokens = 0;
     ctx.ui.setWidget(WORKING_WIDGET_KEY, undefined);
     ctx.ui.setWorkingMessage();
     ctx.ui.setWorkingIndicator();
@@ -932,10 +879,6 @@ export default function (pi: ExtensionAPI) {
     currentTool = undefined;
     activeTools.clear();
     startedAt = Date.now();
-    settledTokens = 0;
-    inFlightTokens = 0;
-    inFlightCharacters = 0;
-    outputTokens = 0;
     ctx.ui.setWorkingMessage();
     ctx.ui.setWorkingIndicator();
     ctx.ui.setWorkingVisible(false);

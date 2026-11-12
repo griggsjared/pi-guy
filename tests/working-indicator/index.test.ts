@@ -78,16 +78,8 @@ function emit(
   handlers.get(name)?.[0]?.(event, context);
 }
 
-function assistantMessage(content: unknown[] = [], output = 0) {
-  return { role: "assistant", content, usage: { output } };
-}
-
-function latestTokens(calls: Calls): string {
-  const message = calls.messages.at(-1);
-  assert.ok(message);
-  const match = message.match(/↓ ([^ ]+) tokens/);
-  assert.ok(match);
-  return match[1]!;
+function assistantMessage(content: unknown[] = []) {
+  return { role: "assistant", content };
 }
 
 function cleanup(handlers: Map<string, Handler[]>, ctx: TestContext) {
@@ -316,10 +308,10 @@ test("backward clock changes keep agent and non-agent status at zero elapsed tim
     message: assistantMessage([{ type: "text", text: "1234" }]),
     assistantMessageEvent: { type: "text_delta", delta: "1234" },
   });
-  assert.match(calls.messages.at(-1)!, /\(0s · ↓ 1 tokens\)/);
-  assert.equal(renderedStatus(calls), " ✻ Waiting… (0s)\n");
+  assert.match(calls.messages.at(-1)!, / 0s$/);
+  assert.equal(renderedStatus(calls), " ✻ Waiting… 0s\n");
   t.mock.timers.tick(150);
-  assert.match(calls.messages.at(-1)!, /\(0s · ↓ 1 tokens\)/);
+  assert.match(calls.messages.at(-1)!, / 0s$/);
   cleanup(handlers, ctx);
 });
 
@@ -340,14 +332,14 @@ test("non-agent compaction and branch summaries show rotating context words and 
     setNativeStatus(editor, undefined);
     setNativeStatus(editor, nativeStatus(kind, label));
     const initial = renderedStatus(calls);
-    assert.equal(initial, ` ✻ ${word}… (0s)\n`);
+    assert.equal(initial, ` ✻ ${word}… 0s\n`);
     const spinner = initial.match(/[✻✽✾]/u)?.[0];
     assert.ok(spinner);
     t.mock.timers.tick(150);
     assert.notEqual(renderedStatus(calls).match(/[✻✽✾]/u)?.[0], spinner);
     t.mock.timers.tick(8_850);
     const later = renderedStatus(calls);
-    assert.equal(later, ` ✻ ${nextWord}… (9s)\n`);
+    assert.equal(later, ` ✻ ${nextWord}… 9s\n`);
     assert.match(renderedStatus(calls, 30), /\b9s\b/);
     for (const width of [5, 12]) renderedStatus(calls, width);
   }
@@ -363,13 +355,13 @@ test("retry shows only a rotating word and elapsed time despite native text upda
   const status = nativeStatus("retry", "Retrying (2/5) in 10s... (esc to cancel)");
   setNativeStatus(editor, status);
   const initial = renderedStatus(calls);
-  assert.equal(initial, " ✻ Waiting… (0s)\n");
+  assert.equal(initial, " ✻ Waiting… 0s\n");
   t.mock.timers.tick(3_000);
   status.message = "Retrying (2/5) in 7s... (esc to cancel)";
   const later = renderedStatus(calls);
-  assert.equal(later, " ✻ Waiting… (3s)\n");
+  assert.equal(later, " ✻ Waiting… 3s\n");
   t.mock.timers.tick(6_000);
-  assert.equal(renderedStatus(calls), " ✻ Reconnecting… (9s)\n");
+  assert.equal(renderedStatus(calls), " ✻ Reconnecting… 9s\n");
 });
 
 test("clearing or switching to working starts the next non-agent status with a fresh timer", (t) => {
@@ -392,7 +384,7 @@ test("clearing or switching to working starts the next non-agent status with a f
   assert.ok(!renderedStatus(calls).includes("Summarizing…"));
   setNativeStatus(editor, nativeStatus("retry", "Retrying (1/3) in 5s... (esc to cancel)"));
   const retry = renderedStatus(calls);
-  assert.equal(retry, " ✻ Waiting… (0s)\n");
+  assert.equal(retry, " ✻ Waiting… 0s\n");
 });
 
 test("prompt marker stays outside submitted text and preserves wrapped input and mouse placement", () => {
@@ -518,45 +510,6 @@ test("shutdown invalidates the local generation before cleanup", () => {
   assert.equal(calls.visibility.length, callCount);
 });
 
-test("terminal content supplies fallback tokens without double-counting deltas", () => {
-  const handlers = register();
-  const { calls, ctx } = createContext();
-  emit(handlers, "session_start", ctx);
-  emit(handlers, "agent_start", ctx);
-
-  const content = [{ type: "text", text: "12345678" }];
-  emit(handlers, "message_update", ctx, {
-    message: assistantMessage(content),
-    assistantMessageEvent: { type: "text_delta", delta: "12345678" },
-  });
-  assert.equal(latestTokens(calls), "2");
-  emit(handlers, "message_update", ctx, {
-    message: assistantMessage(content),
-    assistantMessageEvent: { type: "text_end" },
-  });
-  assert.equal(latestTokens(calls), "2");
-  cleanup(handlers, ctx);
-});
-
-test("terminal thinking and tool-call events estimate content when no delta arrived", () => {
-  const handlers = register();
-  const { calls, ctx } = createContext();
-  emit(handlers, "session_start", ctx);
-  emit(handlers, "agent_start", ctx);
-
-  emit(handlers, "message_update", ctx, {
-    message: assistantMessage([{ type: "thinking", thinking: "12345678" }]),
-    assistantMessageEvent: { type: "thinking_end" },
-  });
-  assert.equal(latestTokens(calls), "2");
-  emit(handlers, "message_update", ctx, {
-    message: assistantMessage([{ type: "toolCall", arguments: { command: "12345678" } }]),
-    assistantMessageEvent: { type: "toolcall_end" },
-  });
-  assert.ok(Number.parseFloat(latestTokens(calls)) >= 2);
-  cleanup(handlers, ctx);
-});
-
 test("message updates render at most once for identical state in an animation frame", (t) => {
   t.mock.timers.enable({ apis: ["Date", "setInterval"], now: 50000 });
   const handlers = register();
@@ -574,22 +527,22 @@ test("message updates render at most once for identical state in an animation fr
   cleanup(handlers, ctx);
 });
 
-test("steering and follow-ups preserve totals while normal input resets them", () => {
+test("the agent timer keeps running through steering and follow-ups and restarts on a new prompt", (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: 50_000 });
   const handlers = register();
   const { calls, ctx } = createContext();
   emit(handlers, "session_start", ctx);
-  emit(handlers, "agent_start", ctx);
-  emit(handlers, "message_update", ctx, {
-    message: assistantMessage([{ type: "text", text: "12345678" }]),
-    assistantMessageEvent: { type: "text_delta", delta: "12345678" },
-  });
-  const tokens = latestTokens(calls);
-  emit(handlers, "input", ctx, { streamingBehavior: "steer" });
-  assert.equal(latestTokens(calls), tokens);
-  emit(handlers, "input", ctx, { streamingBehavior: "followUp" });
-  assert.equal(latestTokens(calls), tokens);
   emit(handlers, "input", ctx, { streamingBehavior: "prompt" });
-  assert.equal(latestTokens(calls), "0");
+  emit(handlers, "agent_start", ctx);
+  t.mock.timers.tick(5_000);
+  emit(handlers, "input", ctx, { streamingBehavior: "steer" });
+  emit(handlers, "turn_start", ctx);
+  assert.match(calls.messages.at(-1)!, / 5s$/);
+  emit(handlers, "input", ctx, { streamingBehavior: "followUp" });
+  emit(handlers, "turn_start", ctx);
+  assert.match(calls.messages.at(-1)!, / 5s$/);
+  emit(handlers, "input", ctx, { streamingBehavior: "prompt" });
+  assert.match(calls.messages.at(-1)!, / 0s$/);
   cleanup(handlers, ctx);
 });
 

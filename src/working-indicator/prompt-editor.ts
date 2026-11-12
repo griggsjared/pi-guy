@@ -60,7 +60,7 @@ export class PromptEditor extends CustomEditor {
       }
       const theme = this.getTheme();
       const frame = animate(theme, `${words[wordIndex]!}…`, elapsed);
-      return { ...frame, duration: theme.fg("dim", `(${formatDuration(elapsed)})`) };
+      return { ...frame, duration: theme.fg("dim", formatDuration(elapsed)) };
     };
     this.showStatus({
       render(width) {
