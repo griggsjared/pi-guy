@@ -609,10 +609,11 @@ test("renders ANSI-themed footer within a narrow width and disposes its timer", 
   ]);
   registerStatusline({ on } as any);
   let contextTokens = 1000;
+  let contextWindow = 1_000_000;
   const context = {
     model: { name: "a-very-long-model-name", provider: "openai-codex" },
     thinkingLevel: "off",
-    getContextUsage: () => ({ tokens: contextTokens, contextWindow: 1000000 }),
+    getContextUsage: () => ({ tokens: contextTokens, contextWindow }),
     sessionManager: {
       getLeafId: () => null,
       getBranch: () => [
@@ -653,8 +654,11 @@ test("renders ANSI-themed footer within a narrow width and disposes its timer", 
       /^ a-very-long-model-name s:a-very-long-selected-profile-name 1k\/1m c:75% {2,}42% openai-codex $/,
     );
     assert.equal(wide.length, 120);
-    contextTokens = 200000;
+    contextTokens = 199_500;
     assert.match(rendered.render(120)[0], /\x1b\[31m200k\/1m\x1b\[0m/);
+    contextTokens = 1_250_000;
+    contextWindow = 2_000_000;
+    assert.match(rendered.render(120)[0], /\x1b\[31m1\.3m\/2m\x1b\[0m/);
     const lines = rendered.render(20);
     assert.equal(lines.length, 2);
     assert.equal(lines[1], " jobs:1 running ");

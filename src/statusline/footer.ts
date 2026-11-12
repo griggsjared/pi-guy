@@ -1,6 +1,6 @@
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { formatTokens } from "../lib/format.ts";
+import { formatTokens, roundTokens } from "../lib/format.ts";
 import { decodeUsageStatus, isQuotaProvider, USAGE_STATUS_KEY } from "./usage-status.ts";
 import type { UsageBalance, UsageStatus } from "./usage-status.ts";
 
@@ -15,6 +15,9 @@ const USAGE_WARNING_PERCENT = 90;
 const LOW_BALANCE_ERROR_USD = 0.5;
 const LOW_BALANCE_WARNING_USD = 1;
 const CONTEXT_USAGE_ERROR_TOKENS = 200_000;
+const CONTEXT_USAGE_MILLIONS_FROM_TOKENS = 1_000_000;
+const CONTEXT_USAGE_THOUSANDS_DECIMALS = 0;
+const CONTEXT_USAGE_MILLIONS_DECIMALS = 1;
 
 export function decodeFooterUsageStatus(value: string | undefined): UsageStatus | undefined {
   return value ? decodeUsageStatus(value) : undefined;
@@ -149,9 +152,16 @@ export function registerStatusline(pi: ExtensionAPI) {
           // Context usage
           const contextUsage = ctx.getContextUsage();
           if (contextUsage && contextUsage.tokens !== null && contextUsage.contextWindow > 0) {
-            const used = formatTokens(contextUsage.tokens);
-            const total = formatTokens(contextUsage.contextWindow);
-            line += ` ${theme.fg(contextUsage.tokens >= CONTEXT_USAGE_ERROR_TOKENS ? "error" : "borderAccent", `${used}/${total}`)}`;
+            const decimals = (count: number) =>
+              count < CONTEXT_USAGE_MILLIONS_FROM_TOKENS
+                ? CONTEXT_USAGE_THOUSANDS_DECIMALS
+                : CONTEXT_USAGE_MILLIONS_DECIMALS;
+            const usedDecimals = decimals(contextUsage.tokens);
+            const used = formatTokens(contextUsage.tokens, usedDecimals);
+            const total = formatTokens(contextUsage.contextWindow, decimals(contextUsage.contextWindow));
+            // Compare the rounded count so the label turns red as soon as it reads the threshold.
+            const shownTokens = roundTokens(contextUsage.tokens, usedDecimals);
+            line += ` ${theme.fg(shownTokens >= CONTEXT_USAGE_ERROR_TOKENS ? "error" : "borderAccent", `${used}/${total}`)}`;
           }
 
           const leafId = ctx.sessionManager.getLeafId();
