@@ -100,12 +100,16 @@ test("discovery returns no agents for a missing directory", async (t) => {
   assert.deepEqual(await discoverAgents(join(dir, "agents")), []);
 });
 
-test("legacy settings become the default profile with validated overrides", () => {
+test("profile overrides validate models and thinking levels and ignore tools", () => {
   const settings = parseSubagentSettings({
-    defaults: { model: "gpt-5", thinkingLevel: "max", tools: ["edit"] },
-    agents: {
-      scout: { model: "sonnet:high", thinkingLevel: "high" },
-      invalid: { model: "openai/gpt\u0000", thinkingLevel: "maximum" },
+    profiles: {
+      default: {
+        defaults: { model: "gpt-5", thinkingLevel: "max", tools: ["edit"] },
+        agents: {
+          scout: { model: "sonnet:high", thinkingLevel: "high" },
+          invalid: { model: "openai/gpt\u0000", thinkingLevel: "maximum" },
+        },
+      },
     },
   });
   assert.deepEqual(Object.keys(settings.profiles), ["session", "default"]);
@@ -127,49 +131,18 @@ test("timeout-only overrides survive when inactivityTimeoutMs is valid", () => {
   }
 });
 
-test("missing or malformed configuration uses the session profile", async (t) => {
-  const dir = await tempDir(t, "subagents-test-");
-  const file = join(dir, "subagents.json");
-  const fallback = join(dir, "settings.json");
-  const empty = { profiles: { session: { defaults: {}, agents: {} } }, extensions: [] };
-  assert.deepEqual(await loadSubagentSettings(file, fallback), empty);
-
-  await writeFile(fallback, "{");
-  assert.deepEqual(await loadSubagentSettings(file, fallback), empty);
-
-  await writeFile(fallback, JSON.stringify({ subagents: { profiles: { saved: {} } } }));
-  await writeFile(file, "{");
-  assert.deepEqual(await loadSubagentSettings(file, fallback), empty);
-});
-
-test("configuration uses the agent directory and prefers subagents.json over settings.json", async (t) => {
+test("configuration defaults to the agent directory", async (t) => {
   const dir = await tempDir(t, "subagents-test-");
   const previous = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = dir;
-  const file = join(dir, "subagents.json");
-  const fallback = join(dir, "settings.json");
+  const file = join(dir, "pi-guy.json");
   try {
-    await writeFile(fallback, JSON.stringify({ subagents: { profiles: { legacy: {} } } }));
-    assert.deepEqual(Object.keys((await loadSubagentSettings()).profiles), ["session", "legacy"]);
-
-    await writeFile(file, JSON.stringify({ profiles: { current: {} } }));
+    await writeFile(file, JSON.stringify({ subagents: { profiles: { current: {} } } }));
     assert.deepEqual(Object.keys((await loadSubagentSettings()).profiles), ["session", "current"]);
   } finally {
     if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
     else process.env.PI_CODING_AGENT_DIR = previous;
   }
-});
-
-test("dedicated and fallback configuration reject reserved session profiles", async (t) => {
-  const dir = await tempDir(t, "subagents-test-");
-  const file = join(dir, "subagents.json");
-  const fallback = join(dir, "settings.json");
-  await writeFile(fallback, JSON.stringify({ subagents: { profiles: { session: { enabled: false } } } }));
-  await assert.rejects(loadSubagentSettings(file, fallback), /profile name "session" is reserved/);
-
-  await writeFile(fallback, JSON.stringify({ subagents: { profiles: { valid: {} } } }));
-  await writeFile(file, JSON.stringify({ profiles: { session: {} } }));
-  await assert.rejects(loadSubagentSettings(file, fallback), /profile name "session" is reserved/);
 });
 
 test("extension settings keep only well-formed npm package specs", () => {
@@ -183,7 +156,7 @@ test("extension settings keep only well-formed npm package specs", () => {
       "npm:has space",
       42,
     ],
-    defaults: { model: "gpt-5" },
+    profiles: { default: { defaults: { model: "gpt-5" } } },
   });
   assert.deepEqual(settings.extensions, ["npm:pi-claude-bridge", "npm:@scope/pkg"]);
 });
@@ -227,8 +200,12 @@ test("extension paths use package manifests and honor the configured package dir
 
 test("agent overrides take precedence over frontmatter and profile defaults", () => {
   const settings = parseSubagentSettings({
-    defaults: { model: "default/model", thinkingLevel: "low", inactivityTimeoutMs: 100 },
-    agents: { scout: { model: "local/model", thinkingLevel: "high", inactivityTimeoutMs: 0 } },
+    profiles: {
+      default: {
+        defaults: { model: "default/model", thinkingLevel: "low", inactivityTimeoutMs: 100 },
+        agents: { scout: { model: "local/model", thinkingLevel: "high", inactivityTimeoutMs: 0 } },
+      },
+    },
   });
   const agent = resolveAgentSettings(
     {
@@ -355,7 +332,7 @@ test("a profile named default and former defaultProfile are not privileged", () 
 
 test("disabled profile configuration remains in the file and can be restored", async (t) => {
   const dir = await tempDir(t, "subagents-test-");
-  const file = join(dir, "subagents.json");
+  const file = join(dir, "pi-guy.json");
   const config = {
     profiles: {
       active: {},
@@ -366,7 +343,7 @@ test("disabled profile configuration remains in the file and can be restored", a
       },
     },
   };
-  const text = JSON.stringify(config);
+  const text = JSON.stringify({ subagents: config });
   await writeFile(file, text);
   assert.deepEqual(Object.keys((await loadSubagentSettings(file)).profiles), ["session", "active"]);
   assert.equal(await readFile(file, "utf8"), text);

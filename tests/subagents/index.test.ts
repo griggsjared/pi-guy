@@ -315,7 +315,7 @@ test("extension selects profiles explicitly and uses the headless fallback", asy
   ];
   for (const entry of cases) {
     await t.test(entry.name, async (t) => {
-      await writeFile(join(settingsDir, "subagents.json"), JSON.stringify({ profiles: entry.profiles }));
+      await writeFile(join(settingsDir, "pi-guy.json"), JSON.stringify({ subagents: { profiles: entry.profiles } }));
       const children = [new FakeChild(), new FakeChild()];
       const { spawnFn, calls } = fakeSpawnChildren(children);
       t.mock.method(childProcess, "spawn", spawnFn);

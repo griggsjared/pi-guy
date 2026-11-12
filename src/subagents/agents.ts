@@ -1,6 +1,7 @@
 import { readFile, readdir } from "node:fs/promises";
 import { join, parse } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { loadSettingsSection } from "../lib/settings.ts";
 
 export const SESSION_PROFILE_NAME = "session";
 /** A profile choice that blocks new subagent launches; it is not an entry in settings.profiles. */
@@ -138,38 +139,11 @@ export function parseSubagentSettings(value: unknown): SubagentSettings {
     }
   }
 
-  // Accept the original unprofiled shape as the default profile.
-  if (Object.keys(profiles).length === 0 && (config.defaults !== undefined || config.agents !== undefined)) {
-    const legacy = parseProfile(config);
-    if (legacy) profiles.default = legacy;
-  }
   return { profiles: { [SESSION_PROFILE_NAME]: EMPTY_PROFILE, ...profiles }, extensions };
 }
 
-export async function loadSubagentSettings(
-  path = join(getAgentDir(), "subagents.json"),
-  fallbackPath = join(getAgentDir(), "settings.json"),
-): Promise<SubagentSettings> {
-  let text: string;
-  try {
-    text = await readFile(path, "utf8");
-  } catch {
-    let settings: unknown;
-    try {
-      settings = JSON.parse(await readFile(fallbackPath, "utf8"));
-    } catch {
-      return EMPTY_SETTINGS;
-    }
-    if (!settings || typeof settings !== "object" || Array.isArray(settings)) return EMPTY_SETTINGS;
-    return parseSubagentSettings((settings as Record<string, unknown>).subagents);
-  }
-  let config: unknown;
-  try {
-    config = JSON.parse(text);
-  } catch {
-    return EMPTY_SETTINGS;
-  }
-  return parseSubagentSettings(config);
+export async function loadSubagentSettings(path?: string): Promise<SubagentSettings> {
+  return parseSubagentSettings(await loadSettingsSection("subagents", path));
 }
 
 function getSubagentProfile(settings: SubagentSettings, profileName?: string): SubagentProfile {
