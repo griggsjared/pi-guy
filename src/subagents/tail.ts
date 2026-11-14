@@ -2,13 +2,14 @@ import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
 import type { Component, TUI } from "@earendil-works/pi-tui";
 import { boxed } from "../lib/box.ts";
+import { drawerRows } from "../lib/drawer.ts";
 import { formatDuration } from "../lib/format.ts";
 import { MIN_DISPLAY_DURATION_MS } from "./constants.ts";
 import type { Job, JobRegistry } from "./registry.ts";
 import type { JobEvent, JobStep } from "./types.ts";
 
 const MAX_TAIL_EVENTS = 100;
-const MAX_VISIBLE_EVENTS = 14;
+const MIN_EVENT_ROWS = 3;
 const POLL_INTERVAL_MS = 250;
 const MAX_FIRST_LINE_CHARS = 120;
 /** Width of the event kind column, shared with the peek tool's renderer. */
@@ -122,8 +123,7 @@ export class SubagentTail implements Component {
   private scrollTop = 0;
   private scrollLimit = 0;
   private viewport = 1;
-  private pageRows = 1;
-  private eventStart = 0;
+  private terminalRows = 0;
   private renderedEventSeqs: number[] = [];
   private follow = true;
   private timer: ReturnType<typeof setInterval> | undefined;
@@ -263,9 +263,9 @@ export class SubagentTail implements Component {
     } else if (matchesKey(data, Key.down)) {
       this.scrollTo(this.scrollTop + 1);
     } else if (matchesKey(data, Key.pageUp)) {
-      this.scrollTo(this.scrollTop - this.pageRows);
+      this.scrollTo(this.scrollTop - this.viewport);
     } else if (matchesKey(data, Key.pageDown)) {
-      this.scrollTo(this.scrollTop + this.pageRows);
+      this.scrollTo(this.scrollTop + this.viewport);
     } else if (matchesKey(data, Key.home)) {
       this.scrollTo(0);
     } else if (matchesKey(data, Key.end)) {
@@ -275,9 +275,8 @@ export class SubagentTail implements Component {
 
   render(width: number): string[] {
     const maxWidth = Math.max(1, Math.floor(width));
-    const anchorSeq = this.renderedEventSeqs[this.scrollTop - this.eventStart];
-    const anchorRange = this.renderedEventSeqs.length > 0 && this.scrollTop === this.eventStart - 1;
-    const previousViewport = this.viewport;
+    const anchorSeq = this.renderedEventSeqs[this.scrollTop];
+    const previousTerminalRows = this.terminalRows;
     const job = this.registry.get(this.jobId);
     const now = Date.now();
     const status = job?.status ?? "unavailable";
@@ -306,57 +305,46 @@ export class SubagentTail implements Component {
       lines.push(this.theme.fg("warning", `History dropped before event ${this.droppedBefore}.`));
     }
 
-    const rangeIndex = lines.length;
-    lines.push("");
-    this.eventStart = lines.length;
-    if (this.events.length === 0) {
-      lines.push(this.theme.fg("dim", "No semantic events yet."));
-    } else {
-      for (const event of this.events) {
-        const summary = formatEventSummary(event) || "(empty)";
-        const label = eventKindLabel(event.kind).padEnd(EVENT_LABEL_WIDTH);
-        const timing = formatEventTiming(event, job, now);
-        lines.push(
-          `${this.theme.fg("dim", `[${event.seq}] ${timing.timestamp}`)} ${this.theme.fg(eventColor(event.kind), label)} ${this.theme.fg("muted", summary + timing.suffix)}`,
-        );
-      }
-    }
-
-    const terminalRows = this.tui.terminal?.rows ?? 24;
-    const available = Math.max(0, terminalRows - (terminalRows >= 3 ? 2 : 0));
-    const borders = maxWidth >= 3 && available >= 3;
-    const hint = available >= (borders ? 4 : 2);
-    this.viewport = Math.max(1, available - (borders ? 2 : 0) - (hint ? 1 : 0));
-    this.scrollLimit = Math.max(
-      0,
-      lines.length - this.viewport,
-      this.events.length > MAX_VISIBLE_EVENTS ? lines.length - MAX_VISIBLE_EVENTS : 0,
-    );
+    this.terminalRows = this.tui.terminal?.rows ?? 24;
+    const maxRows = drawerRows(this.terminalRows);
+    const borders = maxWidth >= 3 && maxRows >= 2;
+    const innerRows = maxRows - (borders ? 1 : 0);
+    const hint = innerRows >= 2;
+    const bodyRows = innerRows - (hint ? 1 : 0);
+    // The header stays in place above the events and gives up rows first when the terminal is short.
+    const headerRows = Math.min(lines.length + 1, Math.max(bodyRows >= 2 ? 1 : 0, bodyRows - MIN_EVENT_ROWS));
+    this.viewport = bodyRows - headerRows;
+    this.scrollLimit = Math.max(0, this.events.length - this.viewport);
     if (!this.follow) {
       if (anchorSeq !== undefined) {
         const index = this.events.findIndex((event) => event.seq >= anchorSeq);
-        this.scrollTop = this.eventStart + (index < 0 ? Math.max(0, this.events.length - 1) : index);
-      } else if (anchorRange) this.scrollTop = rangeIndex;
-      if (this.viewport > previousViewport && this.scrollTop >= this.scrollLimit) this.follow = true;
+        this.scrollTop = index < 0 ? this.events.length : index;
+      }
+      // Only a taller terminal resumes following; a shrinking header also enlarges the event area.
+      if (this.terminalRows > previousTerminalRows && this.scrollTop >= this.scrollLimit) this.follow = true;
     }
     this.scrollTop = this.follow ? this.scrollLimit : Math.min(this.scrollLimit, Math.max(0, this.scrollTop));
     this.renderedEventSeqs = this.events.map((event) => event.seq);
-    const visibleEnd = Math.min(
-      lines.length,
-      this.scrollTop + this.viewport,
-      Math.max(this.scrollTop, this.eventStart) + MAX_VISIBLE_EVENTS,
+    const shown = this.events.slice(this.scrollTop, this.scrollTop + this.viewport);
+    lines.push(
+      this.theme.fg(
+        "dim",
+        `Events ${shown.length > 0 ? this.scrollTop + 1 : 0}-${this.scrollTop + shown.length}/${this.events.length} · cursor ${this.cursor}${this.follow ? " · following" : " · paused"}`,
+      ),
     );
-    const start = Math.min(this.events.length, Math.max(this.scrollTop, this.eventStart) - this.eventStart);
-    const end = Math.min(this.events.length, Math.max(0, visibleEnd - this.eventStart));
-    lines[rangeIndex] = this.theme.fg(
-      "dim",
-      `Events ${end > start ? start + 1 : 0}-${end}/${this.events.length} · cursor ${this.cursor}${this.follow ? " · following" : " · paused"}`,
-    );
-    const visible = lines.slice(this.scrollTop, visibleEnd);
-    this.pageRows = Math.max(1, visible.length);
+    const visible = lines.slice(0, headerRows);
+    if (this.events.length === 0) visible.push(this.theme.fg("dim", "No semantic events yet."));
+    for (const event of shown) {
+      const summary = formatEventSummary(event) || "(empty)";
+      const label = eventKindLabel(event.kind).padEnd(EVENT_LABEL_WIDTH);
+      const timing = formatEventTiming(event, job, now);
+      visible.push(
+        `${this.theme.fg("dim", `[${event.seq}] ${timing.timestamp}`)} ${this.theme.fg(eventColor(event.kind), label)} ${this.theme.fg("muted", summary + timing.suffix)}`,
+      );
+    }
     if (hint) visible.push(this.theme.fg("dim", "↑↓/PgUp/PgDn scroll · Home/End jump · Esc/q close"));
     if (borders) return boxed(visible, maxWidth, this.theme);
-    return available === 0 ? [] : visible.map((line) => truncateToWidth(line, maxWidth, "", true));
+    return visible.map((line) => truncateToWidth(line, maxWidth, "", true));
   }
 
   invalidate(): void {}

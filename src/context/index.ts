@@ -1,15 +1,14 @@
 import { convertToLlm } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
-import type { TUI } from "@earendil-works/pi-tui";
 import { boxed } from "../lib/box.ts";
+import { DRAWER_OVERLAY_OPTIONS, drawerRows } from "../lib/drawer.ts";
 
 const CHARS_PER_TOKEN = 4;
 const GRID_ROWS = 4;
 const MAX_GRID_COLUMNS = 20;
 const WARNING_PERCENT = 90;
 const ERROR_PERCENT = 100;
-const OVERLAY_MARGIN = 1;
 
 function allocate(weights: number[], total: number): number[] {
   const sum = weights.reduce((value, weight) => value + weight, 0);
@@ -91,20 +90,15 @@ export default function (pi: ExtensionAPI) {
         ] as const;
         const number = (value: number | null) => (value === null ? "unknown" : value.toLocaleString("en-US"));
 
-        let overlayTui: TUI | undefined;
         await ctx.ui.custom<void>(
           (tui, theme, keybindings, done) => {
-            overlayTui = tui;
             let scrollTop = 0;
             let viewportRows = 1;
             let maxScroll = 0;
             return {
               render: (width: number) => {
-                const maxRows = Math.max(
-                  1,
-                  Math.floor(tui.terminal.rows) - (tui.terminal.rows >= 3 ? OVERLAY_MARGIN * 2 : 0),
-                );
-                const bordered = width >= 3 && maxRows >= 3;
+                const maxRows = drawerRows(tui.terminal.rows);
+                const bordered = width >= 3 && maxRows >= 2;
                 const innerWidth = Math.max(1, width - (bordered ? 2 : 0));
                 const columns = Math.min(MAX_GRID_COLUMNS, Math.max(1, Math.floor((innerWidth + 1) / 2)));
                 const cells = columns * GRID_ROWS;
@@ -153,7 +147,7 @@ export default function (pi: ExtensionAPI) {
                   ),
                 );
                 const body = lines.flatMap((line) => wrapTextWithAnsi(line, innerWidth));
-                const availableRows = maxRows - (bordered ? 2 : 0);
+                const availableRows = maxRows - (bordered ? 1 : 0);
                 const showHint = availableRows >= 2;
                 viewportRows = availableRows - (showHint ? 1 : 0);
                 maxScroll = Math.max(0, body.length - viewportRows);
@@ -186,23 +180,7 @@ export default function (pi: ExtensionAPI) {
               invalidate: () => {},
             };
           },
-          {
-            overlay: true,
-            overlayOptions: {
-              anchor: "center",
-              width: "100%",
-              minWidth: 60,
-              maxHeight: "100%",
-              get margin() {
-                if (!overlayTui) return OVERLAY_MARGIN;
-                const horizontal = overlayTui.terminal.columns >= 3 ? OVERLAY_MARGIN : 0;
-                const vertical = overlayTui.terminal.rows >= 3 ? OVERLAY_MARGIN : 0;
-                return horizontal && vertical
-                  ? OVERLAY_MARGIN
-                  : { top: vertical, bottom: vertical, left: horizontal, right: horizontal };
-              },
-            },
-          },
+          { overlay: true, overlayOptions: DRAWER_OVERLAY_OPTIONS },
         );
       } catch (error) {
         ctx.ui.notify(

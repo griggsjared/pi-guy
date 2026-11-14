@@ -300,36 +300,24 @@ test("nonzero usage with no text or schemas remains unattributed", async () => {
   assert.doesNotMatch(empty, /Unattributed/);
 });
 
-test("centered overlay handles minimal width and dismisses with configured keys", async () => {
+test("top drawer handles minimal width and dismisses with configured keys", async () => {
   const h = harness();
   const running = h.start();
   assert.equal(h.options?.overlay, true);
-  assert.deepEqual(h.options?.overlayOptions, {
-    anchor: "center",
-    width: "100%",
-    minWidth: 60,
-    maxHeight: "100%",
-    margin: 1,
-  });
+  assert.deepEqual(h.options?.overlayOptions, { anchor: "top-center", width: "100%", maxHeight: "100%" });
   const tui = new TuiMainScreen(h.terminal as never);
   const overlay = tui.showOverlay(h.modal, h.options?.overlayOptions);
-  for (const [columns, rows, margin] of [
-    [1, 1, { top: 0, bottom: 0, left: 0, right: 0 }],
-    [1, 9, { top: 1, bottom: 1, left: 0, right: 0 }],
-    [80, 2, { top: 0, bottom: 0, left: 1, right: 1 }],
-    [80, 9, 1],
+  for (const [columns, rows, height] of [
+    [1, 1, 1],
+    [1, 9, 7],
+    [80, 2, 2],
+    [80, 9, 7],
   ] as const) {
     h.terminal.columns = columns;
     h.terminal.rows = rows;
-    assert.deepEqual(h.options?.overlayOptions?.margin, margin);
     tui.renderNow(true);
-    const bounds = overlay.getBounds();
-    assert.ok(bounds);
-    assert.ok(bounds.row >= 0 && bounds.row + bounds.height <= rows);
-    assert.ok(bounds.col >= 0 && bounds.col + bounds.width <= columns);
-    assert.equal(bounds.width, columns - (columns >= 3 ? 2 : 0));
-    assert.equal(bounds.height, rows - (rows >= 3 ? 2 : 0));
-    assert.equal(h.render(bounds.width).length, bounds.height);
+    assert.deepEqual(overlay.getBounds(), { row: 0, col: 0, width: columns, height });
+    assert.equal(h.render(columns).length, height);
   }
   overlay.hide();
   tui.stop();
@@ -403,7 +391,7 @@ test("pages through wrapped context and adapts to terminal resizing", async () =
   assert.match(h.render(30).join(""), /Model: Test model/);
   for (let i = 0; i < 100; i++) {
     h.input("\x1b[6~");
-    assert.equal(h.render(30).length, 1);
+    assert.equal(h.render(30).length, 3);
   }
   assert.match(h.render(30).join(""), /measured\./);
   h.input("\x1b");
