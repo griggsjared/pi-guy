@@ -5,6 +5,7 @@ import btw from "./btw/index.ts";
 import context from "./context/index.ts";
 import githubPr from "./github-pr/index.ts";
 import header from "./header/index.ts";
+import providerUsage from "./provider-usage/index.ts";
 import statusline from "./statusline/index.ts";
 import subagents from "./subagents/index.ts";
 import webSearch from "./web-search/index.ts";
@@ -20,6 +21,7 @@ const factories: ExtensionFactory[] = [
   header,
   webSearch,
   statusline,
+  providerUsage,
   subagents,
   workingIndicator,
 ];

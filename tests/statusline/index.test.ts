@@ -1,931 +1,624 @@
 import assert from "node:assert/strict";
-import fs from "node:fs/promises";
 import { test } from "node:test";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import providerUsage from "../../src/statusline/index.ts";
-import { CLAUDE_BRIDGE_CACHE_TTL_MS } from "../../src/statusline/providers/claude-bridge.ts";
-import { claudeCapturedAt, claudeOutput, mockCli } from "../helpers/claude-cli.ts";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { visibleWidth } from "@earendil-works/pi-tui";
+import statusline, { decodeFooterUsageStatus } from "../../src/statusline/index.ts";
+import { tempDir } from "../helpers/fs.ts";
 import { captureHandlers } from "../helpers/pi.ts";
 import { fakeTheme } from "../helpers/theme.ts";
-import { flush } from "../helpers/wait.ts";
-import { mountProviderUsage } from "./helpers.ts";
+import { mountFooter } from "./helpers.ts";
 
-test("entry wiring registers the footer and publishes provider status", async () => {
-  const { handlers, on } = captureHandlers();
-  providerUsage({
-    events: {
-      on() {
-        return () => {};
-      },
-      emit() {},
+test("rejects malformed status transport and accepts unknown state", () => {
+  assert.equal(decodeFooterUsageStatus("not json"), undefined);
+  assert.deepEqual(
+    decodeFooterUsageStatus(
+      JSON.stringify({
+        provider: "opencode-go",
+        state: "unknown",
+        capturedAtMs: 1_000,
+        windows: [],
+      }),
+    ),
+    {
+      provider: "opencode-go",
+      state: "unknown",
+      capturedAtMs: 1_000,
+      windows: [],
     },
-    on,
-  } as unknown as ExtensionAPI);
-  let footerSet = false;
-  const statuses: Array<string | undefined> = [];
+  );
+});
+
+test("refreshes footer leaf cache for persisted usage and keeps cache hits branch-local", async (t) => {
+  const directory = await tempDir(t, "statusline-cost-");
+  const sessionManager = SessionManager.create(directory, directory);
+  const usage = (total: number) => ({
+    input: 25,
+    output: 0,
+    cacheRead: 75,
+    cacheWrite: 0,
+    totalTokens: 100,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total },
+  });
+  const { handlers, on } = captureHandlers();
+  let footer: any;
+  let rendered: any;
+  let branchReads = 0;
+  statusline({ on } as any);
   const context = {
-    hasUI: true,
-    model: { provider: "deepseek" },
-    modelRegistry: { getProvider: () => undefined, getProviderAuth: async () => undefined },
+    model: { name: "model", provider: "deepseek" },
+    thinkingLevel: "off",
+    getContextUsage: () => undefined,
+    sessionManager: {
+      getLeafId: () => sessionManager.getLeafId(),
+      getBranch: () => {
+        branchReads++;
+        return sessionManager.getBranch();
+      },
+    },
+    ui: {
+      setFooter(callback: any) {
+        footer = callback;
+      },
+    },
+  };
+  try {
+    const userId = sessionManager.appendMessage({ role: "user", content: "test", timestamp: 0 });
+    const assistantId = sessionManager.appendMessage({
+      role: "assistant",
+      content: [],
+      api: "openai-completions",
+      provider: "deepseek",
+      model: "model",
+      usage: usage(1),
+      stopReason: "stop",
+      timestamp: 0,
+    });
+    handlers.get("session_start")?.[0]?.({}, context);
+    rendered = footer({ invalidate() {} }, fakeTheme(), { getExtensionStatuses: () => new Map() });
+    assert.match(rendered.render(120)[0], /c:75% {2,}deepseek $/);
+    rendered.render(120);
+    assert.equal(branchReads, 1);
+    const warm = sessionManager.appendUsage("cache_warm", "deepseek", "model", {
+      ...usage(2),
+      input: 100,
+      cacheRead: 0,
+    });
+    assert.equal(sessionManager.getLeafId(), warm.id);
+    assert.equal(warm.parentId, assistantId);
+    assert.match(rendered.render(120)[0], /c:75% {2,}deepseek $/);
+    assert.equal(branchReads, 2);
+    sessionManager.branchWithSummary(assistantId, "branch", undefined, false, usage(6));
+    assert.match(rendered.render(120)[0], /c:75% {2,}deepseek $/);
+    sessionManager.branch(userId);
+    const otherAssistantId = sessionManager.appendMessage({
+      role: "assistant",
+      content: [],
+      api: "openai-completions",
+      provider: "deepseek",
+      model: "model",
+      usage: { ...usage(1), input: 75, cacheRead: 25 },
+      stopReason: "stop",
+      timestamp: 0,
+    });
+    assert.match(rendered.render(120)[0], /c:25% {2,}deepseek $/);
+    sessionManager.branch(warm.id);
+    assert.match(rendered.render(120)[0], /c:75% {2,}deepseek $/);
+    sessionManager.branch(otherAssistantId);
+    assert.match(rendered.render(120)[0], /c:25% {2,}deepseek $/);
+    sessionManager.resetLeaf();
+    assert.equal(rendered.render(120)[0], " model" + " ".repeat(105) + "deepseek ");
+  } finally {
+    rendered?.dispose();
+  }
+});
+
+test("right-aligns balance beside DeepSeek", () => {
+  let rendered: any;
+  const statuses = new Map([
+    [
+      "provider-usage",
+      JSON.stringify({
+        provider: "deepseek",
+        state: "ready",
+        capturedAtMs: 0,
+        windows: [],
+        balance: { amount: 42.5, currency: "USD" },
+      }),
+    ],
+  ]);
+  const context = {
+    model: { name: "DeepSeek V4.1 Flash", provider: "deepseek" },
+    thinkingLevel: "off",
+    getContextUsage: () => undefined,
+    sessionManager: {
+      getLeafId: () => null,
+      getBranch: () => [{ type: "message", message: { role: "assistant", usage: { cost: { total: 0.042 } } } }],
+    },
+  };
+  try {
+    rendered = mountFooter(context, statuses);
+    const line = rendered.render(120)[0];
+    assert.match(line, /^ DeepSeek V4\.1 Flash {2,}b:\$42\.50 deepseek $/);
+    assert.equal(line.length, 120);
+    assert.equal(rendered.render(40)[0], " DeepSeek V4.1 Flash  b:$42.50 deepseek ");
+    assert.doesNotMatch(rendered.render(39)[0], /b:/);
+    assert.equal(rendered.render(32)[0], " DeepSeek V4.1 Flash   deepseek ");
+  } finally {
+    rendered?.dispose();
+  }
+});
+
+test("right-aligns nonquota providers without a balance", () => {
+  let rendered: any;
+  const statuses = new Map([
+    ["provider-usage", JSON.stringify({ provider: "deepseek", state: "unknown", capturedAtMs: 0, windows: [] })],
+  ]);
+  const context = {
+    model: { name: "DeepSeek V4.1 Flash", provider: "deepseek" },
+    thinkingLevel: "off",
+    getContextUsage: () => undefined,
+    sessionManager: {
+      getLeafId: () => null,
+      getBranch: () => [{ type: "message", message: { role: "assistant", usage: { cost: { total: 0.042 } } } }],
+    },
+  };
+  try {
+    rendered = mountFooter(context, statuses);
+    for (const provider of ["deepseek", "google"]) {
+      context.model.provider = provider;
+      const line = rendered.render(120)[0];
+      assert.equal(
+        line,
+        " DeepSeek V4.1 Flash" + " ".repeat(118 - context.model.name.length - provider.length) + provider + " ",
+      );
+      assert.ok(line.endsWith(provider + " "));
+      assert.equal(line.length, 120);
+      assert.doesNotMatch(line, /quota:\?/);
+    }
+  } finally {
+    rendered?.dispose();
+  }
+});
+
+test("shows no usage until it is known, then right-aligns quota windows beside the provider without session cost", () => {
+  const { handlers, on } = captureHandlers();
+  let footer: ((...args: any[]) => any) | undefined;
+  let rendered: any;
+  const statuses = new Map([
+    ["provider-usage", JSON.stringify({ provider: "openai-codex", state: "unknown", capturedAtMs: 0, windows: [] })],
+    ["subagent-profile", "review"],
+  ]);
+  statusline({ on } as any);
+  const context = {
+    model: { name: "GPT-5.6 Luna", provider: "openai-codex" },
+    thinkingLevel: "high",
+    getContextUsage: () => ({ tokens: 1000, contextWindow: 200000 }),
+    sessionManager: {
+      getLeafId: () => null,
+      getBranch: () => [
+        {
+          type: "message",
+          message: { role: "assistant", usage: { input: 25, cacheRead: 75, cacheWrite: 0, cost: { total: 0.042 } } },
+        },
+      ],
+    },
+    ui: {
+      setFooter(callback: any) {
+        footer = callback;
+      },
+    },
+  };
+  try {
+    handlers.get("session_start")?.[0]?.({}, context);
+    rendered = footer?.({ invalidate() {} }, fakeTheme(), { getExtensionStatuses: () => statuses });
+    const left = "GPT-5.6 Luna high s:review 1k/200k c:75%";
+    const pending = "openai-codex";
+    const line = rendered.render(120)[0];
+    assert.equal(line, ` ${left}` + " ".repeat(118 - left.length - pending.length) + `${pending} `);
+    assert.equal(rendered.render(left.length + 4 + pending.length)[0], ` ${left}  ${pending} `);
+    assert.doesNotMatch(line, /s:\$/);
+    assert.deepEqual(rendered.render(120).slice(1), []);
+
+    statuses.set(
+      "provider-usage",
+      JSON.stringify({
+        provider: "openai-codex",
+        state: "ready",
+        capturedAtMs: 0,
+        windows: [
+          { kind: "monthly", label: "30d", usedPercent: 30, resetAtMs: 1 },
+          { kind: "rolling", label: "5h", usedPercent: 10, resetAtMs: 1 },
+          { kind: "weekly", label: "7d", usedPercent: 20, resetAtMs: 1 },
+        ],
+        balance: { amount: 42.5, currency: "USD" },
+      }),
+    );
+    const right = "10%(now) 20%(now) 30%(now) b:$42.50 openai-codex";
+    assert.equal(rendered.render(120)[0], ` ${left}` + " ".repeat(118 - left.length - right.length) + `${right} `);
+    assert.deepEqual(rendered.render(120).slice(1), []);
+    const compact = "10% 20% 30% openai-codex";
+    assert.equal(rendered.render(left.length + 4 + compact.length)[0], ` ${left}  ${compact} `);
+    const truncated = "10% openai-codex";
+    assert.equal(
+      rendered.render(left.length + 4 + truncated.length)[0].replace(/\x1b\[[0-9;]*m/g, ""),
+      ` ${left}  ${truncated} `,
+    );
+    for (const width of [0, 1, 2, 4, 20, 40, 80, 120]) {
+      assert.ok(visibleWidth(rendered.render(width)[0]) <= width);
+      assert.doesNotMatch(rendered.render(width)[0], /s:\$/);
+    }
+  } finally {
+    rendered?.dispose();
+  }
+});
+
+test("renders nothing for unknown Claude quota, then 5h and 7d usage resets beside claude-bridge", (t) => {
+  const now = 1_000_000_000_000;
+  t.mock.method(Date, "now", () => now);
+  const { handlers, on } = captureHandlers();
+  let footer: any;
+  let rendered: any;
+  const statuses = new Map([
+    [
+      "provider-usage",
+      JSON.stringify({
+        provider: "claude-bridge",
+        state: "unknown",
+        capturedAtMs: now,
+        windows: [],
+      }),
+    ],
+  ]);
+  statusline({ on } as any);
+  const context = {
+    model: { name: "Claude Sonnet", provider: "claude-bridge" },
+    thinkingLevel: "off",
     getContextUsage: () => undefined,
     sessionManager: { getLeafId: () => null, getBranch: () => [] },
     ui: {
-      setFooter() {
-        footerSet = true;
-      },
-      setStatus(_key: string, value: string | undefined) {
-        statuses.push(value);
+      setFooter(callback: any) {
+        footer = callback;
       },
     },
   };
   try {
-    for (const handler of handlers.get("session_start") ?? []) handler({}, context);
-    assert.equal(footerSet, true);
-    const decoded = statuses.map((value) =>
-      value === undefined ? undefined : (JSON.parse(value) as { provider?: string; state?: string }),
-    );
-    assert.equal(
-      decoded.some((value) => value?.provider === "deepseek" && value.state === "unknown"),
-      true,
-    );
-    await flush();
-  } finally {
-    for (const handler of handlers.get("session_shutdown") ?? []) handler({}, context);
-  }
-});
-
-test("fetches DeepSeek balance from the fixed endpoint with an auth header", async (t) => {
-  const handlers = mountProviderUsage();
-  let url: string | undefined;
-  let request: RequestInit | undefined;
-  t.mock.method(globalThis, "fetch", async (target: string | URL | Request, init?: RequestInit) => {
-    url = String(target);
-    request = init;
-    return new Response(
-      JSON.stringify({ is_available: true, balance_infos: [{ currency: "USD", total_balance: "42.50" }] }),
-    );
-  });
-  const statuses: Array<string | undefined> = [];
-  const context = {
-    hasUI: true,
-    model: { provider: "deepseek" },
-    modelRegistry: {
-      getProvider: () => ({ baseUrl: "https://api.deepseek.com/v1" }),
-      getProviderAuth: async () => ({ auth: { apiKey: "sk-test" } }),
-    },
-    ui: {
-      setStatus(_key: string, value: string | undefined) {
-        statuses.push(value);
-      },
-    },
-  };
-  try {
-    // providerUsage registers the footer's handlers first, so these tests drive the entry's own handler last.
-    handlers.get("session_start")?.at(-1)?.({}, context);
-    await flush();
-    assert.equal(url, "https://api.deepseek.com/user/balance");
-    assert.equal(request?.redirect, "error");
-    assert.equal((request?.headers as Record<string, string>).Authorization, "Bearer sk-test");
-    const published = JSON.parse(statuses.at(-1)!);
-    assert.deepEqual(published, {
-      provider: "deepseek",
-      state: "ready",
-      capturedAtMs: published.capturedAtMs,
-      windows: [],
-      balance: { amount: 42.5, currency: "USD" },
-    });
-  } finally {
-    handlers.get("session_shutdown")?.at(-1)?.({}, context);
-  }
-});
-
-test("answers provider usage requests for non-active providers without touching the footer", async (t) => {
-  const { handlers, on } = captureHandlers();
-  let request: ((data: unknown) => void) | undefined;
-  providerUsage({
-    events: {
-      on(channel: string, handler: (data: unknown) => void) {
-        if (channel === "provider-usage:request") request = handler;
-        return () => {};
-      },
-      emit() {},
-    },
-    on,
-  } as unknown as ExtensionAPI);
-  let calls = 0;
-  t.mock.method(globalThis, "fetch", async () =>
-    ++calls === 1
-      ? new Response(JSON.stringify({ balance_infos: [{ currency: "USD", total_balance: "42.50" }] }))
-      : new Response("nope", { status: 503 }),
-  );
-  const statuses: Array<string | undefined> = [];
-  const context = {
-    hasUI: true,
-    model: { provider: "anthropic" },
-    modelRegistry: {
-      getProvider: () => ({ baseUrl: "https://api.deepseek.com" }),
-      getProviderAuth: async () => ({ auth: { apiKey: "sk-test" } }),
-    },
-    ui: {
-      setStatus(_key: string, value: string | undefined) {
-        statuses.push(value);
-      },
-    },
-  };
-  const ask = (provider: string) =>
-    new Promise<string | undefined>((resolve) => {
-      request?.({ provider, theme: fakeTheme(), reply: resolve });
-    });
-  try {
-    handlers.get("session_start")?.at(-1)?.({}, context);
-    await flush();
-    const footerUpdates = statuses.length;
-    assert.equal(await ask("google"), undefined);
-    assert.equal(await ask("deepseek"), "b:$42.50");
-    assert.equal(await ask("deepseek"), "b:$42.50");
-    assert.equal(calls, 1);
-    assert.equal(statuses.length, footerUpdates);
-
-    // A new session drops the cache, so the next request refetches and the failure has no stale value.
-    handlers.get("session_start")?.at(-1)?.({}, context);
-    assert.equal(await ask("deepseek"), undefined);
-    assert.equal(calls, 2);
-  } finally {
-    handlers.get("session_shutdown")?.at(-1)?.({}, context);
-  }
-});
-
-test("rejects DeepSeek balance fetches to non-official endpoints", async (t) => {
-  let fetched = false;
-  t.mock.method(globalThis, "fetch", async () => {
-    fetched = true;
-    return new Response("{}");
-  });
-  for (const baseUrl of [
-    "https://api.deepseek.com.evil.tld/v1",
-    "http://api.deepseek.com",
-    "https://api.deepseek.com:8443/v1",
-    "not a url",
-  ]) {
-    const handlers = mountProviderUsage();
-    fetched = false;
-    const statuses: Array<string | undefined> = [];
-    const context = {
-      hasUI: true,
-      model: { provider: "deepseek" },
-      modelRegistry: {
-        getProvider: () => ({ baseUrl }),
-        getProviderAuth: async () => ({ auth: { apiKey: "sk-test" } }),
-      },
-      ui: {
-        setStatus(_key: string, value: string | undefined) {
-          statuses.push(value);
-        },
-      },
-    };
-    try {
-      handlers.get("session_start")?.at(-1)?.({}, context);
-      await flush();
-      assert.equal(fetched, false, baseUrl);
-      assert.equal(JSON.parse(statuses.at(-1)!).state, "unknown", baseUrl);
-    } finally {
-      handlers.get("session_shutdown")?.at(-1)?.({}, context);
-    }
-  }
-});
-
-test("does not fetch DeepSeek balance without an API key", async (t) => {
-  let fetched = false;
-  t.mock.method(globalThis, "fetch", async () => {
-    fetched = true;
-    return new Response("{}");
-  });
-  for (const auth of [undefined, { auth: {} }]) {
-    const handlers = mountProviderUsage();
-    fetched = false;
-    const statuses: Array<string | undefined> = [];
-    const context = {
-      hasUI: true,
-      model: { provider: "deepseek" },
-      modelRegistry: {
-        getProvider: () => ({ baseUrl: "https://api.deepseek.com" }),
-        getProviderAuth: async () => auth,
-      },
-      ui: {
-        setStatus(_key: string, value: string | undefined) {
-          statuses.push(value);
-        },
-      },
-    };
-    try {
-      handlers.get("session_start")?.at(-1)?.({}, context);
-      await flush();
-      assert.equal(fetched, false);
-      assert.equal(JSON.parse(statuses.at(-1)!).state, "unknown");
-    } finally {
-      handlers.get("session_shutdown")?.at(-1)?.({}, context);
-    }
-  }
-});
-
-test("bounds DeepSeek auth resolution so a later refresh can still run", async (t) => {
-  t.mock.timers.enable({ apis: ["setTimeout"] });
-  const handlers = mountProviderUsage();
-  let fetchCalls = 0;
-  let authCalls = 0;
-  t.mock.method(globalThis, "fetch", async () => {
-    fetchCalls++;
-    return new Response(JSON.stringify({ balance_infos: [{ currency: "USD", total_balance: "5.00" }] }));
-  });
-  const context = {
-    hasUI: true,
-    model: { provider: "deepseek" },
-    modelRegistry: {
-      getProvider: () => ({ baseUrl: "https://api.deepseek.com" }),
-      getProviderAuth: () => {
-        authCalls++;
-        return authCalls === 1 ? new Promise(() => {}) : Promise.resolve({ auth: { apiKey: "sk-test" } });
-      },
-    },
-    ui: { setStatus() {} },
-  };
-  try {
-    handlers.get("session_start")?.at(-1)?.({}, context);
-    await flush();
-    assert.equal(fetchCalls, 0);
-    t.mock.timers.tick(10_000);
-    await flush();
-    handlers.get("turn_end")?.at(-1)?.({}, context);
-    await flush();
-    assert.equal(fetchCalls, 1);
-  } finally {
-    handlers.get("session_shutdown")?.at(-1)?.({}, context);
-    t.mock.timers.reset();
-  }
-});
-
-test("preserves a cached DeepSeek balance when a refresh fails", async (t) => {
-  const handlers = mountProviderUsage();
-  let now = Date.now();
-  t.mock.method(Date, "now", () => now);
-  let calls = 0;
-  t.mock.method(globalThis, "fetch", async () =>
-    ++calls === 1
-      ? new Response(JSON.stringify({ balance_infos: [{ currency: "USD", total_balance: "42.50" }] }))
-      : new Response("nope", { status: 503 }),
-  );
-  const statuses: Array<string | undefined> = [];
-  const context = {
-    hasUI: true,
-    model: { provider: "deepseek" },
-    modelRegistry: {
-      getProvider: () => ({ baseUrl: "https://api.deepseek.com" }),
-      getProviderAuth: async () => ({ auth: { apiKey: "sk-test" } }),
-    },
-    ui: {
-      setStatus(_key: string, value: string | undefined) {
-        statuses.push(value);
-      },
-    },
-  };
-  try {
-    handlers.get("session_start")?.at(-1)?.({}, context);
-    await flush();
-    now += 10 * 60_000;
-    handlers.get("turn_end")?.at(-1)?.({}, context);
-    await flush();
-    assert.equal(calls, 2);
-    const last = JSON.parse(statuses.at(-1)!);
-    assert.equal(last.state, "ready");
-    assert.equal(last.balance.amount, 42.5);
-  } finally {
-    handlers.get("session_shutdown")?.at(-1)?.({}, context);
-  }
-});
-
-test("fetches Anthropic plan usage from the OAuth usage endpoint", async (t) => {
-  const handlers = mountProviderUsage();
-  const requests: Array<{ url: string; init: RequestInit | undefined }> = [];
-  t.mock.method(globalThis, "fetch", async (target: string | URL | Request, init?: RequestInit) => {
-    requests.push({ url: String(target), init });
-    return new Response(
+    handlers.get("session_start")?.[0]?.({}, context);
+    rendered = footer({ invalidate() {} }, fakeTheme(), { getExtensionStatuses: () => statuses });
+    assert.match(rendered.render(120)[0], /^ Claude Sonnet +claude-bridge $/);
+    statuses.set(
+      "provider-usage",
       JSON.stringify({
-        five_hour: { utilization: 13.0, resets_at: "2026-10-17T20:40:00.085011+00:00" },
-        seven_day: { utilization: 19.0, resets_at: "2026-10-18T04:00:00.085037+00:00" },
-        seven_day_opus: null,
+        provider: "claude-bridge",
+        state: "ready",
+        capturedAtMs: now,
+        windows: [
+          { kind: "weekly", label: "7d", usedPercent: 40, resetAtMs: now + 3 * 86_400_000 + 4 * 3_600_000 },
+          { kind: "rolling", label: "5h", usedPercent: 12.5, resetAtMs: now + 3_900_000 },
+        ],
       }),
     );
-  });
-  let apiKey = "sk-ant-oat01-test";
-  const statuses: Array<string | undefined> = [];
+    assert.match(rendered.render(120)[0], /13%\(1h5m\) 40%\(3d4h\) claude-bridge $/);
+  } finally {
+    rendered?.dispose();
+  }
+});
+
+test("colors each quota window at usage thresholds across footer widths", () => {
+  const { handlers, on } = captureHandlers();
+  let footer: any;
+  let rendered: any;
+  const statuses = new Map<string, string>();
+  statusline({ on } as any);
   const context = {
-    hasUI: true,
-    model: { provider: "anthropic" },
-    modelRegistry: { getProvider: () => undefined, getProviderAuth: async () => ({ auth: { apiKey } }) },
+    model: { name: "model", provider: "openai-codex" },
+    thinkingLevel: "off",
+    getContextUsage: () => undefined,
+    sessionManager: { getLeafId: () => null, getBranch: () => [] },
     ui: {
-      setStatus(_key: string, value: string | undefined) {
-        statuses.push(value);
-      },
-    },
-  };
-  const start = async () => {
-    handlers.get("session_start")?.at(-1)?.({}, context);
-    await flush();
-    return JSON.parse(statuses.at(-1)!) as { state: string; windows: unknown[] };
-  };
-  try {
-    const usage = await start();
-    assert.equal(requests.length, 1);
-    assert.equal(requests[0]!.url, "https://api.anthropic.com/api/oauth/usage");
-    const headers = requests[0]!.init?.headers as Record<string, string>;
-    assert.equal(headers.Authorization, "Bearer sk-ant-oat01-test");
-    assert.equal(headers["anthropic-beta"], "oauth-2025-04-20");
-    assert.deepEqual(usage.windows, [
-      { kind: "rolling", label: "5h", usedPercent: 13, resetAtMs: Date.parse("2026-10-17T20:40:00.085Z") },
-      { kind: "weekly", label: "7d", usedPercent: 19, resetAtMs: Date.parse("2026-10-18T04:00:00.085Z") },
-    ]);
-
-    // API keys have no plan quota, so nothing is fetched.
-    apiKey = "sk-ant-api03-test";
-    const keyUsage = await start();
-    assert.equal(requests.length, 1);
-    assert.equal(keyUsage.state, "ready");
-    assert.deepEqual(keyUsage.windows, []);
-  } finally {
-    handlers.get("session_shutdown")?.at(-1)?.({}, context);
-  }
-});
-
-test("publishes Anthropic usage from response headers", async () => {
-  const handlers = mountProviderUsage();
-  const statuses: Array<string | undefined> = [];
-  let loads = 0;
-  const context = {
-    hasUI: true,
-    model: { provider: "anthropic" },
-    modelRegistry: {
-      getProvider: () => {
-        loads++;
-        return undefined;
-      },
-      getProviderAuth: async () => undefined,
-    },
-    ui: {
-      setStatus(_key: string, value: string | undefined) {
-        statuses.push(value);
-      },
-    },
-  };
-  const last = () => JSON.parse(statuses.at(-1)!) as { state: string; windows: Array<{ usedPercent: number }> };
-  try {
-    handlers.get("session_start")?.at(-1)?.({}, context);
-    handlers.get("turn_end")?.at(-1)?.({}, context);
-    await flush();
-    assert.equal(last().state, "unknown");
-
-    // API-key replies carry no plan headers, so the footer shows no quota placeholder.
-    handlers.get("after_provider_response")?.at(-1)?.({ status: 200, headers: {} }, context);
-    assert.equal(last().state, "ready");
-    assert.deepEqual(last().windows, []);
-
-    handlers.get("after_provider_response")?.at(-1)?.(
-      { status: 200, headers: { "anthropic-ratelimit-unified-5h-utilization": "0.25" } },
-      context,
-    );
-    assert.equal(last().windows[0]?.usedPercent, 25);
-    handlers.get("after_provider_response")?.at(-1)?.({ status: 500, headers: {} }, context);
-    assert.equal(last().windows[0]?.usedPercent, 25);
-
-    // Header data counts as a fresh fetch, so the next turn does not hit the usage endpoint.
-    const loadsBefore = loads;
-    handlers.get("turn_end")?.at(-1)?.({}, context);
-    await flush();
-    assert.equal(loads, loadsBefore);
-    assert.equal(last().windows[0]?.usedPercent, 25);
-  } finally {
-    handlers.get("session_shutdown")?.at(-1)?.({}, context);
-  }
-});
-
-test("does not expose OpenCode credentials through status or errors", async (t) => {
-  const handlers = mountProviderUsage();
-  const originalWorkspace = process.env.OPENCODE_GO_WORKSPACE_ID;
-  const originalCookie = process.env.OPENCODE_GO_AUTH_COOKIE;
-  const secret = "cookie-that-must-not-leak";
-  process.env.OPENCODE_GO_WORKSPACE_ID = "wrk_test";
-  process.env.OPENCODE_GO_AUTH_COOKIE = secret;
-  t.mock.method(globalThis, "fetch", async () => new Response("nope", { status: 503 }));
-  const statuses: Array<string | undefined> = [];
-  const context = {
-    hasUI: true,
-    model: { provider: "opencode-go" },
-    ui: {
-      setStatus(_key: string, value: string | undefined) {
-        statuses.push(value);
+      setFooter(callback: any) {
+        footer = callback;
       },
     },
   };
   try {
-    handlers.get("session_start")?.at(-1)?.({ type: "session_start" }, context);
-    await flush();
-    assert.equal(
-      statuses.some((status) => status?.includes(secret)),
-      false,
-    );
-  } finally {
-    handlers.get("session_shutdown")?.at(-1)?.({ type: "session_shutdown" }, context);
-    if (originalWorkspace === undefined) delete process.env.OPENCODE_GO_WORKSPACE_ID;
-    else process.env.OPENCODE_GO_WORKSPACE_ID = originalWorkspace;
-    if (originalCookie === undefined) delete process.env.OPENCODE_GO_AUTH_COOKIE;
-    else process.env.OPENCODE_GO_AUTH_COOKIE = originalCookie;
-  }
-});
-
-test("preserves cached usage when a refresh fails", async (t) => {
-  const handlers = mountProviderUsage();
-  const originalWorkspace = process.env.OPENCODE_GO_WORKSPACE_ID;
-  const originalCookie = process.env.OPENCODE_GO_AUTH_COOKIE;
-  process.env.OPENCODE_GO_WORKSPACE_ID = "workspace";
-  process.env.OPENCODE_GO_AUTH_COOKIE = "secret";
-  let calls = 0;
-  t.mock.method(globalThis, "fetch", async () =>
-    ++calls === 1
-      ? new Response(`rollingUsage:{usagePercent:10,resetInSec:30}`)
-      : new Response("nope", { status: 503 }),
-  );
-  const statuses: Array<string | undefined> = [];
-  const context = {
-    hasUI: true,
-    model: { provider: "opencode-go" },
-    ui: {
-      setStatus(_key: string, value: string | undefined) {
-        statuses.push(value);
-      },
-    },
-  };
-  let now = Date.now();
-  t.mock.method(Date, "now", () => now);
-  try {
-    handlers.get("session_start")?.at(-1)?.({}, context);
-    await flush();
-    now += 10 * 60_000;
-    handlers.get("turn_end")?.at(-1)?.({}, context);
-    await flush();
-    assert.equal(calls, 2);
-    assert.equal(JSON.parse(statuses.at(-1)!).state, "ready");
-  } finally {
-    handlers.get("session_shutdown")?.at(-1)?.({}, context);
-    if (originalWorkspace === undefined) delete process.env.OPENCODE_GO_WORKSPACE_ID;
-    else process.env.OPENCODE_GO_WORKSPACE_ID = originalWorkspace;
-    if (originalCookie === undefined) delete process.env.OPENCODE_GO_AUTH_COOKIE;
-    else process.env.OPENCODE_GO_AUTH_COOKIE = originalCookie;
-  }
-});
-
-test("Codex requests use the fixed endpoint, redirect policy, and auth headers", async (t) => {
-  const handlers = mountProviderUsage();
-  const account = "acct_test";
-  const token = `x.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: account } })).toString("base64url")}.x`;
-  let request: RequestInit | undefined;
-  t.mock.method(globalThis, "fetch", async (url: string | URL | Request, init?: RequestInit) => {
-    assert.equal(url, "https://chatgpt.com/backend-api/wham/usage");
-    request = init;
-    return new Response(JSON.stringify({ rate_limit: { primary_window: { used_percent: 10 } } }));
-  });
-  const context = {
-    hasUI: true,
-    model: { provider: "openai-codex" },
-    modelRegistry: {
-      getProvider: () => ({ baseUrl: "https://chatgpt.com/backend-api" }),
-      getProviderAuth: async () => ({ auth: { baseUrl: "https://chatgpt.com/backend-api", apiKey: token } }),
-    },
-    ui: { setStatus() {} },
-  };
-  try {
-    handlers.get("session_start")?.at(-1)?.({}, context);
-    await flush();
-    assert.equal(request?.redirect, "error");
-    assert.equal((request?.headers as Record<string, string>)["ChatGPT-Account-Id"], account);
-    assert.equal((request?.headers as Record<string, string>).Authorization, `Bearer ${token}`);
-  } finally {
-    handlers.get("session_shutdown")?.at(-1)?.({}, context);
-  }
-});
-
-test("same-provider selection aborts the old request", async (t) => {
-  const handlers = mountProviderUsage();
-  let aborted = false;
-  t.mock.method(
-    globalThis,
-    "fetch",
-    (_url: string | URL | Request, init?: RequestInit) =>
-      new Promise<Response>((_, reject) => {
-        init?.signal?.addEventListener(
-          "abort",
-          () => {
-            aborted = true;
-            reject(new Error("aborted"));
-          },
-          { once: true },
-        );
-      }),
-  );
-  const context = { hasUI: true, model: { provider: "opencode-go" }, ui: { setStatus() {} } };
-  process.env.OPENCODE_GO_WORKSPACE_ID = "workspace";
-  process.env.OPENCODE_GO_AUTH_COOKIE = "secret";
-  try {
-    handlers.get("session_start")?.at(-1)?.({}, context);
-    handlers.get("model_select")?.at(-1)?.({ model: context.model }, context);
-    await flush();
-    assert.equal(aborted, true);
-  } finally {
-    handlers.get("session_shutdown")?.at(-1)?.({}, context);
-    delete process.env.OPENCODE_GO_WORKSPACE_ID;
-    delete process.env.OPENCODE_GO_AUTH_COOKIE;
-  }
-});
-
-test("ignores a stale OpenCode response after switching providers", async (t) => {
-  const handlers = mountProviderUsage();
-
-  let resolveFetch: ((response: Response) => void) | undefined;
-  const originalWorkspace = process.env.OPENCODE_GO_WORKSPACE_ID;
-  const originalCookie = process.env.OPENCODE_GO_AUTH_COOKIE;
-  process.env.OPENCODE_GO_WORKSPACE_ID = "wrk_test";
-  process.env.OPENCODE_GO_AUTH_COOKIE = "secret";
-  t.mock.method(
-    globalThis,
-    "fetch",
-    () =>
-      new Promise<Response>((resolve) => {
-        resolveFetch = resolve;
-      }),
-  );
-
-  const statuses: Array<string | undefined> = [];
-  const context = {
-    hasUI: true,
-    model: { provider: "opencode-go" },
-    ui: {
-      setStatus(_key: string, value: string | undefined) {
-        statuses.push(value);
-      },
-    },
-  };
-  try {
-    handlers.get("session_start")?.at(-1)?.({ type: "session_start" }, context);
-    context.model = { provider: "google" };
-    handlers.get("model_select")?.at(-1)?.({ model: context.model }, context);
-    resolveFetch?.(new Response(`rollingUsage:{usagePercent:10,resetInSec:30}`));
-    await flush();
-    assert.equal(statuses.at(-1), undefined);
-  } finally {
-    handlers.get("session_shutdown")?.at(-1)?.({ type: "session_shutdown" }, context);
-    if (originalWorkspace === undefined) delete process.env.OPENCODE_GO_WORKSPACE_ID;
-    else process.env.OPENCODE_GO_WORKSPACE_ID = originalWorkspace;
-    if (originalCookie === undefined) delete process.env.OPENCODE_GO_AUTH_COOKIE;
-    else process.env.OPENCODE_GO_AUTH_COOKIE = originalCookie;
-  }
-});
-
-test("Claude response headers update bridge usage and renew the CLI cache until fallback is due", async (t) => {
-  const calls = mockCli(t, (call) => call.complete(null, claudeOutput));
-  let now = claudeCapturedAt;
-  t.mock.method(Date, "now", () => now);
-  const { handlers, context, statuses } = entryContext();
-  try {
-    handlers.get("session_start")?.at(-1)?.({}, context);
-    await flush();
-    assert.equal(JSON.parse(statuses.at(-1)!).windows[0].usedPercent, 10);
-
-    now += CLAUDE_BRIDGE_CACHE_TTL_MS - 1;
-    handlers.get("after_provider_response")?.at(-1)?.(
-      {
-        status: 200,
-        headers: {
-          "anthropic-ratelimit-unified-5h-utilization": "0.25",
-          "anthropic-ratelimit-unified-5h-reset": "1791392400",
-          "anthropic-ratelimit-unified-7d-utilization": "0.40",
-          "anthropic-ratelimit-unified-7d-reset": "1791900000",
-        },
-      },
-      context,
-    );
-    const ready = JSON.parse(statuses.at(-1)!);
-    assert.deepEqual(ready, {
-      provider: "claude-bridge",
-      state: "ready",
-      capturedAtMs: now,
-      windows: [
-        { kind: "rolling", label: "5h", usedPercent: 25, resetAtMs: 1791392400000 },
-        { kind: "weekly", label: "7d", usedPercent: 40, resetAtMs: 1791900000000 },
-      ],
-    });
-
-    now += CLAUDE_BRIDGE_CACHE_TTL_MS - 1;
-    handlers.get("after_provider_response")?.at(-1)?.(
-      {
-        status: 200,
-        headers: {
-          "anthropic-ratelimit-unified-7d-utilization": "0.45",
-        },
-      },
-      context,
-    );
-    const updated = JSON.parse(statuses.at(-1)!);
-    assert.deepEqual(updated, {
-      provider: "claude-bridge",
-      state: "ready",
-      capturedAtMs: now,
-      windows: [
-        { kind: "rolling", label: "5h", usedPercent: 25, resetAtMs: 1791392400000 },
-        { kind: "weekly", label: "7d", usedPercent: 45 },
-      ],
-    });
-    for (const headers of [{}, { "anthropic-ratelimit-unified-status": "allowed" }]) {
-      handlers.get("after_provider_response")?.at(-1)?.({ status: 200, headers }, context);
-      assert.deepEqual(JSON.parse(statuses.at(-1)!), updated);
-    }
-
-    now += CLAUDE_BRIDGE_CACHE_TTL_MS - 1;
-    handlers.get("turn_end")?.at(-1)?.({}, context);
-    await flush();
-    assert.equal(calls.length, 1);
-    assert.deepEqual(JSON.parse(statuses.at(-1)!), updated);
-    now++;
-    handlers.get("turn_end")?.at(-1)?.({}, context);
-    await flush();
-    assert.equal(calls.length, 2);
-    assert.equal(JSON.parse(statuses.at(-1)!).windows[0].usedPercent, 10);
-  } finally {
-    handlers.get("session_shutdown")?.at(-1)?.({}, context);
-  }
-});
-
-test("Claude replies without usable usage headers keep unknown quota when CLI usage is unavailable", async (t) => {
-  mockCli(t, (call) => call.complete(new Error("CLI unavailable"), ""));
-  const { handlers, context, statuses } = entryContext();
-  try {
-    handlers.get("session_start")?.at(-1)?.({}, context);
-    await flush();
-    const unknown = JSON.parse(statuses.at(-1)!);
-    assert.equal(unknown.provider, "claude-bridge");
-    assert.equal(unknown.state, "unknown");
-    for (const headers of [{}, { "anthropic-ratelimit-unified-status": "allowed" }]) {
-      handlers.get("after_provider_response")?.at(-1)?.({ status: 200, headers }, context);
-      assert.deepEqual(JSON.parse(statuses.at(-1)!), unknown);
-    }
-  } finally {
-    handlers.get("session_shutdown")?.at(-1)?.({}, context);
-  }
-});
-
-test("Claude wiring caches quotas for five minutes, waits five minutes between failed refreshes, and drops quotas ten minutes old", async (t) => {
-  let reads = 0;
-  mockCli(t, (call) => {
-    reads++;
-    if (reads === 1) call.complete(null, claudeOutput);
-    else if (reads <= 3) call.complete(new Error("secret CLI failure"), "");
-    else call.complete(null, claudeOutput.replace("10% used", "20% used"));
-  });
-  let now = claudeCapturedAt;
-  t.mock.method(Date, "now", () => now);
-  const { handlers, context, statuses } = entryContext();
-  try {
-    handlers.get("session_start")?.at(-1)?.({}, context);
-    assert.equal(JSON.parse(statuses.at(-1)!).state, "unknown");
-    await flush();
-    const ready = JSON.parse(statuses.at(-1)!);
-    assert.equal(ready.provider, "claude-bridge");
-    assert.equal(ready.state, "ready");
-    now += CLAUDE_BRIDGE_CACHE_TTL_MS - 1;
-    handlers.get("turn_end")?.at(-1)?.({}, context);
-    await flush();
-    assert.equal(reads, 1);
-    now++;
-    handlers.get("turn_end")?.at(-1)?.({}, context);
-    await flush();
-    assert.equal(reads, 2);
-    assert.deepEqual(JSON.parse(statuses.at(-1)!), ready);
-    now += 300_000 - 1;
-    handlers.get("turn_end")?.at(-1)?.({}, context);
-    await flush();
-    assert.equal(reads, 2);
-    now++;
-    handlers.get("turn_end")?.at(-1)?.({}, context);
-    await flush();
-    assert.equal(reads, 3);
-    assert.equal(JSON.parse(statuses.at(-1)!).state, "unknown");
-    now += 300_000;
-    handlers.get("turn_end")?.at(-1)?.({}, context);
-    await flush();
-    assert.equal(reads, 4);
-    assert.equal(JSON.parse(statuses.at(-1)!).windows[0].usedPercent, 20);
-    assert.equal(
-      statuses.some((value) => value?.includes("secret")),
-      false,
-    );
-  } finally {
-    handlers.get("session_shutdown")?.at(-1)?.({}, context);
-  }
-});
-
-test("an older reading from the Claude CLI does not make a session run it again within five minutes", async (t) => {
-  const calls = mockCli(t, (call) => call.complete(null, claudeOutput));
-  let now = claudeCapturedAt;
-  t.mock.method(Date, "now", () => now);
-  const state = JSON.stringify({ cachedUsageUtilization: { fetchedAtMs: now - 240_000 } });
-  t.mock.method(fs, "readFile", async (path: string) => {
-    if (path.endsWith("pi-guy-claude-usage.json")) throw new Error("no saved reading");
-    return state;
-  });
-  const { handlers, context, statuses } = entryContext();
-  try {
-    handlers.get("session_start")?.at(-1)?.({}, context);
-    await flush();
-    assert.equal(JSON.parse(statuses.at(-1)!).state, "ready");
-    now += 300_000 - 1;
-    handlers.get("turn_end")?.at(-1)?.({}, context);
-    await flush();
-    assert.equal(calls.length, 1);
-    now++;
-    handlers.get("turn_end")?.at(-1)?.({}, context);
-    await flush();
-    assert.equal(calls.length, 2);
-  } finally {
-    handlers.get("session_shutdown")?.at(-1)?.({}, context);
-  }
-});
-
-test("a Claude session waiting after a failed refresh shows a reading another session saved without running the CLI", async (t) => {
-  const calls = mockCli(t, (call) => call.complete(new Error("CLI unavailable"), ""));
-  let now = claudeCapturedAt;
-  t.mock.method(Date, "now", () => now);
-  const { handlers, context, statuses } = entryContext();
-  try {
-    handlers.get("session_start")?.at(-1)?.({}, context);
-    await flush();
-    assert.equal(JSON.parse(statuses.at(-1)!).state, "unknown");
-    now += 60_000;
-    const saved = {
-      provider: "claude-code",
-      state: "ready",
-      capturedAtMs: now,
-      windows: [
-        { kind: "rolling", label: "5h", usedPercent: 50 },
-        { kind: "weekly", label: "7d", usedPercent: 25 },
-      ],
+    handlers.get("session_start")?.[0]?.({}, context);
+    const ansi = (color: string, value: string) => {
+      const codes: Record<string, number> = { error: 31, warning: 33, dim: 2, muted: 90 };
+      return `\x1b[${codes[color] ?? 37}m${value}\x1b[0m`;
     };
-    t.mock.method(fs, "readFile", async () => JSON.stringify(saved));
-    handlers.get("turn_end")?.at(-1)?.({}, context);
-    await flush();
-    assert.equal(calls.length, 1);
-    assert.deepEqual(JSON.parse(statuses.at(-1)!), { ...saved, provider: "claude-bridge" });
+    rendered = footer({ invalidate() {} }, { fg: ansi }, { getExtensionStatuses: () => statuses });
+    for (const [usedPercent, color] of [
+      [89.99, "dim"],
+      [90, "warning"],
+      [94.99, "warning"],
+      [95, "error"],
+      [100, "error"],
+    ] as const) {
+      statuses.set(
+        "provider-usage",
+        JSON.stringify({
+          provider: "openai-codex",
+          state: "ready",
+          capturedAtMs: 0,
+          windows: [{ kind: "rolling", label: "5h", usedPercent, resetAtMs: 1 }],
+        }),
+      );
+      assert.ok(rendered.render(120)[0].includes(ansi(color, `${Math.round(usedPercent)}%(now)`)));
+      assert.ok(rendered.render(26)[0].includes(ansi(color, `${Math.round(usedPercent)}%`)));
+    }
+    statuses.set(
+      "provider-usage",
+      JSON.stringify({
+        provider: "openai-codex",
+        state: "ready",
+        capturedAtMs: 0,
+        windows: [
+          { kind: "monthly", label: "30d", usedPercent: 20, resetAtMs: 1 },
+          { kind: "rolling", label: "5h", usedPercent: 95, resetAtMs: 1 },
+          { kind: "weekly", label: "7d", usedPercent: 90, resetAtMs: 1 },
+        ],
+      }),
+    );
+    assert.ok(
+      rendered
+        .render(120)[0]
+        .includes(`${ansi("error", "95%(now)")} ${ansi("warning", "90%(now)")} ${ansi("dim", "20%(now)")}`),
+    );
+    assert.ok(
+      rendered.render(33)[0].includes(`${ansi("error", "95%")} ${ansi("warning", "90%")} ${ansi("dim", "20%")}`),
+    );
+    assert.ok(rendered.render(25)[0].includes(ansi("error", "95%")));
+    for (let width = 0; width <= 120; width++) {
+      const line = rendered.render(width)[0];
+      assert.ok(visibleWidth(line) <= width);
+      if (line.includes("openai-codex")) assert.ok(line.endsWith(ansi("muted", "openai-codex") + " "));
+    }
   } finally {
-    handlers.get("session_shutdown")?.at(-1)?.({}, context);
+    rendered?.dispose();
   }
 });
 
-test("index timeout cancels a hung Claude CLI request and permits a later refresh", async (t) => {
-  t.mock.timers.enable({ apis: ["setTimeout"] });
-  let reads = 0;
-  const calls = mockCli(t, (call) => {
-    if (++reads > 1) call.complete(null, claudeOutput);
-  });
-  let now = claudeCapturedAt;
-  t.mock.method(Date, "now", () => now);
-  const { handlers, context, statuses } = entryContext();
+test("colors dollar balances below one dollar and fifty cents", () => {
+  const { handlers, on } = captureHandlers();
+  let footer: any;
+  let rendered: any;
+  const statuses = new Map<string, string>();
+  statusline({ on } as any);
+  const context = {
+    model: { name: "model", provider: "deepseek" },
+    thinkingLevel: "off",
+    getContextUsage: () => undefined,
+    sessionManager: { getLeafId: () => null, getBranch: () => [] },
+    ui: {
+      setFooter(callback: any) {
+        footer = callback;
+      },
+    },
+  };
   try {
-    handlers.get("session_start")?.at(-1)?.({}, context);
-    await flush();
-    assert.equal(reads, 1);
-    t.mock.timers.tick(10_000);
-    await flush();
-    assert.equal(calls[0]?.options.signal.aborted, true);
-    assert.equal(JSON.parse(statuses.at(-1)!).state, "unknown");
-    now += 300_000;
-    handlers.get("turn_end")?.at(-1)?.({}, context);
-    await flush();
-    assert.equal(reads, 2);
-    assert.equal(JSON.parse(statuses.at(-1)!).state, "ready");
-  } finally {
-    handlers.get("session_shutdown")?.at(-1)?.({}, context);
-    t.mock.timers.reset();
-  }
-});
-
-test("does not publish stale Claude results after selection, reload, or shutdown", async (t) => {
-  for (const event of ["model_select", "session_start", "session_shutdown"]) {
-    await t.test(event, async (t) => {
-      const calls = mockCli(t, () => {});
-      const { handlers, context, statuses } = entryContext();
-      try {
-        handlers.get("session_start")?.at(-1)?.({}, context);
-        await flush();
-        handlers.get(event)?.at(-1)?.({ model: context.model }, context);
-        await flush();
-        assert.equal(calls[0]?.options.signal.aborted, true);
-        calls[0]?.complete(null, claudeOutput);
-        await flush();
-        assert.equal(
-          statuses.some((value) => value && JSON.parse(value).state === "ready"),
-          false,
-        );
-        if (event !== "session_shutdown") {
-          calls[1]?.complete(null, claudeOutput);
-          await flush();
-          assert.equal(JSON.parse(statuses.at(-1)!).state, "ready");
-        } else assert.equal(statuses.at(-1), undefined);
-      } finally {
-        handlers.get("session_shutdown")?.at(-1)?.({}, context);
+    handlers.get("session_start")?.[0]?.({}, context);
+    const ansi = (color: string, value: string) => {
+      const codes: Record<string, number> = { error: 31, warning: 33, dim: 2, muted: 90 };
+      return `\x1b[${codes[color] ?? 37}m${value}\x1b[0m`;
+    };
+    rendered = footer({ invalidate() {} }, { fg: ansi }, { getExtensionStatuses: () => statuses });
+    for (const [amount, color] of [
+      [1, "dim"],
+      [0.99, "warning"],
+      [0.5, "warning"],
+      [0.49, "error"],
+      [0, "error"],
+    ] as const) {
+      statuses.set(
+        "provider-usage",
+        JSON.stringify({
+          provider: "deepseek",
+          state: "ready",
+          capturedAtMs: 0,
+          windows: [],
+          balance: { amount, currency: "USD" },
+        }),
+      );
+      const line = rendered.render(120)[0];
+      assert.ok(line.endsWith(`${ansi(color, `b:$${amount.toFixed(2)}`)} ${ansi("muted", "deepseek")} `));
+      assert.equal(visibleWidth(line), 120);
+      const minWidth = 18 + `b:$${amount.toFixed(2)}`.length;
+      assert.ok(rendered.render(minWidth)[0].includes(ansi(color, `b:$${amount.toFixed(2)}`)));
+      for (let width = 0; width < minWidth; width++) {
+        const narrow = rendered.render(width)[0];
+        assert.ok(visibleWidth(narrow) <= width);
+        assert.doesNotMatch(narrow, /b:/);
       }
-    });
-  }
-});
-
-test("claude-code shows usage from each reply and fetches only after five minutes without one", async (t) => {
-  const calls = mockCli(t, (call) => {
-    if (calls.length === 1) call.complete(null, claudeOutput);
-    else call.complete(new Error("CLI unavailable"), "");
-  });
-  let now = claudeCapturedAt;
-  t.mock.method(Date, "now", () => now);
-  const { handlers, context, statuses } = entryContext();
-  context.model = { provider: "claude-code" };
-  const saved: string[] = [];
-  t.mock.method(fs, "writeFile", async (_path: string, data: string) => {
-    saved.push(data);
-  });
-  try {
-    handlers.get("session_start")?.at(-1)?.({}, context);
-    await flush();
-    assert.equal(calls.length, 1);
-    const ready = JSON.parse(statuses.at(-1)!);
-    assert.equal(ready.provider, "claude-code");
-    now += 300_000;
-    handlers.get("turn_end")?.at(-1)?.({}, context);
-    await flush();
-    assert.equal(calls.length, 2);
-    assert.deepEqual(JSON.parse(statuses.at(-1)!), ready);
-    now += 300_000 - 1;
-    handlers.get("turn_end")?.at(-1)?.({}, context);
-    await flush();
-    assert.equal(calls.length, 2);
-    now++;
-    const message = {
-      role: "assistant",
-      diagnostics: [
-        { type: "claude-code.turn-relay", timestamp: now, details: {} },
-        {
-          type: "claude-code.rate-limit",
-          timestamp: now,
-          details: {
-            unifiedWindows: {
-              five_hour: { utilization: 0.5, resetsAt: 1794636600 },
-              seven_day: { utilization: 0.25, resetsAt: 1794913200 },
-              seven_day_overage_included: { utilization: 0.42, resetsAt: 1794913200 },
-            },
-          },
-        },
-      ],
-    };
-    handlers.get("turn_end")?.at(-1)?.({ message }, context);
-    await flush();
-    assert.equal(calls.length, 2);
-    assert.deepEqual(JSON.parse(statuses.at(-1)!), {
-      provider: "claude-code",
-      state: "ready",
-      capturedAtMs: now,
-      windows: [
-        { kind: "rolling", label: "5h", usedPercent: 50, resetAtMs: 1794636600000 },
-        { kind: "weekly", label: "7d", usedPercent: 25, resetAtMs: 1794913200000 },
-      ],
-    });
-    assert.equal(saved.at(-1), statuses.at(-1));
-    now += 300_000 - 1;
-    handlers.get("turn_end")?.at(-1)?.({}, context);
-    await flush();
-    assert.equal(calls.length, 2);
-    now++;
-    handlers.get("turn_end")?.at(-1)?.({}, context);
-    await flush();
-    assert.equal(calls.length, 3);
+    }
+    statuses.set(
+      "provider-usage",
+      JSON.stringify({
+        provider: "deepseek",
+        state: "ready",
+        capturedAtMs: 0,
+        windows: [],
+        balance: { amount: 0.49, currency: "CNY" },
+      }),
+    );
+    assert.ok(rendered.render(120)[0].includes(ansi("dim", "b:¥0.49")));
   } finally {
-    handlers.get("session_shutdown")?.at(-1)?.({}, context);
+    rendered?.dispose();
   }
 });
 
-function entryContext() {
-  const handlers = mountProviderUsage();
-  const statuses: Array<string | undefined> = [];
+test("never clips balance mid-number on narrow footers", () => {
+  const { handlers, on } = captureHandlers();
+  let footer: ((...args: any[]) => any) | undefined;
+  let rendered: any;
+  const statuses = new Map([
+    [
+      "provider-usage",
+      JSON.stringify({
+        provider: "deepseek",
+        state: "ready",
+        capturedAtMs: 0,
+        windows: [],
+        balance: { amount: 123456.78, currency: "USD" },
+      }),
+    ],
+  ]);
+  statusline({ on } as any);
   const context = {
-    hasUI: true,
-    model: { provider: "claude-bridge" },
+    model: { name: "DeepSeek V4.1 Flash", provider: "deepseek" },
+    thinkingLevel: "off",
+    getContextUsage: () => undefined,
+    sessionManager: {
+      getLeafId: () => null,
+      getBranch: () => [{ type: "message", message: { role: "assistant", usage: { cost: { total: 0.042 } } } }],
+    },
     ui: {
-      setStatus(_key: string, value: string | undefined) {
-        statuses.push(value);
+      setFooter(callback: any) {
+        footer = callback;
       },
     },
   };
-  return { handlers, context, statuses };
-}
+  try {
+    handlers.get("session_start")?.[0]?.({}, context);
+    rendered = footer?.({ invalidate() {} }, fakeTheme(), { getExtensionStatuses: () => statuses });
+    const wide = rendered.render(120)[0];
+    assert.match(wide, /^ DeepSeek V4\.1 Flash {2,}b:\$123456\.78 deepseek $/);
+    assert.equal(wide.length, 120);
+    const narrow = rendered.render(36)[0].replace(/\x1b\[[0-9;]*m/g, "");
+    assert.doesNotMatch(narrow, /b:/);
+    assert.match(narrow, /deepseek $/);
+    for (let width = 0; width <= 120; width++) {
+      const line = rendered.render(width)[0];
+      assert.ok(visibleWidth(line) <= width);
+      if (line.includes("b:")) assert.match(line, /b:\$123456\.78 deepseek $/);
+    }
+  } finally {
+    rendered?.dispose();
+  }
+});
+
+test("renders the subagent profile inline and reflects updates without duplicating job rows", () => {
+  let rendered: any;
+  const statuses = new Map([
+    ["subagents", "jobs:1 running"],
+    ["modes", "plan"],
+    ["other", "other status"],
+  ]);
+  const context = {
+    model: { name: "model", provider: "anthropic" },
+    thinkingLevel: "high" as string | undefined,
+    getContextUsage: () => ({ tokens: 1000, contextWindow: 200000 }),
+    sessionManager: { getLeafId: () => null, getBranch: () => [] },
+  };
+  try {
+    rendered = mountFooter(context, statuses);
+    const absent = rendered.render(120);
+    assert.match(absent[0], /^ \[p\] model high 1k\/200k/);
+    assert.doesNotMatch(absent[0], /s:/);
+    assert.deepEqual(absent.slice(1), [" other status ", " jobs:1 running "]);
+    statuses.set("subagent-profile", "review");
+    const active = rendered.render(120);
+    assert.match(active[0], /^ \[p\] model high s:review 1k\/200k/);
+    assert.deepEqual(active.slice(1), [" other status ", " jobs:1 running "]);
+    statuses.set("subagent-profile", "implement");
+    const updated = rendered.render(120);
+    assert.match(updated[0], /^ \[p\] model high s:implement 1k\/200k/);
+    assert.doesNotMatch(updated[0], /review/);
+    for (const effort of ["off", undefined]) {
+      context.thinkingLevel = effort;
+      assert.match(rendered.render(120)[0], /^ \[p\] model s:implement 1k\/200k/);
+    }
+    statuses.delete("subagent-profile");
+    const unset = rendered.render(120);
+    assert.match(unset[0], /^ \[p\] model 1k\/200k/);
+    assert.doesNotMatch(unset[0], /s:/);
+    assert.deepEqual(unset.slice(1), [" other status ", " jobs:1 running "]);
+  } finally {
+    rendered?.dispose();
+  }
+});
+
+test("renders ANSI-themed footer within a narrow width and disposes its timer", () => {
+  const { handlers, on } = captureHandlers();
+  let footer: any;
+  let rendered: any;
+  const statuses = new Map([
+    [
+      "provider-usage",
+      JSON.stringify({
+        provider: "openai-codex",
+        state: "ready",
+        capturedAtMs: 0,
+        windows: [{ kind: "rolling", label: "5h", usedPercent: 42, resetAtMs: 0 }],
+      }),
+    ],
+    ["subagent-profile", "a-very-long-selected-profile-name"],
+    ["subagents", "jobs:1 running"],
+  ]);
+  statusline({ on } as any);
+  let contextTokens = 1000;
+  let contextWindow = 1_000_000;
+  const context = {
+    model: { name: "a-very-long-model-name", provider: "openai-codex" },
+    thinkingLevel: "off",
+    getContextUsage: () => ({ tokens: contextTokens, contextWindow }),
+    sessionManager: {
+      getLeafId: () => null,
+      getBranch: () => [
+        { type: "message", message: { role: "assistant", usage: { input: 25, cacheRead: 75, cacheWrite: 0 } } },
+      ],
+    },
+    ui: {
+      setFooter(callback: any) {
+        footer = callback;
+      },
+    },
+  };
+  try {
+    handlers.get("session_start")?.[0]?.({}, context);
+    const ansi = (color: string, value: string) => {
+      const codes: Record<string, number | string> = {
+        accent: "38;2;230;151;92",
+        success: 32,
+        error: 31,
+        warning: 33,
+        borderAccent: 34,
+        dim: 2,
+        muted: 90,
+      };
+      return `\x1b[${codes[color] ?? 37}m${value}\x1b[0m`;
+    };
+    rendered = footer(
+      { invalidate() {} },
+      { fg: ansi, bold: (value: string) => value },
+      { getExtensionStatuses: () => statuses },
+    );
+    assert.match(rendered.render(120)[0], /\x1b\[38;2;230;151;92m s:a-very-long-selected-profile-name\x1b\[0m/);
+    assert.match(rendered.render(120)[0], /\x1b\[34m1k\/1m\x1b\[0m/);
+    assert.match(rendered.render(120)[0], /\x1b\[33mc:75%\x1b\[0m/);
+    const wide = rendered.render(120)[0].replace(/\x1b\[[0-9;]*m/g, "");
+    assert.match(
+      wide,
+      /^ a-very-long-model-name s:a-very-long-selected-profile-name 1k\/1m c:75% {2,}42% openai-codex $/,
+    );
+    assert.equal(wide.length, 120);
+    contextTokens = 199_500;
+    assert.match(rendered.render(120)[0], /\x1b\[31m200k\/1m\x1b\[0m/);
+    contextTokens = 1_250_000;
+    contextWindow = 2_000_000;
+    assert.match(rendered.render(120)[0], /\x1b\[31m1\.3m\/2m\x1b\[0m/);
+    const lines = rendered.render(20);
+    assert.equal(lines.length, 2);
+    assert.equal(lines[1], " jobs:1 running ");
+    for (const width of [0, 1, 2, 3, 4, 20, 40, 80, 120]) {
+      for (const line of rendered.render(width)) {
+        assert.ok(visibleWidth(line) <= width);
+        if (width >= 3) {
+          assert.ok(line.startsWith(" "));
+          assert.ok(line.endsWith(" "));
+        }
+      }
+    }
+  } finally {
+    rendered?.dispose();
+  }
+});

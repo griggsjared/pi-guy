@@ -1,6 +1,6 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { UsageStatus, UsageWindow } from "../../lib/usage-status.ts";
 import { asNumber, asObject, readJson } from "../http.ts";
-import type { UsageStatus, UsageWindow } from "../usage-status.ts";
 import { resolveProviderAuth } from "./auth.ts";
 
 export const CODEX_PROVIDER = "openai-codex";

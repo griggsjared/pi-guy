@@ -12,6 +12,7 @@ import context from "../src/context/index.ts";
 import githubPr from "../src/github-pr/index.ts";
 import header from "../src/header/index.ts";
 import entry from "../src/index.ts";
+import providerUsage from "../src/provider-usage/index.ts";
 import statusline from "../src/statusline/index.ts";
 import subagents from "../src/subagents/index.ts";
 import webSearch from "../src/web-search/index.ts";
@@ -45,6 +46,7 @@ test("the package entry registers everything each factory registers", async (t) 
     githubPr,
     header,
     statusline,
+    providerUsage,
     subagents,
     webSearch,
     workingIndicator,

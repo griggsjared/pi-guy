@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { normalizeDeepseekUsage } from "../../../src/statusline/providers/deepseek.ts";
+import { normalizeDeepseekUsage } from "../../../src/provider-usage/providers/deepseek.ts";
 
 const capturedAt = 1_700_000_000_000;
 

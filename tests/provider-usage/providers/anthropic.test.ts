@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { normalizeAnthropicHeaders } from "../../../src/statusline/providers/anthropic.ts";
+import { normalizeAnthropicHeaders } from "../../../src/provider-usage/providers/anthropic.ts";
 
 const capturedAt = 1_700_000_000_000;
 

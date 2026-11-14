@@ -1,7 +1,7 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { normalizeUsagePercent } from "../../lib/usage-status.ts";
+import type { UsageStatus, UsageWindow } from "../../lib/usage-status.ts";
 import { asNumber, asObject, readJson } from "../http.ts";
-import { normalizeUsagePercent } from "../usage-status.ts";
-import type { UsageStatus, UsageWindow } from "../usage-status.ts";
 import { resolveProviderAuth } from "./auth.ts";
 
 export const ANTHROPIC_PROVIDER = "anthropic";

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { decodeUsageStatus, encodeUsageStatus, normalizeUsagePercent } from "../../src/statusline/usage-status.ts";
+import { decodeUsageStatus, encodeUsageStatus, normalizeUsagePercent } from "../../src/lib/usage-status.ts";
 
 const readyStatus = {
   provider: "openai-codex" as const,

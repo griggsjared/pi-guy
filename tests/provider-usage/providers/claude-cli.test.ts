@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import { test } from "node:test";
 import type { TestContext } from "node:test";
-import { fetchClaudeCliUsage, normalizeClaudeUsage } from "../../../src/statusline/providers/claude-cli.ts";
+import { fetchClaudeCliUsage, normalizeClaudeUsage } from "../../../src/provider-usage/providers/claude-cli.ts";
 import { claudeCapturedAt, claudeOutput, mockCli } from "../../helpers/claude-cli.ts";
 
 test("publishes only aggregate Claude CLI quotas and timezone-aware resets", () => {

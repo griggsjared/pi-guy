@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { normalizeOpencodeGoUsage } from "../../../src/statusline/providers/opencode.ts";
+import { normalizeOpencodeGoUsage } from "../../../src/provider-usage/providers/opencode.ts";
 
 const capturedAt = 1_700_000_000_000;
 

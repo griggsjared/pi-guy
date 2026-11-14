@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { readResponseTextLimited } from "../../src/statusline/http.ts";
+import { readResponseTextLimited } from "../../src/provider-usage/http.ts";
 
 test("limits response bodies while streaming", async () => {
   let headerCancelled = false;

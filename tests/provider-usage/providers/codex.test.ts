@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { normalizeCodexUsage } from "../../../src/statusline/providers/codex.ts";
+import { normalizeCodexUsage } from "../../../src/provider-usage/providers/codex.ts";
 
 const capturedAt = 1_700_000_000_000;
 

@@ -4,9 +4,9 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { decodeUsageStatus, encodeUsageStatus, normalizeUsagePercent } from "../../lib/usage-status.ts";
+import type { UsageStatus, UsageWindow } from "../../lib/usage-status.ts";
 import { asNumber, asObject, REQUEST_TIMEOUT_MS } from "../http.ts";
-import { decodeUsageStatus, encodeUsageStatus, normalizeUsagePercent } from "../usage-status.ts";
-import type { UsageStatus, UsageWindow } from "../usage-status.ts";
 
 const MAX_CLAUDE_OUTPUT_BYTES = 64 * 1024;
 const CLAUDE_STATE_FILE = ".claude.json";
