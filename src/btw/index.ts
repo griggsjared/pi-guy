@@ -10,13 +10,12 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { CURSOR_MARKER, Key, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
-import type { TUI } from "@earendil-works/pi-tui";
 import { boxed } from "../lib/box.ts";
+import { DRAWER_OVERLAY_OPTIONS, drawerRows } from "../lib/drawer.ts";
 
 const SYSTEM_PROMPT =
   "You are answering a side question about the current conversation. Answer the question directly and concisely. Do not continue the main task, call tools, or propose changes unless the question explicitly asks for them.";
-const OVERLAY_MARGIN = 1;
-const OVERLAY_BORDER_ROWS = 2;
+const OVERLAY_BORDER_ROWS = 1;
 // Provider error bodies can run to several KB; the notice keeps one readable line.
 const MAX_ERROR_NOTICE_COLUMNS = 200;
 
@@ -80,8 +79,7 @@ export function fitModalBody(
   chromeRows: number,
   borderRows = OVERLAY_BORDER_ROWS,
 ): { lines: string[]; scrollTop: number; viewportRows: number; maxScroll: number } {
-  const maxOverlayRows = Math.max(1, Math.floor(terminalRows) - (terminalRows >= 3 ? OVERLAY_MARGIN * 2 : 0));
-  const viewportRows = Math.max(0, maxOverlayRows - chromeRows - borderRows);
+  const viewportRows = Math.max(0, drawerRows(terminalRows) - chromeRows - borderRows);
   const maxScroll = Math.max(0, lines.length - viewportRows);
   const scrollTop = Math.min(maxScroll, Math.max(0, requestedScrollTop));
   return {
@@ -132,10 +130,8 @@ export default function (pi: ExtensionAPI) {
       let error: unknown;
 
       try {
-        let overlayTui: TUI | undefined;
         const result = await ctx.ui.custom<string | null>(
           (tui, theme, keybindings, done) => {
-            overlayTui = tui;
             let settled = false;
             let disposed = false;
             let loading = question.length > 0;
@@ -234,10 +230,7 @@ export default function (pi: ExtensionAPI) {
               render: (width: number) => {
                 if (disposed) return [];
                 const maxWidth = Math.max(1, Math.floor(width));
-                const maxRows = Math.max(
-                  1,
-                  Math.floor(tui.terminal.rows) - (tui.terminal.rows >= 3 ? OVERLAY_MARGIN * 2 : 0),
-                );
+                const maxRows = drawerRows(tui.terminal.rows);
                 try {
                   let bordered = maxWidth >= 3;
                   let innerWidth = bordered ? maxWidth - 2 : maxWidth;
@@ -316,23 +309,7 @@ export default function (pi: ExtensionAPI) {
               },
             };
           },
-          {
-            overlay: true,
-            overlayOptions: {
-              anchor: "center",
-              width: "100%",
-              minWidth: 60,
-              maxHeight: "100%",
-              get margin() {
-                if (!overlayTui) return OVERLAY_MARGIN;
-                const horizontal = overlayTui.terminal.columns >= 3 ? OVERLAY_MARGIN : 0;
-                const vertical = overlayTui.terminal.rows >= 3 ? OVERLAY_MARGIN : 0;
-                return horizontal && vertical
-                  ? OVERLAY_MARGIN
-                  : { top: vertical, bottom: vertical, left: horizontal, right: horizontal };
-              },
-            },
-          },
+          { overlay: true, overlayOptions: DRAWER_OVERLAY_OPTIONS },
         );
 
         if (result === null && error !== undefined) {

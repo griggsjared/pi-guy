@@ -10,6 +10,7 @@ import {
   truncateToWidth,
 } from "@earendil-works/pi-tui";
 import type { TUI } from "@earendil-works/pi-tui";
+import { DRAWER_OVERLAY_OPTIONS } from "../lib/drawer.ts";
 import { formatDuration } from "../lib/format.ts";
 import { DEFAULT_TERMINAL_COLUMNS, ENTRY_TYPE, MIN_DISPLAY_DURATION_MS, QUESTION_ENTRY_TYPE } from "./constants.ts";
 import { formatUsageStats, normalizeTitle, shortLabel, toolCallLabel } from "./format.ts";
@@ -97,27 +98,9 @@ export async function openSubagentTail(
   registry: JobRegistry,
   jobId: number,
 ): Promise<void> {
-  let overlayTui: TUI | undefined;
   await ui.custom<void>(
-    (tui, theme, _keybindings, done) => {
-      overlayTui = tui;
-      return new SubagentTail(tui, theme, registry, jobId, () => done(undefined));
-    },
-    {
-      overlay: true,
-      overlayOptions: {
-        anchor: "center",
-        width: "100%",
-        minWidth: 60,
-        maxHeight: "100%",
-        get margin() {
-          if (!overlayTui) return 1;
-          const horizontal = overlayTui.terminal.columns >= 3 ? 1 : 0;
-          const vertical = overlayTui.terminal.rows >= 3 ? 1 : 0;
-          return horizontal && vertical ? 1 : { top: vertical, bottom: vertical, left: horizontal, right: horizontal };
-        },
-      },
-    },
+    (tui, theme, _keybindings, done) => new SubagentTail(tui, theme, registry, jobId, () => done(undefined)),
+    { overlay: true, overlayOptions: DRAWER_OVERLAY_OPTIONS },
   );
 }
 

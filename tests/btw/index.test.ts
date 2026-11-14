@@ -50,7 +50,7 @@ test("transcript truncates older turns once the budget is exceeded", () => {
   assert.match(result, /Q: second/);
 });
 
-test("modal body grows until the padded terminal height is full", () => {
+test("modal body grows until the drawer height is full", () => {
   const body = ["one", "two", "three"];
   assert.deepEqual(fitModalBody(body, 0, 12, 4), {
     lines: body,
@@ -60,7 +60,7 @@ test("modal body grows until the padded terminal height is full", () => {
   });
 });
 
-test("modal body scrolls within the padded terminal height", () => {
+test("modal body scrolls within the drawer height", () => {
   const body = Array.from({ length: 10 }, (_, index) => `line ${index + 1}`);
   assert.deepEqual(fitModalBody(body, Number.MAX_SAFE_INTEGER, 12, 4), {
     lines: ["line 7", "line 8", "line 9", "line 10"],
@@ -193,20 +193,15 @@ function harness(history: SessionMessageEntry["message"][] = []) {
   };
 }
 
-test("modal centers with padding and grows naturally for short content", async () => {
+test("modal opens as a top drawer and grows naturally for short content", async () => {
   const h = harness();
   const running = h.start("");
   assert.deepEqual(h.options, {
     overlay: true,
-    overlayOptions: { anchor: "center", width: "100%", minWidth: 60, maxHeight: "100%", margin: 1 },
+    overlayOptions: { anchor: "top-center", width: "100%", maxHeight: "100%" },
   });
-  h.terminal.columns = 1;
-  assert.deepEqual(h.options?.overlayOptions?.margin, { top: 1, bottom: 1, left: 0, right: 0 });
   h.terminal.rows = 2;
-  assert.deepEqual(h.options?.overlayOptions?.margin, { top: 0, bottom: 0, left: 0, right: 0 });
   assert.equal(h.render(1).length, 2);
-  h.terminal.columns = 80;
-  assert.deepEqual(h.options?.overlayOptions?.margin, { top: 0, bottom: 0, left: 1, right: 1 });
   h.terminal.rows = 24;
   const initial = h.render(40);
   h.terminal.rows = 60;
@@ -226,7 +221,7 @@ test("short resized terminals scroll wrapped answers and keep the editor usable"
   const running = h.start("question");
   h.requests[0]!.resolve(answer(Array.from({ length: 12 }, (_, i) => `answer${i} long words here`).join("\n\n")));
   await flush();
-  assert.ok(h.render(20).length <= 4);
+  assert.ok(h.render(20).length <= 5);
   assert.match(h.render(20).join("\n"), /answer11|words here/);
   for (let i = 0; i < 100; i++) h.input("\x1b[5~");
   h.input("\x1b[6~");
@@ -234,7 +229,7 @@ test("short resized terminals scroll wrapped answers and keep the editor usable"
   assert.match(h.render(20).join("\n"), /question/);
   h.terminal.rows = 12;
   const resized = h.render(40);
-  assert.ok(resized.length <= 10);
+  assert.ok(resized.length <= 9);
   for (let i = 0; i < 100; i++) h.input("\x1b[6~");
   assert.match(h.render(40).join("\n"), /answer11/);
   h.terminal.rows = 200;
@@ -242,8 +237,8 @@ test("short resized terminals scroll wrapped answers and keep the editor usable"
   assert.match(expanded, /question/);
   assert.match(expanded, /answer11/);
   h.terminal.rows = 6;
-  assert.ok(h.render(2).length <= 4);
-  assert.ok(h.render(12).length <= 4);
+  assert.ok(h.render(2).length <= 5);
+  assert.ok(h.render(12).length <= 5);
   h.input("reply");
   assert.match(h.render(20).join("\n"), /reply/);
   h.input("\r");

@@ -10,13 +10,13 @@ import { renderText } from "./helpers.ts";
 
 test("paused tail keeps its event in view as steps and retained history change", (t) => {
   t.mock.timers.enable({ apis: ["Date", "setInterval"], now: 1000 });
-  const { registry, id, component } = openTail();
+  const { registry, id, component, terminal } = openTail();
   t.after(() => component.dispose());
   for (let index = 1; index <= 10; index++) registry.appendEvent(id, { kind: "state", summary: `event ${index}` });
   t.mock.timers.tick(250);
   component.render(100);
   component.handleInput("\x1b[H");
-  for (let index = 0; index < 5; index++) component.handleInput("\x1b[B");
+  for (let index = 0; index < 2; index++) component.handleInput("\x1b[B");
   assert.match(renderText(component), /\[3\].*event 3/);
 
   registry.recordStep(id, { phase: "start", id: "step", kind: "tool", summary: "reading" });
@@ -34,9 +34,9 @@ test("paused tail keeps its event in view as steps and retained history change",
   for (let index = 12; index <= 111; index++) registry.appendEvent(id, { kind: "state", summary: `event ${index}` });
   t.mock.timers.tick(250);
   assert.match(renderText(component), /\[12\].*event 12/);
-  component.handleInput("\x1b[A");
-  component.handleInput("\x1b[A");
+  terminal.rows = 20;
   assert.match(renderText(component), /History dropped before event 12/);
+  assert.match(renderText(component), /\[12\].*event 12/);
 });
 
 test("the tail remains visible in a one-cell terminal", (t) => {
@@ -49,15 +49,21 @@ test("the tail remains visible in a one-cell terminal", (t) => {
   assert.equal(component.render(1).length, 2);
 });
 
-test("a paused tail resumes following when a taller terminal reaches the bottom", (t) => {
+test("a paused tail stays paused when its header shrinks and resumes when a taller terminal reaches the bottom", (t) => {
   t.mock.timers.enable({ apis: ["Date", "setInterval"], now: 1000 });
   const { registry, id, component, terminal } = openTail();
   t.after(() => component.dispose());
-  for (let index = 1; index <= 10; index++) registry.appendEvent(id, { kind: "state", summary: `event ${index}` });
+  terminal.rows = 30;
+  registry.recordStep(id, { phase: "start", id: "step", kind: "tool", summary: "reading" });
+  for (let index = 1; index <= 30; index++) registry.appendEvent(id, { kind: "state", summary: `event ${index}` });
   t.mock.timers.tick(250);
   component.render(100);
   component.handleInput("\x1b[A");
-  terminal.rows = 20;
+  assert.match(renderText(component), /paused/);
+  registry.recordStep(id, { phase: "end", id: "step" });
+  t.mock.timers.tick(250);
+  assert.match(renderText(component), /paused/);
+  terminal.rows = 40;
   assert.match(renderText(component), /following/);
   registry.appendEvent(id, { kind: "state", summary: "newest event" });
   t.mock.timers.tick(250);
@@ -156,11 +162,9 @@ test("/subagent-tail opens a live overlay and follows new events", async (t) => 
   assert.deepEqual(overlayOptions, {
     overlay: true,
     overlayOptions: {
-      anchor: "center",
+      anchor: "top-center",
       width: "100%",
-      minWidth: 60,
       maxHeight: "100%",
-      margin: 1,
     },
   });
   assert.match(renderText(component), /Subagent #1 scout/);
@@ -190,34 +194,31 @@ test("/subagent-tail opens a live overlay and follows new events", async (t) => 
   }
   t.mock.timers.tick(250);
   let lines = component.render(100);
-  assert.equal(lines.filter((line) => /\[\d+\] \d\d:\d\d:\d\d/.test(line)).length, 14);
+  assert.equal(lines.length, 30, "the drawer leaves a quarter of a 40-row terminal free");
+  assert.equal(lines.filter((line) => /\[\d+\] \d\d:\d\d:\d\d/.test(line)).length, 20);
   assert.match(lines.join("\n"), /event 19/);
+  assert.match(lines[0]!, /Subagent #1 scout · running/);
+  assert.match(lines.join("\n"), /Active steps \(3\)/);
+  assert.match(lines.join("\n"), /Events 4-23\/23 · cursor 23 · following/);
 
   terminal.rows = 8;
   lines = component.render(100);
   assert.ok(lines.length <= 6);
+  assert.match(lines[0]!, /Subagent #1 scout · running/);
   assert.match(lines.join("\n"), /event 19/);
   component.handleInput!("\x1b[H");
   assert.match(renderText(component), /Subagent #1 scout · running/);
-  assert.match(renderText(component), /Task: running task/);
-  assert.match(renderText(component), /Title: Tail title/);
+  assert.match(renderText(component), /started/);
   component.handleInput!("\x1b[6~");
-  assert.match(renderText(component), /Active steps \(3\)/);
-  component.handleInput!("\x1b[6~");
-  assert.match(renderText(component), /Events 1-1\/23 · cursor 23 · paused/);
+  assert.match(renderText(component), /\[4\].*event 0/);
   component.handleInput!("\x1b[A");
-  assert.match(renderText(component), /retry: Retrying/);
-  component.handleInput!("\x1b[B");
-  assert.match(renderText(component), /Events 1-1\/23/);
+  assert.match(renderText(component), /\[3\].*new event/);
   component.handleInput!("\x1b[5~");
-  assert.match(renderText(component), /Active steps \(3\)/);
-  component.handleInput!("\x1b[6~");
-  const paused = renderText(component);
+  assert.match(renderText(component), /started/);
   registry.appendEvent(id, { kind: "assistant", summary: "while paused" });
   t.mock.timers.tick(250);
-  assert.match(renderText(component), /paused/);
   assert.doesNotMatch(renderText(component), /while paused/);
-  assert.match(paused, /started/);
+  assert.match(renderText(component), /started/);
   component.handleInput!("\x1b[F");
   assert.match(renderText(component), /while paused/);
   registry.appendEvent(id, { kind: "assistant", summary: "following again" });
@@ -225,15 +226,10 @@ test("/subagent-tail opens a live overlay and follows new events", async (t) => 
   assert.match(renderText(component), /following again/);
 
   terminal.rows = 4;
-  assert.ok(component.render(100).length <= 2);
-  component.handleInput!("\x1b[H");
-  assert.match(renderText(component), /Subagent #1 scout/);
-  terminal.rows = 40;
-  component.render(100);
-  component.handleInput!("\x1b[F");
+  assert.ok(component.render(100).length <= 3);
   assert.match(renderText(component), /following again/);
 
-  terminal.rows = 8;
+  terminal.rows = 40;
   component.render(100);
   component.handleInput!("\x1b[H");
   registry.recordStep(id, { phase: "end", id: "assistant-1" });
@@ -243,8 +239,6 @@ test("/subagent-tail opens a live overlay and follows new events", async (t) => 
     registry.appendEvent(id, { kind: "state", summary: `replacement ${index}` });
   }
   t.mock.timers.tick(250);
-  component.render(100);
-  component.handleInput!("\x1b[6~");
   assert.match(renderText(component), /History dropped before event/);
   component.handleInput!("\x1b[F");
   assert.match(renderText(component), /replacement 104/);
