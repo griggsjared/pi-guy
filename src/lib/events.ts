@@ -12,6 +12,6 @@ export const PROVIDER_USAGE_REQUEST_EVENT = "provider-usage:request";
 export interface ProviderUsageRequest {
   provider: string;
   theme: Pick<Theme, "fg">;
-  // Receives themed display text, or undefined when the provider is unsupported or no session is active.
+  // Receives themed display text, or undefined when the provider is unsupported, no session is active, or usage is unknown.
   reply: (text: string | undefined) => void;
 }

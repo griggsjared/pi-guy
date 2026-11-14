@@ -233,7 +233,7 @@ test("right-aligns nonquota providers without a balance", () => {
   }
 });
 
-test("right-aligns quota windows and the pending marker beside the provider without session cost", () => {
+test("shows no usage until it is known, then right-aligns quota windows beside the provider without session cost", () => {
   const { handlers, on } = captureHandlers();
   let footer: ((...args: any[]) => any) | undefined;
   let rendered: any;
@@ -265,7 +265,7 @@ test("right-aligns quota windows and the pending marker beside the provider with
     handlers.get("session_start")?.[0]?.({}, context);
     rendered = footer?.({ invalidate() {} }, fakeTheme(), { getExtensionStatuses: () => statuses });
     const left = "GPT-5.6 Luna high s:review 1k/200k c:75%";
-    const pending = "quota:? openai-codex";
+    const pending = "openai-codex";
     const line = rendered.render(120)[0];
     assert.equal(line, ` ${left}` + " ".repeat(118 - left.length - pending.length) + `${pending} `);
     assert.equal(rendered.render(left.length + 4 + pending.length)[0], ` ${left}  ${pending} `);
@@ -305,7 +305,7 @@ test("right-aligns quota windows and the pending marker beside the provider with
   }
 });
 
-test("renders Claude unknown quota then 5h and 7d usage resets beside claude-bridge", (t) => {
+test("renders nothing for unknown Claude quota, then 5h and 7d usage resets beside claude-bridge", (t) => {
   const now = 1_000_000_000_000;
   t.mock.method(Date, "now", () => now);
   const { handlers, on } = captureHandlers();
@@ -337,7 +337,7 @@ test("renders Claude unknown quota then 5h and 7d usage resets beside claude-bri
   try {
     handlers.get("session_start")?.[0]?.({}, context);
     rendered = footer({ invalidate() {} }, fakeTheme(), { getExtensionStatuses: () => statuses });
-    assert.match(rendered.render(120)[0], /quota:\? claude-bridge $/);
+    assert.match(rendered.render(120)[0], /^ Claude Sonnet +claude-bridge $/);
     statuses.set(
       "provider-usage",
       JSON.stringify({

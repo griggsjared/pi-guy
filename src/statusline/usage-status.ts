@@ -1,15 +1,15 @@
 export const USAGE_STATUS_KEY = "provider-usage";
 
-const USAGE_PROVIDERS = {
-  anthropic: { quota: true },
-  "claude-bridge": { quota: true },
-  "claude-code": { quota: true },
-  "openai-codex": { quota: true },
-  "opencode-go": { quota: true },
-  deepseek: { quota: false },
-} as const;
+const USAGE_PROVIDERS = [
+  "anthropic",
+  "claude-bridge",
+  "claude-code",
+  "openai-codex",
+  "opencode-go",
+  "deepseek",
+] as const;
 
-export type UsageProvider = keyof typeof USAGE_PROVIDERS;
+export type UsageProvider = (typeof USAGE_PROVIDERS)[number];
 export type UsageWindowKind = "rolling" | "weekly" | "monthly";
 
 export interface UsageWindow {
@@ -35,18 +35,11 @@ export interface UsageStatus {
   balance?: UsageBalance;
 }
 
-const providers = new Set<string>(Object.keys(USAGE_PROVIDERS));
-const quotaProviders = new Set<string>(
-  Object.keys(USAGE_PROVIDERS).filter((provider) => USAGE_PROVIDERS[provider as UsageProvider].quota),
-);
+const providers = new Set<string>(USAGE_PROVIDERS);
 const kinds = new Set<UsageWindowKind>(["rolling", "weekly", "monthly"]);
 
 export function isUsageProvider(value: unknown): value is UsageProvider {
   return typeof value === "string" && providers.has(value as UsageProvider);
-}
-
-export function isQuotaProvider(value: unknown): value is UsageProvider {
-  return typeof value === "string" && quotaProviders.has(value as UsageProvider);
 }
 
 function isUsageStatus(value: unknown): value is UsageStatus {

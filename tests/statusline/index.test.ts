@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
 import { test } from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import providerUsage from "../../src/statusline/index.ts";
@@ -147,7 +148,7 @@ test("answers provider usage requests for non-active providers without touching 
 
     // A new session drops the cache, so the next request refetches and the failure has no stale value.
     handlers.get("session_start")?.at(-1)?.({}, context);
-    assert.equal(await ask("deepseek"), "quota:?");
+    assert.equal(await ask("deepseek"), undefined);
     assert.equal(calls, 2);
   } finally {
     handlers.get("session_shutdown")?.at(-1)?.({}, context);
@@ -588,8 +589,7 @@ test("ignores a stale OpenCode response after switching providers", async (t) =>
 });
 
 test("Claude response headers update bridge usage and renew the CLI cache until fallback is due", async (t) => {
-  const calls = mockCli(t, (call) => call.complete(null, call.file === "security" ? "{}" : claudeOutput));
-  const usageReads = () => calls.filter((call) => call.file === "claude").length;
+  const calls = mockCli(t, (call) => call.complete(null, claudeOutput));
   let now = claudeCapturedAt;
   t.mock.method(Date, "now", () => now);
   const { handlers, context, statuses } = entryContext();
@@ -650,12 +650,12 @@ test("Claude response headers update bridge usage and renew the CLI cache until 
     now += CLAUDE_BRIDGE_CACHE_TTL_MS - 1;
     handlers.get("turn_end")?.at(-1)?.({}, context);
     await flush();
-    assert.equal(usageReads(), 1);
+    assert.equal(calls.length, 1);
     assert.deepEqual(JSON.parse(statuses.at(-1)!), updated);
     now++;
     handlers.get("turn_end")?.at(-1)?.({}, context);
     await flush();
-    assert.equal(usageReads(), 2);
+    assert.equal(calls.length, 2);
     assert.equal(JSON.parse(statuses.at(-1)!).windows[0].usedPercent, 10);
   } finally {
     handlers.get("session_shutdown")?.at(-1)?.({}, context);
@@ -680,10 +680,9 @@ test("Claude replies without usable usage headers keep unknown quota when CLI us
   }
 });
 
-test("Claude wiring caches quotas for five minutes and retries failed refreshes until fresh quotas replace them", async (t) => {
+test("Claude wiring caches quotas for five minutes, waits five minutes between failed refreshes, and drops quotas ten minutes old", async (t) => {
   let reads = 0;
   mockCli(t, (call) => {
-    if (call.file === "security") return call.complete(null, "{}");
     reads++;
     if (reads === 1) call.complete(null, claudeOutput);
     else if (reads <= 3) call.complete(new Error("secret CLI failure"), "");
@@ -708,10 +707,16 @@ test("Claude wiring caches quotas for five minutes and retries failed refreshes 
     await flush();
     assert.equal(reads, 2);
     assert.deepEqual(JSON.parse(statuses.at(-1)!), ready);
+    now += 300_000 - 1;
+    handlers.get("turn_end")?.at(-1)?.({}, context);
+    await flush();
+    assert.equal(reads, 2);
+    now++;
     handlers.get("turn_end")?.at(-1)?.({}, context);
     await flush();
     assert.equal(reads, 3);
-    assert.deepEqual(JSON.parse(statuses.at(-1)!), ready);
+    assert.equal(JSON.parse(statuses.at(-1)!).state, "unknown");
+    now += 300_000;
     handlers.get("turn_end")?.at(-1)?.({}, context);
     await flush();
     assert.equal(reads, 4);
@@ -725,13 +730,70 @@ test("Claude wiring caches quotas for five minutes and retries failed refreshes 
   }
 });
 
+test("an older reading from the Claude CLI does not make a session run it again within five minutes", async (t) => {
+  const calls = mockCli(t, (call) => call.complete(null, claudeOutput));
+  let now = claudeCapturedAt;
+  t.mock.method(Date, "now", () => now);
+  const state = JSON.stringify({ cachedUsageUtilization: { fetchedAtMs: now - 240_000 } });
+  t.mock.method(fs, "readFile", async (path: string) => {
+    if (path.endsWith("pi-guy-claude-usage.json")) throw new Error("no saved reading");
+    return state;
+  });
+  const { handlers, context, statuses } = entryContext();
+  try {
+    handlers.get("session_start")?.at(-1)?.({}, context);
+    await flush();
+    assert.equal(JSON.parse(statuses.at(-1)!).state, "ready");
+    now += 300_000 - 1;
+    handlers.get("turn_end")?.at(-1)?.({}, context);
+    await flush();
+    assert.equal(calls.length, 1);
+    now++;
+    handlers.get("turn_end")?.at(-1)?.({}, context);
+    await flush();
+    assert.equal(calls.length, 2);
+  } finally {
+    handlers.get("session_shutdown")?.at(-1)?.({}, context);
+  }
+});
+
+test("a Claude session waiting after a failed refresh shows a reading another session saved without running the CLI", async (t) => {
+  const calls = mockCli(t, (call) => call.complete(new Error("CLI unavailable"), ""));
+  let now = claudeCapturedAt;
+  t.mock.method(Date, "now", () => now);
+  const { handlers, context, statuses } = entryContext();
+  try {
+    handlers.get("session_start")?.at(-1)?.({}, context);
+    await flush();
+    assert.equal(JSON.parse(statuses.at(-1)!).state, "unknown");
+    now += 60_000;
+    const saved = {
+      provider: "claude-code",
+      state: "ready",
+      capturedAtMs: now,
+      windows: [
+        { kind: "rolling", label: "5h", usedPercent: 50 },
+        { kind: "weekly", label: "7d", usedPercent: 25 },
+      ],
+    };
+    t.mock.method(fs, "readFile", async () => JSON.stringify(saved));
+    handlers.get("turn_end")?.at(-1)?.({}, context);
+    await flush();
+    assert.equal(calls.length, 1);
+    assert.deepEqual(JSON.parse(statuses.at(-1)!), { ...saved, provider: "claude-bridge" });
+  } finally {
+    handlers.get("session_shutdown")?.at(-1)?.({}, context);
+  }
+});
+
 test("index timeout cancels a hung Claude CLI request and permits a later refresh", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   let reads = 0;
   const calls = mockCli(t, (call) => {
-    if (call.file === "security") return call.complete(null, "{}");
     if (++reads > 1) call.complete(null, claudeOutput);
   });
+  let now = claudeCapturedAt;
+  t.mock.method(Date, "now", () => now);
   const { handlers, context, statuses } = entryContext();
   try {
     handlers.get("session_start")?.at(-1)?.({}, context);
@@ -739,8 +801,9 @@ test("index timeout cancels a hung Claude CLI request and permits a later refres
     assert.equal(reads, 1);
     t.mock.timers.tick(10_000);
     await flush();
-    assert.equal(calls[1]?.options.signal.aborted, true);
+    assert.equal(calls[0]?.options.signal.aborted, true);
     assert.equal(JSON.parse(statuses.at(-1)!).state, "unknown");
+    now += 300_000;
     handlers.get("turn_end")?.at(-1)?.({}, context);
     await flush();
     assert.equal(reads, 2);
@@ -754,25 +817,22 @@ test("index timeout cancels a hung Claude CLI request and permits a later refres
 test("does not publish stale Claude results after selection, reload, or shutdown", async (t) => {
   for (const event of ["model_select", "session_start", "session_shutdown"]) {
     await t.test(event, async (t) => {
-      const allCalls = mockCli(t, (call) => {
-        if (call.file === "security") call.complete(null, "{}");
-      });
-      const calls = () => allCalls.filter((call) => call.file === "claude");
+      const calls = mockCli(t, () => {});
       const { handlers, context, statuses } = entryContext();
       try {
         handlers.get("session_start")?.at(-1)?.({}, context);
         await flush();
         handlers.get(event)?.at(-1)?.({ model: context.model }, context);
         await flush();
-        assert.equal(calls()[0]?.options.signal.aborted, true);
-        calls()[0]?.complete(null, claudeOutput);
+        assert.equal(calls[0]?.options.signal.aborted, true);
+        calls[0]?.complete(null, claudeOutput);
         await flush();
         assert.equal(
           statuses.some((value) => value && JSON.parse(value).state === "ready"),
           false,
         );
         if (event !== "session_shutdown") {
-          calls()[1]?.complete(null, claudeOutput);
+          calls[1]?.complete(null, claudeOutput);
           await flush();
           assert.equal(JSON.parse(statuses.at(-1)!).state, "ready");
         } else assert.equal(statuses.at(-1), undefined);
@@ -783,42 +843,73 @@ test("does not publish stale Claude results after selection, reload, or shutdown
   }
 });
 
-test("claude-code refreshes usage after a turn once a minute has passed", async (t) => {
+test("claude-code shows usage from each reply and fetches only after five minutes without one", async (t) => {
   const calls = mockCli(t, (call) => {
-    if (call.file === "security") return call.complete(null, "{}");
-    if (calls.filter((entry) => entry.file === "claude").length === 1) call.complete(null, claudeOutput);
+    if (calls.length === 1) call.complete(null, claudeOutput);
     else call.complete(new Error("CLI unavailable"), "");
   });
   let now = claudeCapturedAt;
   t.mock.method(Date, "now", () => now);
   const { handlers, context, statuses } = entryContext();
   context.model = { provider: "claude-code" };
-  const usageReads = () => calls.filter((call) => call.file === "claude").length;
+  const saved: string[] = [];
+  t.mock.method(fs, "writeFile", async (_path: string, data: string) => {
+    saved.push(data);
+  });
   try {
     handlers.get("session_start")?.at(-1)?.({}, context);
     await flush();
-    assert.equal(usageReads(), 1);
+    assert.equal(calls.length, 1);
     const ready = JSON.parse(statuses.at(-1)!);
     assert.equal(ready.provider, "claude-code");
-    now += 60_000 - 1;
+    now += 300_000;
     handlers.get("turn_end")?.at(-1)?.({}, context);
     await flush();
-    assert.equal(usageReads(), 1);
+    assert.equal(calls.length, 2);
+    assert.deepEqual(JSON.parse(statuses.at(-1)!), ready);
+    now += 300_000 - 1;
+    handlers.get("turn_end")?.at(-1)?.({}, context);
+    await flush();
+    assert.equal(calls.length, 2);
+    now++;
+    const message = {
+      role: "assistant",
+      diagnostics: [
+        { type: "claude-code.turn-relay", timestamp: now, details: {} },
+        {
+          type: "claude-code.rate-limit",
+          timestamp: now,
+          details: {
+            unifiedWindows: {
+              five_hour: { utilization: 0.5, resetsAt: 1794636600 },
+              seven_day: { utilization: 0.25, resetsAt: 1794913200 },
+              seven_day_overage_included: { utilization: 0.42, resetsAt: 1794913200 },
+            },
+          },
+        },
+      ],
+    };
+    handlers.get("turn_end")?.at(-1)?.({ message }, context);
+    await flush();
+    assert.equal(calls.length, 2);
+    assert.deepEqual(JSON.parse(statuses.at(-1)!), {
+      provider: "claude-code",
+      state: "ready",
+      capturedAtMs: now,
+      windows: [
+        { kind: "rolling", label: "5h", usedPercent: 50, resetAtMs: 1794636600000 },
+        { kind: "weekly", label: "7d", usedPercent: 25, resetAtMs: 1794913200000 },
+      ],
+    });
+    assert.equal(saved.at(-1), statuses.at(-1));
+    now += 300_000 - 1;
+    handlers.get("turn_end")?.at(-1)?.({}, context);
+    await flush();
+    assert.equal(calls.length, 2);
     now++;
     handlers.get("turn_end")?.at(-1)?.({}, context);
     await flush();
-    assert.equal(usageReads(), 2);
-    assert.deepEqual(JSON.parse(statuses.at(-1)!), ready);
-    now += 60_000 - 1;
-    handlers.get("turn_end")?.at(-1)?.({}, context);
-    await flush();
-    assert.equal(usageReads(), 2);
-    assert.deepEqual(JSON.parse(statuses.at(-1)!), ready);
-    now++;
-    handlers.get("turn_end")?.at(-1)?.({}, context);
-    await flush();
-    assert.equal(usageReads(), 3);
-    assert.deepEqual(JSON.parse(statuses.at(-1)!), ready);
+    assert.equal(calls.length, 3);
   } finally {
     handlers.get("session_shutdown")?.at(-1)?.({}, context);
   }

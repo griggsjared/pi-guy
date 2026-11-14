@@ -1,7 +1,7 @@
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { formatTokens, roundTokens } from "../lib/format.ts";
-import { decodeUsageStatus, isQuotaProvider, USAGE_STATUS_KEY } from "./usage-status.ts";
+import { decodeUsageStatus, USAGE_STATUS_KEY } from "./usage-status.ts";
 import type { UsageBalance, UsageStatus } from "./usage-status.ts";
 
 const WINDOW_ORDER = ["rolling", "weekly", "monthly"] as const;
@@ -187,8 +187,6 @@ export function registerStatusline(pi: ExtensionAPI) {
             const usageWidth = Math.max(0, width - visibleWidth(line) - reserved);
             const text = formatFooterUsage(usage, Date.now(), usageWidth, theme);
             if (text) right = text;
-          } else if (isQuotaProvider(model?.provider) && !usageReady) {
-            right = theme.fg("dim", "quota:?");
           }
           if (usageReady && usage.balance) {
             const text = formatFooterBalance(usage.balance, theme);

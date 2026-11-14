@@ -1,4 +1,5 @@
 import childProcess from "node:child_process";
+import fs from "node:fs/promises";
 import type { TestContext } from "node:test";
 
 export const claudeCapturedAt = Date.parse("2026-10-07T16:00:00Z");
@@ -17,16 +18,14 @@ export interface CliCall {
 }
 
 export function mockCli(t: TestContext, load: (call: CliCall) => void): CliCall[] {
-  const previousConfigDir = process.env.CLAUDE_CONFIG_DIR;
-  delete process.env.CLAUDE_CONFIG_DIR;
-  t.after(() => {
-    if (previousConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
-    else process.env.CLAUDE_CONFIG_DIR = previousConfigDir;
-  });
-  t.mock.property(process, "platform", "darwin");
   t.mock.method(globalThis, "fetch", async () => {
     throw new Error("unexpected fetch");
   });
+  // Keeps the developer's real Claude Code state file and saved usage reading out of the tests.
+  t.mock.method(fs, "readFile", async () => {
+    throw new Error("no Claude Code file");
+  });
+  t.mock.method(fs, "writeFile", async () => {});
   const calls: CliCall[] = [];
   t.mock.method(childProcess, "execFile", (file: string, args: string[], options: any, callback: any) => {
     const call: CliCall = {

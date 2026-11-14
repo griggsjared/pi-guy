@@ -11,14 +11,19 @@ import {
 } from "./providers/anthropic.ts";
 import {
   CLAUDE_BRIDGE_CACHE_TTL_MS,
+  CLAUDE_BRIDGE_REQUEST_INTERVAL_MS,
   CLAUDE_BRIDGE_PROVIDER,
+  CLAUDE_BRIDGE_STALE_AFTER_MS,
   fetchClaudeBridgeUsage,
 } from "./providers/claude-bridge.ts";
+import { saveClaudeUsage } from "./providers/claude-cli.ts";
 import {
   CLAUDE_CODE_CACHE_TTL_MS,
+  CLAUDE_CODE_REQUEST_INTERVAL_MS,
   CLAUDE_CODE_PROVIDER,
-  CLAUDE_CODE_TURN_CACHE_TTL_MS,
+  CLAUDE_CODE_STALE_AFTER_MS,
   fetchClaudeCodeUsage,
+  normalizeClaudeCodeRateLimit,
 } from "./providers/claude-code.ts";
 import { CODEX_CACHE_TTL_MS, CODEX_PROVIDER, fetchCodexUsage } from "./providers/codex.ts";
 import { DEEPSEEK_CACHE_TTL_MS, DEEPSEEK_PROVIDER, fetchDeepseekUsage } from "./providers/deepseek.ts";
@@ -30,17 +35,28 @@ const REFRESH_INTERVAL_MS = 60_000;
 
 interface UsageAdapter {
   cacheTtlMs: number;
-  /** Shorter cache lifetime for refreshes after a turn, when usage has just changed. */
-  turnCacheTtlMs?: number;
-  load(ctx: ExtensionContext, signal: AbortSignal): Promise<UsageStatus>;
+  /**
+   * Shortest time between requests, so sessions sharing a rate-limited login do not ask every minute
+   * after a failure or an old reading. In between, load is called with savedOnly and must not make a request.
+   */
+  requestIntervalMs?: number;
+  /** Stop showing a reading this old when it cannot be renewed. */
+  staleAfterMs?: number;
+  load(ctx: ExtensionContext, signal: AbortSignal, savedOnly?: boolean): Promise<UsageStatus>;
 }
 
 const USAGE_ADAPTERS: Record<UsageProvider, UsageAdapter> = {
   [ANTHROPIC_PROVIDER]: { cacheTtlMs: ANTHROPIC_CACHE_TTL_MS, load: fetchAnthropicUsage },
-  [CLAUDE_BRIDGE_PROVIDER]: { cacheTtlMs: CLAUDE_BRIDGE_CACHE_TTL_MS, load: fetchClaudeBridgeUsage },
+  [CLAUDE_BRIDGE_PROVIDER]: {
+    cacheTtlMs: CLAUDE_BRIDGE_CACHE_TTL_MS,
+    requestIntervalMs: CLAUDE_BRIDGE_REQUEST_INTERVAL_MS,
+    staleAfterMs: CLAUDE_BRIDGE_STALE_AFTER_MS,
+    load: fetchClaudeBridgeUsage,
+  },
   [CLAUDE_CODE_PROVIDER]: {
     cacheTtlMs: CLAUDE_CODE_CACHE_TTL_MS,
-    turnCacheTtlMs: CLAUDE_CODE_TURN_CACHE_TTL_MS,
+    requestIntervalMs: CLAUDE_CODE_REQUEST_INTERVAL_MS,
+    staleAfterMs: CLAUDE_CODE_STALE_AFTER_MS,
     load: fetchClaudeCodeUsage,
   },
   [CODEX_PROVIDER]: { cacheTtlMs: CODEX_CACHE_TTL_MS, load: fetchCodexUsage },
@@ -61,8 +77,8 @@ function isProviderUsageRequest(value: unknown): value is ProviderUsageRequest {
 }
 
 // Mirrors the footer's right-hand usage text, without width limits.
-function formatRequestedUsage(usage: UsageStatus | undefined, theme: Pick<Theme, "fg">): string {
-  if (usage?.state !== "ready") return theme.fg("dim", "quota:?");
+function formatRequestedUsage(usage: UsageStatus | undefined, theme: Pick<Theme, "fg">): string | undefined {
+  if (usage?.state !== "ready") return undefined;
   const parts = usage.windows.length > 0 ? [formatFooterUsage(usage, Date.now(), Infinity, theme)] : [];
   if (usage.balance) {
     parts.push(formatFooterBalance(usage.balance, theme));
@@ -76,7 +92,7 @@ export default function (pi: ExtensionAPI) {
   let activeProvider: string | undefined;
   let latestUsage: UsageStatus | undefined;
   let lastFetchedAt = 0;
-  let lastAttemptAt: number | undefined;
+  let lastRequestAt: number | undefined;
   let generation = 0;
   let refreshPromise: Promise<void> | undefined;
   let requestController: AbortController | undefined;
@@ -108,7 +124,7 @@ export default function (pi: ExtensionAPI) {
   const clearUsage = (ctx: ExtensionContext): void => {
     latestUsage = undefined;
     lastFetchedAt = 0;
-    lastAttemptAt = undefined;
+    lastRequestAt = undefined;
     if (ctx.hasUI) ctx.ui.setStatus(USAGE_STATUS_KEY, undefined);
   };
 
@@ -134,7 +150,7 @@ export default function (pi: ExtensionAPI) {
     );
   };
 
-  const refresh = (ctx: ExtensionContext, afterTurn = false): Promise<void> => {
+  const refresh = (ctx: ExtensionContext): Promise<void> => {
     const provider = ctx.model?.provider;
     if (!ctx.hasUI || !supported(provider)) {
       if (ctx.hasUI && supported(activeProvider)) clearUsage(ctx);
@@ -142,36 +158,40 @@ export default function (pi: ExtensionAPI) {
     }
 
     const adapter = USAGE_ADAPTERS[provider];
-    const cacheTtlMs = (afterTurn && adapter.turnCacheTtlMs) || adapter.cacheTtlMs;
-    if (latestUsage?.provider === provider && Date.now() - lastFetchedAt < cacheTtlMs) {
+    if (latestUsage?.provider === provider && Date.now() - lastFetchedAt < adapter.cacheTtlMs) {
       publish(ctx, latestUsage);
       return Promise.resolve();
     }
     if (refreshPromise) return refreshPromise;
-    if (
-      afterTurn &&
-      adapter.turnCacheTtlMs &&
-      lastAttemptAt !== undefined &&
-      Date.now() - lastAttemptAt < adapter.turnCacheTtlMs
-    ) {
-      publish(ctx, latestUsage?.provider === provider ? latestUsage : undefined);
-      return Promise.resolve();
-    }
+    const savedOnly =
+      !!adapter.requestIntervalMs &&
+      lastRequestAt !== undefined &&
+      Date.now() - lastRequestAt < adapter.requestIntervalMs;
 
-    lastAttemptAt = Date.now();
     const requestGeneration = generation;
     const controller = new AbortController();
     requestController = controller;
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     const promise = (async () => {
       try {
-        const usage = await adapter.load(ctx, controller.signal);
+        const usage = await adapter.load(ctx, controller.signal, savedOnly);
         if (!sessionActive || requestGeneration !== generation || ctx.model?.provider !== activeProvider) return;
-        latestUsage = usage;
-        lastFetchedAt = Date.now();
-        publish(ctx, usage);
+        // The Claude CLI can return a saved reading older than the value from the last reply.
+        if (latestUsage?.provider !== usage.provider || usage.capturedAtMs >= latestUsage.capturedAtMs)
+          latestUsage = usage;
+        // A saved Claude reading can already be minutes old, so its cache lifetime runs from when it was taken.
+        lastFetchedAt = latestUsage.capturedAtMs;
+        if (!savedOnly) lastRequestAt = Date.now();
+        publish(ctx, latestUsage);
       } catch {
         if (!sessionActive || requestGeneration !== generation || ctx.model?.provider !== provider) return;
+        if (!savedOnly) lastRequestAt = Date.now();
+        if (
+          latestUsage?.provider === provider &&
+          adapter.staleAfterMs &&
+          Date.now() - latestUsage.capturedAtMs >= adapter.staleAfterMs
+        )
+          latestUsage = undefined;
         if (latestUsage?.provider === provider) publish(ctx, latestUsage);
         else publish(ctx, undefined);
       } finally {
@@ -252,7 +272,7 @@ export default function (pi: ExtensionAPI) {
     refreshTimer = undefined;
     latestUsage = undefined;
     lastFetchedAt = 0;
-    lastAttemptAt = undefined;
+    lastRequestAt = undefined;
     sessionActive = true;
     activeContext = ctx;
     activeProvider = ctx.model?.provider;
@@ -302,6 +322,7 @@ export default function (pi: ExtensionAPI) {
       latestUsage = { ...usage, provider };
       // Usable header updates renew the fetch cache.
       lastFetchedAt = Date.now();
+      if (provider === CLAUDE_BRIDGE_PROVIDER) void saveClaudeUsage(latestUsage);
       publish(ctx, latestUsage);
     } else if (provider === ANTHROPIC_PROVIDER && event.status < 400 && latestUsage?.provider !== ANTHROPIC_PROVIDER) {
       // A successful reply without plan headers means an API key, which has no quota to show.
@@ -309,9 +330,18 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
-  pi.on("turn_end", (_event, ctx) => {
+  pi.on("turn_end", (event, ctx) => {
     activeContext = ctx;
-    if (supported(ctx.model?.provider)) void refresh(ctx, true);
+    if (sessionActive && ctx.hasUI && ctx.model?.provider === CLAUDE_CODE_PROVIDER) {
+      const usage = normalizeClaudeCodeRateLimit(event.message);
+      if (usage) {
+        latestUsage = usage;
+        // Like usable response headers, a reply's rate-limit status renews the fetch cache.
+        lastFetchedAt = Date.now();
+        void saveClaudeUsage(usage);
+      }
+    }
+    if (supported(ctx.model?.provider)) void refresh(ctx);
   });
 
   pi.on("session_shutdown", (_event, ctx) => {
@@ -325,7 +355,7 @@ export default function (pi: ExtensionAPI) {
     activeProvider = undefined;
     latestUsage = undefined;
     lastFetchedAt = 0;
-    lastAttemptAt = undefined;
+    lastRequestAt = undefined;
     if (ctx.hasUI) ctx.ui.setStatus(USAGE_STATUS_KEY, undefined);
   });
 }

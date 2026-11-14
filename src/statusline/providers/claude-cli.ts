@@ -1,31 +1,32 @@
 import childProcess from "node:child_process";
-import { readFile } from "node:fs/promises";
+import fs from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { asNumber, asObject, REQUEST_TIMEOUT_MS } from "../http.ts";
-import { normalizeUsagePercent } from "../usage-status.ts";
+import { decodeUsageStatus, encodeUsageStatus, normalizeUsagePercent } from "../usage-status.ts";
 import type { UsageStatus, UsageWindow } from "../usage-status.ts";
-import { requestAnthropicUsage } from "./anthropic.ts";
 
-const SAVED_LOGIN_TIMEOUT_MS = 5_000;
 const MAX_CLAUDE_OUTPUT_BYTES = 64 * 1024;
-const CLAUDE_KEYCHAIN_SERVICE = "Claude Code-credentials";
-const CLAUDE_CREDENTIALS_FILE = ".credentials.json";
+const CLAUDE_STATE_FILE = ".claude.json";
+const SAVED_USAGE_FILE = "pi-guy-claude-usage.json";
+const MAX_READING_AGE_MS = 300_000;
 const MAX_YEAR_ROLLOVER_MONTHS = 6;
 const MAX_TIMEZONE_ADJUST_ATTEMPTS = 3;
 
-type ClaudeLoginProvider = "claude-code" | "claude-bridge";
+type ClaudeCliProvider = "claude-code" | "claude-bridge";
 
 function parseReset(reset: string, capturedAt: number): number | undefined {
-  const match = /^(\w{3}) (\d{1,2}) at (\d{1,2}):(\d{2})(am|pm) \(([^)]+)\)$/i.exec(reset.trim());
+  const match = /^(\w{3}) (\d{1,2}) at (\d{1,2})(?::(\d{2}))?(am|pm) \(([^)]+)\)$/i.exec(reset.trim());
   if (!match) return undefined;
   const month = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].indexOf(
     match[1]!.toLowerCase(),
   );
   const day = Number(match[2]);
   const clockHour = Number(match[3]);
-  const minute = Number(match[4]);
+  // The CLI leaves the minutes off times on the hour, such as "4am".
+  const minute = Number(match[4] ?? 0);
   if (month < 0 || day < 1 || day > 31 || clockHour < 1 || clockHour > 12 || minute > 59) return undefined;
   const hour = (clockHour % 12) + (match[5]!.toLowerCase() === "pm" ? 12 : 0);
   try {
@@ -66,7 +67,7 @@ function parseReset(reset: string, capturedAt: number): number | undefined {
 }
 
 export function normalizeClaudeUsage(
-  provider: ClaudeLoginProvider,
+  provider: ClaudeCliProvider,
   payload: unknown,
   capturedAt = Date.now(),
 ): UsageStatus | undefined {
@@ -87,8 +88,65 @@ export function normalizeClaudeUsage(
   return windows.length ? { provider, state: "ready", windows, capturedAtMs: capturedAt } : undefined;
 }
 
-async function fetchClaudeUsage(provider: ClaudeLoginProvider, signal: AbortSignal): Promise<UsageStatus> {
+/** Returns when the CLI last fetched the usage it prints, or undefined when its state file does not say. */
+async function readCliUsageFetchedAt(signal: AbortSignal): Promise<number | undefined> {
+  try {
+    // The default state file sits beside ~/.claude, not inside it.
+    const dir = process.env.CLAUDE_CONFIG_DIR || homedir();
+    const state: unknown = JSON.parse(await fs.readFile(join(dir, CLAUDE_STATE_FILE), { encoding: "utf8", signal }));
+    return asNumber(asObject(asObject(state)?.cachedUsageUtilization)?.fetchedAtMs);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Saves a reading for other pi sessions on the same Claude login to reuse instead of running the CLI.
+ * Skips a reading without both the 5-hour and 7-day windows, so other sessions never show half of one.
+ * Never rejects: a reading that cannot be saved is only a missed shortcut.
+ */
+export async function saveClaudeUsage(usage: UsageStatus): Promise<void> {
+  if (!(["rolling", "weekly"] as const).every((kind) => usage.windows.some((window) => window.kind === kind))) return;
+  try {
+    await fs.writeFile(join(getAgentDir(), SAVED_USAGE_FILE), encodeUsageStatus(usage));
+  } catch {
+    // Another session's next reading will replace it.
+  }
+}
+
+async function readSavedClaudeUsage(
+  provider: ClaudeCliProvider,
+  signal: AbortSignal,
+): Promise<UsageStatus | undefined> {
+  try {
+    const path = join(getAgentDir(), SAVED_USAGE_FILE);
+    const usage = decodeUsageStatus(await fs.readFile(path, { encoding: "utf8", signal }));
+    if (usage?.state !== "ready" || usage.windows.length === 0) return undefined;
+    const age = Date.now() - usage.capturedAtMs;
+    return age >= 0 && age <= MAX_READING_AGE_MS ? { ...usage, provider } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Reads plan usage for the Claude login and labels it with provider.
+ * Returns a reading that any pi session saved in the last five minutes, and otherwise runs `claude /usage`.
+ * With savedOnly, never runs the CLI and rejects when no such saved reading exists.
+ * When its own usage request fails, the CLI prints its last saved reading without marking it,
+ * so capturedAtMs is the time the CLI fetched the reading whenever its state file records one.
+ * Rejects when the CLI fails, prints no quotas, prints a reading more than five minutes old, or signal aborts.
+ */
+export async function fetchClaudeCliUsage(
+  provider: ClaudeCliProvider,
+  signal: AbortSignal,
+  savedOnly = false,
+): Promise<UsageStatus> {
   signal.throwIfAborted();
+  const saved = await readSavedClaudeUsage(provider, signal);
+  signal.throwIfAborted();
+  if (saved) return saved;
+  if (savedOnly) throw new Error("No saved Claude usage reading");
   const output = await new Promise<string>((resolve, reject) => {
     // pi.exec lacks per-process env overrides, a 64 KiB output cap, and immediate SIGKILL.
     const child = childProcess.execFile(
@@ -125,75 +183,12 @@ async function fetchClaudeUsage(provider: ClaudeLoginProvider, signal: AbortSign
     );
     child.stdin?.end();
   });
-  const usage = normalizeClaudeUsage(provider, output);
-  if (!usage) throw new Error("Claude usage response has no rate limits");
-  return usage;
-}
-
-/** Returns Claude Code's stored subscription access token while it is unexpired. */
-export function parseClaudeCredentials(payload: string, now = Date.now()): string | undefined {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(payload);
-  } catch {
-    return undefined;
-  }
-  const oauth = asObject(asObject(parsed)?.claudeAiOauth);
-  const token = oauth?.accessToken;
-  const expiresAt = asNumber(oauth?.expiresAt);
-  if (typeof token !== "string" || !token.startsWith("sk-ant-oat")) return undefined;
-  return expiresAt !== undefined && expiresAt > now ? token : undefined;
-}
-
-async function readClaudeCredentials(signal: AbortSignal): Promise<string> {
-  if (process.platform !== "darwin") {
-    const dir = process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
-    return readFile(join(dir, CLAUDE_CREDENTIALS_FILE), { encoding: "utf8", signal });
-  }
-  // A custom config directory uses a suffixed Keychain service name, not the default account.
-  if (process.env.CLAUDE_CONFIG_DIR) return "";
-  return new Promise<string>((resolve, reject) => {
-    // pi.exec is not reachable from usage adapters and lacks an output cap.
-    const child = childProcess.execFile(
-      "security",
-      ["find-generic-password", "-s", CLAUDE_KEYCHAIN_SERVICE, "-w"],
-      {
-        encoding: "utf8",
-        signal,
-        timeout: REQUEST_TIMEOUT_MS,
-        maxBuffer: MAX_CLAUDE_OUTPUT_BYTES,
-        killSignal: "SIGKILL",
-      },
-      (error, stdout) => {
-        if (signal.aborted) reject(signal.reason);
-        else if (error) reject(new Error("Claude Code credentials are unavailable"));
-        else resolve(stdout);
-      },
-    );
-    child.stdin?.end();
-  });
-}
-
-/**
- * Reads plan usage with Claude Code's saved login and labels it with provider.
- * Falls back to `claude /usage` when the saved login is unavailable, expired, rejected, or times out.
- * Never refreshes the token: refreshing replaces the refresh token and signs Claude Code out.
- * Rejects when the CLI fallback fails or signal aborts.
- */
-export async function fetchClaudeLoginUsage(provider: ClaudeLoginProvider, signal: AbortSignal): Promise<UsageStatus> {
+  const fetchedAt = await readCliUsageFetchedAt(signal);
   signal.throwIfAborted();
-  const local = new AbortController();
-  // Leave time for the CLI fallback within the caller's deadline.
-  const timer = setTimeout(() => local.abort(), SAVED_LOGIN_TIMEOUT_MS);
-  const savedLoginSignal = AbortSignal.any([signal, local.signal]);
-  try {
-    const token = parseClaudeCredentials(await readClaudeCredentials(savedLoginSignal));
-    savedLoginSignal.throwIfAborted();
-    if (token) return { ...(await requestAnthropicUsage(token, savedLoginSignal)), provider };
-  } catch {
-    signal.throwIfAborted();
-  } finally {
-    clearTimeout(timer);
-  }
-  return fetchClaudeUsage(provider, signal);
+  if (fetchedAt !== undefined && Date.now() - fetchedAt > MAX_READING_AGE_MS)
+    throw new Error("Claude usage CLI reading is out of date");
+  const usage = normalizeClaudeUsage(provider, output, fetchedAt);
+  if (!usage) throw new Error("Claude usage response has no rate limits");
+  await saveClaudeUsage(usage);
+  return usage;
 }

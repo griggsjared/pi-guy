@@ -1,12 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import {
-  decodeUsageStatus,
-  encodeUsageStatus,
-  isQuotaProvider,
-  isUsageProvider,
-  normalizeUsagePercent,
-} from "../../src/statusline/usage-status.ts";
+import { decodeUsageStatus, encodeUsageStatus, normalizeUsagePercent } from "../../src/statusline/usage-status.ts";
 
 const readyStatus = {
   provider: "openai-codex" as const,
@@ -14,29 +8,6 @@ const readyStatus = {
   capturedAtMs: 1_000,
   windows: [{ kind: "rolling" as const, label: "5h", usedPercent: 42.5, resetAtMs: 2_000 }],
 };
-
-test("distinguishes quota providers from balance providers", () => {
-  assert.equal(isUsageProvider("deepseek"), true);
-  assert.equal(isQuotaProvider("deepseek"), false);
-  assert.equal(isQuotaProvider("openai-codex"), true);
-  assert.equal(isQuotaProvider("opencode-go"), true);
-  assert.equal(isQuotaProvider("anthropic"), true);
-});
-
-test("recognizes claude-bridge quota status and round trips Claude windows", () => {
-  const status = {
-    provider: "claude-bridge" as const,
-    state: "ready" as const,
-    capturedAtMs: 1_000,
-    windows: [
-      { kind: "rolling" as const, label: "5h", usedPercent: 12.5, resetAtMs: 2_000 },
-      { kind: "weekly" as const, label: "7d", usedPercent: 40, resetAtMs: 3_000 },
-    ],
-  };
-  assert.equal(isQuotaProvider("claude-bridge"), true);
-  assert.equal(isQuotaProvider("claude-code"), true);
-  assert.deepEqual(decodeUsageStatus(encodeUsageStatus(status)), status);
-});
 
 test("accepts valid balances and rejects invalid balances in decoded status", () => {
   for (const balance of [
