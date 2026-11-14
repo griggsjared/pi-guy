@@ -921,6 +921,15 @@ test("subagent status preview drops only duplicated identity and question IDs", 
   assert.deepEqual(aggregatePreview, statusPreviewLines(aggregateText, [], questionId));
 });
 
+test("targeted tool calls show a placeholder while the job ID is still streaming", () => {
+  const registry = createJobRegistry();
+  for (const tool of [createPeekTool({ registry }), createSendTool({ registry }), createReplyTool({ registry })]) {
+    const call = renderText(tool.renderCall!({} as never, fakeTheme() as never, {} as never));
+    assert.match(call, /#…/);
+    assert.doesNotMatch(call, /undefined/);
+  }
+});
+
 test("send and reply receipts keep identity only for fallback cases", async () => {
   const registry = createJobRegistry();
   const sendId = registry.add("scout", "hidden send task", "Send title");

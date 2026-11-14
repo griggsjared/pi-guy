@@ -598,7 +598,7 @@ export function createPeekTool(deps: { registry: JobRegistry }): ToolDefinition<
     },
     renderCall(args, theme, _context) {
       const job = deps.registry.get(args.jobId);
-      const target = job ? jobTarget(job) : `#${args.jobId}`;
+      const target = job ? jobTarget(job) : `#${args.jobId ?? "…"}`;
       return new TruncatedText(theme.fg("toolTitle", theme.bold("subagent peek ")) + theme.fg("accent", target), 0, 0);
     },
     renderResult(result, _options, theme, context) {
@@ -806,7 +806,7 @@ export function createSendTool(deps: { registry: JobRegistry }): ToolDefinition<
     renderCall(args, theme, _context) {
       const job = deps.registry.get(args.jobId);
       const mode = args.deliverAs === "followUp" ? "follow-up" : "steering";
-      const target = job ? jobTarget(job) : `#${args.jobId}`;
+      const target = job ? jobTarget(job) : `#${args.jobId ?? "…"}`;
       const box = new Container();
       box.addChild(
         new TruncatedText(
@@ -887,7 +887,7 @@ export function createReplyTool(deps: { registry: JobRegistry }): ToolDefinition
     },
     renderCall(args, theme, _context) {
       const job = deps.registry.get(args.jobId);
-      const target = job ? jobTarget(job) : `#${args.jobId}`;
+      const target = job ? jobTarget(job) : `#${args.jobId ?? "…"}`;
       return new TruncatedText(theme.fg("toolTitle", theme.bold("subagent reply ")) + theme.fg("accent", target), 0, 0);
     },
     renderResult(result, _options, theme, context) {
