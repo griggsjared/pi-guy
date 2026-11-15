@@ -5,27 +5,30 @@ import btw from "./btw/index.ts";
 import context from "./context/index.ts";
 import githubPr from "./github-pr/index.ts";
 import header from "./header/index.ts";
+import { isFeatureEnabled } from "./lib/settings.ts";
 import providerUsage from "./provider-usage/index.ts";
 import statusline from "./statusline/index.ts";
 import subagents from "./subagents/index.ts";
 import webSearch from "./web-search/index.ts";
 import workingIndicator from "./working-indicator/index.ts";
 
-// Handlers for the same event run in this order.
-const factories: ExtensionFactory[] = [
+// Keys are pi-guy.json section names. Handlers for the same event run in this order.
+const factories: Record<string, ExtensionFactory> = {
   statusline,
-  agentsLocal,
-  askUser,
+  "agents-local": agentsLocal,
+  "ask-user": askUser,
   btw,
   context,
-  githubPr,
+  "github-pr": githubPr,
   header,
-  webSearch,
-  providerUsage,
+  "web-search": webSearch,
+  "provider-usage": providerUsage,
   subagents,
-  workingIndicator,
-];
+  "working-indicator": workingIndicator,
+};
 
 export default async function (pi: ExtensionAPI) {
-  for (const factory of factories) await factory(pi);
+  const entries = Object.entries(factories);
+  const enabled = await Promise.all(entries.map(([key]) => isFeatureEnabled(key)));
+  for (const [index, [, factory]] of entries.entries()) if (enabled[index]) await factory(pi);
 }

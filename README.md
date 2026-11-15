@@ -85,6 +85,21 @@ Create `AGENTS.local.md` in the project or a parent directory. Pi Guy loads it a
 Prefer focused tests for the files changed in this session.
 ```
 
+## Settings
+
+Pi Guy reads `pi-guy.json` from Pi's agent folder, usually `~/.pi/agent/pi-guy.json`. Each feature has a section named after its folder in `src/`: `agents-local`, `ask-user`, `btw`, `context`, `github-pr`, `header`, `provider-usage`, `statusline`, `subagents`, `web-search`, and `working-indicator`.
+
+Turn a feature off by setting `enabled` to `false` in its section. Changes apply the next time Pi starts or reloads.
+
+```json
+{
+  "working-indicator": { "enabled": false },
+  "btw": { "enabled": false }
+}
+```
+
+Features that use another feature's data keep working without it. For example, turning off `provider-usage` removes plan usage from the status line, and turning off `agents-local` also stops subagents from loading `AGENTS.local.md`.
+
 ## Development
 
 ```sh

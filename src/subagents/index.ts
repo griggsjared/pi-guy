@@ -2,6 +2,7 @@ import { join } from "node:path";
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { PROVIDER_USAGE_REQUEST_EVENT } from "../lib/events.ts";
 import type { ProviderUsageRequest } from "../lib/events.ts";
+import { isFeatureEnabled } from "../lib/settings.ts";
 import { discoverAgents, loadSubagentSettings, OFF_PROFILE_NAME, resolveExtensionPaths } from "./agents.ts";
 import type { SubagentSettings } from "./agents.ts";
 import { PROFILE_ENTRY_TYPE } from "./constants.ts";
@@ -50,10 +51,14 @@ export default async function (pi: ExtensionAPI) {
     type: "string",
   });
   const agentsDir = join(__dirname, "..", "..", "resources", "subagents");
-  const [agents, settings] = await Promise.all([discoverAgents(agentsDir), loadSubagentSettings()]);
+  const [agents, settings, agentsLocalEnabled] = await Promise.all([
+    discoverAgents(agentsDir),
+    loadSubagentSettings(),
+    isFeatureEnabled("agents-local"),
+  ]);
   // Children run with --no-extensions, so AGENTS.local.md loading must be re-added by path.
   const extensionPaths = [
-    join(__dirname, "..", "agents-local", "index.ts"),
+    ...(agentsLocalEnabled ? [join(__dirname, "..", "agents-local", "index.ts")] : []),
     ...(await resolveExtensionPaths(settings.extensions)),
   ];
   const registry = createJobRegistry();
