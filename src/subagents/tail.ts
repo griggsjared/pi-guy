@@ -5,6 +5,7 @@ import { boxed } from "../lib/box.ts";
 import { drawerRows } from "../lib/drawer.ts";
 import { formatDuration } from "../lib/format.ts";
 import { MIN_DISPLAY_DURATION_MS } from "./constants.ts";
+import { formatUsageStats } from "./format.ts";
 import type { Job, JobRegistry } from "./registry.ts";
 import type { JobEvent, JobStep } from "./types.ts";
 
@@ -12,7 +13,7 @@ const MAX_TAIL_EVENTS = 100;
 const MIN_EVENT_ROWS = 3;
 const POLL_INTERVAL_MS = 250;
 const MAX_FIRST_LINE_CHARS = 120;
-/** Width of the event kind column, shared with the peek tool's renderer. */
+/** Width of the event kind column, shared with the subagent_status renderer. */
 export const EVENT_LABEL_WIDTH = 9;
 const TERMINAL_SEQUENCE =
   /\x1B\][\s\S]*?(?:\x07|\x1B\\|\x9C)|\x1B[P^_X][\s\S]*?(?:\x1B\\|\x9C)|[\x1B\x9B][[\]()#;?]*(?:\d{1,4}(?:[;:]\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]/g;
@@ -133,6 +134,7 @@ export class SubagentTail implements Component {
   private lastProgress?: string;
   private lastCancellationReason?: Job["cancellationReason"];
   private lastStepTiming = "";
+  private lastUsage = "";
   private readonly tui: Pick<TUI, "requestRender" | "terminal">;
   private readonly theme: Theme;
   private readonly registry: JobRegistry;
@@ -207,12 +209,15 @@ export class SubagentTail implements Component {
               .map((step) => `${step.id}:${formatStepTiming(step, now)}:${step.summary}`)
               .join("\n")
           : "";
+      const usage = job ? formatUsageStats(job.usage, job.model, job.thinkingLevel) : "";
       const liveChanged =
         job?.status !== this.lastStatus ||
         job?.progress !== this.lastProgress ||
         job?.cancellationReason !== this.lastCancellationReason ||
-        stepTiming !== this.lastStepTiming;
+        stepTiming !== this.lastStepTiming ||
+        usage !== this.lastUsage;
       this.lastStepTiming = stepTiming;
+      this.lastUsage = usage;
       this.lastStatus = job?.status;
       this.lastProgress = job?.progress;
       this.lastCancellationReason = job?.cancellationReason;
@@ -290,7 +295,10 @@ export class SubagentTail implements Component {
         ? this.theme.fg("dim", `Task: ${normalizeLine(job.task)}`)
         : this.theme.fg("error", "Job is no longer available."),
     ];
-    if (job?.title) lines.splice(2, 0, this.theme.fg("dim", `Title: ${normalizeLine(job.title)}`));
+    if (job?.title) lines.push(this.theme.fg("dim", `Title: ${normalizeLine(job.title)}`));
+    if (job?.profile) lines.push(this.theme.fg("dim", `Profile: ${job.profile}`));
+    const usage = job ? formatUsageStats(job.usage, job.model, job.thinkingLevel) : "";
+    if (usage) lines.push(this.theme.fg("dim", `Usage: ${usage}`));
 
     const activeSteps = job?.status === "running" ? job.steps.filter((step) => step.endedAt === undefined) : [];
     if (activeSteps.length > 0) {

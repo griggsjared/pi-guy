@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { discoverAgents } from "../../src/subagents/agents.ts";
 import { QUESTION_ENTRY_TYPE } from "../../src/subagents/constants.ts";
 import type { createJobRegistry } from "../../src/subagents/registry.ts";
-import { createPeekTool, createReplyTool } from "../../src/subagents/status-tools.ts";
+import { createReplyTool, createStatusTool } from "../../src/subagents/status-tools.ts";
 import { createSubagentTool, resolveMode } from "../../src/subagents/tools.ts";
 import { fakeTheme } from "../helpers/theme.ts";
 import { flush, waitFor } from "../helpers/wait.ts";
@@ -498,7 +498,7 @@ test("inactivity steers a busy parent once per idle stretch without stopping the
   assert.match(message.content, /No activity for 5m/);
   assert.match(message.content, /Active: .*read src\/auth\.ts/);
   assert.match(message.content, /still running/);
-  assert.match(message.content, /subagent_peek.*wait.*subagent_send.*subagent_cancel/);
+  assert.match(message.content, /subagent_status using jobId 1.*wait.*subagent_send.*subagent_cancel/);
   assert.equal(appendEntry.calls.length, 0);
   assert.equal(registry.get(1)?.status, "running");
   assert.deepEqual(registry.get(1)?.pendingQuestions, []);
@@ -526,7 +526,7 @@ test("inactivity steers a busy parent once per idle stretch without stopping the
   assert.equal(child.killed, null);
 });
 
-test("child semantic events are available through peek", async (t) => {
+test("child semantic events are available through subagent status", async (t) => {
   const { tool, registry, activeTickers, child, ctx } = makeTool();
   cleanupChildren(t, [child], activeTickers);
   await tool.execute("call1", { agent: "scout", task: "t" }, undefined, undefined, ctx);
@@ -541,9 +541,15 @@ test("child semantic events are available through peek", async (t) => {
   child.finish(0);
   await waitFor(() => registry.get(1)?.status === "completed");
 
-  const peek = await createPeekTool({ registry }).execute("peek", { jobId: 1 }, undefined, undefined, {} as never);
+  const status = await createStatusTool({ registry }).execute(
+    "status",
+    { jobId: 1 },
+    undefined,
+    undefined,
+    {} as never,
+  );
   assert.deepEqual(
-    peek.details.events.map((event) => `${event.kind}:${event.summary}`),
+    status.details.events!.map((event) => `${event.kind}:${event.summary}`),
     ["state:started", "tool-start:read src/auth.ts", "tool-end:read success: ok", "assistant:scouted"],
   );
 });

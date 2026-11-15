@@ -11,7 +11,6 @@ import { confirmSubagentProfile } from "../../src/subagents/profile-ui.ts";
 import { createJobRegistry } from "../../src/subagents/registry.ts";
 import {
   createCancelTool,
-  createPeekTool,
   createReplyTool,
   createSendTool,
   createStatusTool,
@@ -50,7 +49,7 @@ test("subagent status includes compact model and effort", async () => {
   assert.match(text, /openai-codex\/gpt-5\.6-luna:high/);
 });
 
-test("subagent peek returns bounded incremental semantic events", async () => {
+test("subagent status with a jobId appends bounded incremental events", async () => {
   const timestamp = new Date(2026, 0, 2, 12, 34, 56).getTime();
   let now = timestamp;
   const registry = createJobRegistry({ now: () => now });
@@ -58,100 +57,71 @@ test("subagent peek returns bounded incremental semantic events", async () => {
   registry.appendEvent(runningId, { kind: "state", summary: "started" });
   registry.appendEvent(runningId, { kind: "tool-start", summary: "read src/auth.ts" });
   registry.appendEvent(runningId, { kind: "assistant", summary: "Found the auth module." });
-  const tool = createPeekTool({ registry });
+  const tool = createStatusTool({ registry });
+  const status = (params: { jobId: number; since?: number; limit?: number; maxChars?: number }) =>
+    tool.execute("status", params, undefined, undefined, {} as never);
 
-  const first = await tool.execute("peek1", { jobId: runningId, limit: 2 }, undefined, undefined, {} as never);
+  const first = await status({ jobId: runningId, limit: 2 });
   assert.deepEqual(first.details.events, [
-    { seq: 2, timestamp: first.details.events[0]!.timestamp, kind: "tool-start", summary: "read src/auth.ts" },
-    { seq: 3, timestamp: first.details.events[1]!.timestamp, kind: "assistant", summary: "Found the auth module." },
+    { seq: 2, timestamp, kind: "tool-start", summary: "read src/auth.ts" },
+    { seq: 3, timestamp, kind: "assistant", summary: "Found the auth module." },
   ]);
   assert.equal(first.details.nextCursor, 3);
+  const firstText = (first.content[0] as { text: string }).text;
+  assert.match(firstText, /^\*\*Subagent #1\*\*\nState: running\nAgent: scout\nTask: running task/);
   assert.equal(
-    (first.content[0] as { text: string }).text,
-    "subagent peek #1 scout · running task\n[2] 12:34:56 read src/auth.ts\n[3] 12:34:56 Found the auth module.\nnextCursor: 3",
+    eventSection(first),
+    "[2] 12:34:56 read src/auth.ts\n[3] 12:34:56 Found the auth module.\nnextCursor: 3",
   );
 
-  const next = await tool.execute(
-    "peek2",
-    { jobId: runningId, since: first.details.nextCursor },
-    undefined,
-    undefined,
-    {} as never,
-  );
+  registry.updateLive(runningId, { text: "x".repeat(5000) });
+  const next = await status({ jobId: runningId, since: first.details.nextCursor });
   assert.deepEqual(next.details.events, []);
   assert.equal(next.details.nextCursor, 3);
+  assert.equal(eventSection(next), "nextCursor: 3");
+  assert.match((next.content[0] as { text: string }).text, /^\*\*Subagent #1\*\*\nState: running\nElapsed: /);
+  assert.doesNotMatch((next.content[0] as { text: string }).text, /Task:|Latest output/);
+  const long = "Found the auth module and traced every caller. ".repeat(11);
+  registry.appendEvent(runningId, { kind: "assistant", summary: long });
+  const longRead = await status({ jobId: runningId, since: 3 });
+  assert.equal(eventSection(longRead), `[4] 12:34:56 ${long.trim()}\nnextCursor: 4`);
 
-  const fromStart = await tool.execute(
-    "peek3",
-    { jobId: runningId, since: 0, limit: 2 },
-    undefined,
-    undefined,
-    {} as never,
-  );
+  const fromStart = await status({ jobId: runningId, since: 0, limit: 2 });
   assert.deepEqual(
-    fromStart.details.events.map((event) => event.seq),
+    fromStart.details.events!.map((event) => event.seq),
     [1, 2],
   );
   assert.equal(fromStart.details.nextCursor, 2);
 
-  const capped = await tool.execute(
-    "peek4",
-    { jobId: runningId, since: 0, maxChars: 21 },
-    undefined,
-    undefined,
-    {} as never,
-  );
+  const capped = await status({ jobId: runningId, since: 0, maxChars: 21 });
   assert.deepEqual(
-    capped.details.events.map((event) => event.seq),
+    capped.details.events!.map((event) => event.seq),
     [1],
   );
   assert.equal(capped.details.nextCursor, 1);
-  assert.ok((capped.content[0] as { text: string }).text.length <= 21);
-  await assert.rejects(
-    tool.execute("peek5", { jobId: runningId, since: 99 }, undefined, undefined, {} as never),
-    /ahead of current sequence/,
-  );
-  await assert.rejects(
-    tool.execute("peek6", { jobId: 999 }, undefined, undefined, {} as never),
-    /Unknown subagent job ID: 999/,
-  );
+  assert.ok(eventSection(capped).length <= 21);
+  const tiny = await status({ jobId: runningId, since: 0, maxChars: 1 });
+  assert.deepEqual(tiny.details.events, []);
+  assert.equal(tiny.details.nextCursor, 0);
+  assert.doesNotMatch((tiny.content[0] as { text: string }).text, /Events:/);
+
+  await assert.rejects(status({ jobId: runningId, since: 99 }), /ahead of current sequence/);
+  await assert.rejects(status({ jobId: 999 }), /^Error: Unknown subagent job ID: 999$/);
 
   registry.complete(runningId, { agent: "scout", task: "running task", text: "done", exitCode: 0, error: "" });
-  const terminal = await tool.execute("peek7", { jobId: runningId }, undefined, undefined, {} as never);
-  assert.equal(terminal.details.status, "completed");
+  const terminal = await status({ jobId: runningId });
+  assert.match((terminal.content[0] as { text: string }).text, /State: completed/);
   assert.deepEqual(
-    terminal.details.events.map((event) => event.seq),
-    [1, 2, 3],
+    terminal.details.events!.map((event) => event.seq),
+    [1, 2, 3, 4],
   );
-
-  const longTaskId = registry.add("worker", "t".repeat(900));
-  registry.appendEvent(longTaskId, { kind: "assistant", summary: "event still fits" });
-  const longTask = await tool.execute(
-    "peek-long-task",
-    { jobId: longTaskId, maxChars: 2000 },
-    undefined,
-    undefined,
-    {} as never,
-  );
-  assert.deepEqual(
-    longTask.details.events.map((event) => event.seq),
-    [1],
-  );
-  assert.equal(longTask.details.nextCursor, 1);
-  assert.match((longTask.content[0] as { text: string }).text, /\[1\] 12:34:56 event still fits/);
-  assert.ok((longTask.content[0] as { text: string }).text.length <= 2000);
 
   const ringId = registry.add("worker", "ring task");
   for (let i = 0; i < 101; i++) registry.appendEvent(ringId, { kind: "state", summary: String(i) });
-  const dropped = await tool.execute(
-    "peek8",
-    { jobId: ringId, since: 0, limit: 100 },
-    undefined,
-    undefined,
-    {} as never,
-  );
+  const dropped = await status({ jobId: ringId, since: 0, limit: 100 });
   assert.equal(dropped.details.droppedBefore, 2);
-  assert.equal(dropped.details.events[0]?.seq, 2);
+  assert.equal(dropped.details.events![0]?.seq, 2);
+  assert.match(eventSection(dropped), /^\[history dropped before 2\]\n\[2\] /);
 
   const rawId = registry.add("worker", "structured result");
   now = timestamp - 3000;
@@ -164,54 +134,22 @@ test("subagent peek returns bounded incremental semantic events", async () => {
     summary:
       'read success: {"content":[{"type":"text","text":"\\u001b]52;c;cHduZWQ=\\u0007\\u001b[31mone\\u001b[0m\\ntwo"}]}',
   });
-  const raw = await tool.execute("peek9", { jobId: rawId }, undefined, undefined, {} as never);
-  assert.equal(
-    (raw.content[0] as { text: string }).text,
-    "subagent peek #4 worker · structured result\n[1] 12:34:56 read success: one · 2 lines · 3s\nnextCursor: 1",
-  );
+  const raw = await status({ jobId: rawId });
+  assert.equal(eventSection(raw), "[1] 12:34:56 read success: one · 2 lines · 3s\nnextCursor: 1");
   assert.ok(tool.outputSchema);
-  assert.equal(tool.exposure ?? "direct", "direct");
-  for (const result of [first, next, fromStart, capped, terminal, dropped, raw]) {
+  for (const result of [first, next, fromStart, capped, tiny, terminal, dropped, raw]) {
     assert.ok(Check(tool.outputSchema, result.structuredContent));
-    if (result !== raw) assert.deepEqual(result.structuredContent, result.details);
-    assert.equal(result.details.jobId, result === dropped ? ringId : result === raw ? rawId : runningId);
   }
   assert.deepEqual(raw.structuredContent, {
-    ...raw.details,
-    events: [{ ...raw.details.events[0]!, summary: "read success: one · 2 lines" }],
+    text: raw.details.text,
+    jobId: rawId,
+    jobs: [{ jobId: rawId, agent: "worker", status: "running", label: "structured result" }],
+    events: [{ ...raw.details.events![0]!, summary: "read success: one · 2 lines" }],
+    nextCursor: 1,
   });
-  const tiny = await tool.execute(
-    "tiny",
-    { jobId: runningId, since: 0, maxChars: 1 },
-    undefined,
-    undefined,
-    {} as never,
-  );
-  assert.ok(Check(tool.outputSchema, tiny.structuredContent));
-  assert.deepEqual(tiny.structuredContent, {
-    jobId: runningId,
-    agent: "scout",
-    task: "running task",
-    status: "completed",
-    events: [],
-    nextCursor: 0,
-  });
-  assert.deepEqual(tiny.content, [{ type: "text", text: "" }]);
-  const emptyId = registry.add("worker", "no events");
-  const empty = await tool.execute("empty", { jobId: emptyId }, undefined, undefined, {} as never);
-  assert.ok(Check(tool.outputSchema, empty.structuredContent));
-  assert.deepEqual(empty.structuredContent, {
-    jobId: emptyId,
-    agent: "worker",
-    task: "no events",
-    status: "running",
-    events: [],
-    nextCursor: 0,
-  });
-  assert.deepEqual(empty.content, [{ type: "text", text: "subagent peek #5 worker · no events\nnextCursor: 0" }]);
 });
 
-test("subagent peek structured summaries share the bounded human preview without raw tool bodies", async () => {
+test("subagent status structured event summaries share the bounded preview without raw tool bodies", async () => {
   const registry = createJobRegistry({ now: () => 1234 });
   const jobId = registry.add("worker", "bounded tool results");
   registry.appendEvent(jobId, { kind: "state", summary: "started" });
@@ -221,19 +159,10 @@ test("subagent peek structured summaries share the bounded human preview without
     JSON.stringify({
       content: [{ type: "text", text: `\u001b]2;pwned\u0007${"x".repeat(100000)}\nRAW_TOOL_BODY` }],
     });
-  const wrapper = JSON.stringify({ content: [{ type: "text", text: "" }] });
-  const runnerSummary =
-    prefix +
-    JSON.stringify({
-      content: [{ type: "text", text: "y".repeat(500 - prefix.length - wrapper.length) }],
-    });
-  assert.equal(runnerSummary.length, 500);
   registry.appendEvent(jobId, { kind: "tool-end", summary: large });
-  registry.appendEvent(jobId, { kind: "tool-end", summary: runnerSummary });
-  registry.appendEvent(jobId, { kind: "assistant", summary: "z".repeat(500) });
-  for (let i = 0; i < 97; i++) registry.appendEvent(jobId, { kind: "state", summary: "running" });
-  const tool = createPeekTool({ registry });
-  const maxChars = 380;
+  for (let i = 0; i < 99; i++) registry.appendEvent(jobId, { kind: "state", summary: "running" });
+  const tool = createStatusTool({ registry });
+  const maxChars = 200;
   const result = await tool.execute(
     "bounded",
     { jobId, since: 0, limit: 100, maxChars },
@@ -241,64 +170,22 @@ test("subagent peek structured summaries share the bounded human preview without
     undefined,
     {} as never,
   );
-  const summaries = [`${prefix}${"x".repeat(119)}… · 2 lines`, `${prefix}${"y".repeat(119)}… · 1 line`];
+  const summary = `${prefix}${"x".repeat(119)}… · 2 lines`;
   const clock = formatLocalTime(1234);
-  const preview = `[history dropped before 2]\n[2] ${clock} ${summaries[0]}\n[3] ${clock} ${summaries[1]}`;
-  assert.deepEqual(result.content, [{ type: "text", text: `${preview}\nnextCursor: 3` }]);
-  assert.ok((result.content[0] as { text: string }).text.length <= maxChars);
-  assert.deepEqual(result.details, {
-    jobId,
-    agent: "worker",
-    task: "bounded tool results",
-    status: "running",
-    events: [
-      { seq: 2, timestamp: 1234, kind: "tool-end", summary: large },
-      { seq: 3, timestamp: 1234, kind: "tool-end", summary: runnerSummary },
-    ],
-    nextCursor: 3,
-    droppedBefore: 2,
-  });
+  assert.equal(
+    (result.content[0] as { text: string }).text.split("\nEvents:\n")[1],
+    `[history dropped before 2]\n[2] ${clock} ${summary}\nnextCursor: 2`,
+  );
+  assert.deepEqual(result.details.events, [{ seq: 2, timestamp: 1234, kind: "tool-end", summary: large }]);
   const serialized = JSON.stringify(result.structuredContent);
-  const structured = JSON.parse(serialized);
-  assert.ok(tool.outputSchema);
-  assert.ok(Check(tool.outputSchema, structured));
-  assert.deepEqual(structured, {
-    ...result.details,
-    events: result.details.events.map((event, index) => ({ ...event, summary: summaries[index]! })),
-  });
-  assert.ok(
-    structured.events.reduce((length: number, event: { summary: string }) => length + event.summary.length, 0) <=
-      maxChars,
-  );
-  assert.ok(serialized.length < 1000);
-  assert.doesNotMatch(serialized, /RAW_TOOL_BODY|pwned|content|\\u001b/);
-  assert.deepEqual(registry.readEvents(jobId, { since: 0, limit: 2 })?.events[0], result.details.events[0]);
-
-  const next = await tool.execute(
-    "next",
-    { jobId, since: structured.nextCursor, limit: 1, maxChars: 600 },
-    undefined,
-    undefined,
-    {} as never,
-  );
-  assert.ok(Check(tool.outputSchema, JSON.parse(JSON.stringify(next.structuredContent))));
-  const nextSummary = "z".repeat(500);
-  assert.deepEqual(next.details.events, [{ seq: 4, timestamp: 1234, kind: "assistant", summary: nextSummary }]);
-  assert.deepEqual(next.structuredContent, {
-    ...next.details,
-    events: [{ seq: 4, timestamp: 1234, kind: "assistant", summary: nextSummary }],
-  });
-  assert.equal(next.details.nextCursor, 4);
-  assert.equal(next.details.droppedBefore, undefined);
-  assert.deepEqual(next.content, [
-    {
-      type: "text",
-      text: `subagent peek #1 worker · bounded tool results\n[4] ${clock} ${nextSummary}\nnextCursor: 4`,
-    },
-  ]);
+  const structured: { events: unknown; droppedBefore: unknown } = JSON.parse(serialized);
+  assert.ok(Check(tool.outputSchema!, structured));
+  assert.deepEqual(structured.events, [{ seq: 2, timestamp: 1234, kind: "tool-end", summary }]);
+  assert.equal(structured.droppedBefore, 2);
+  assert.doesNotMatch(serialized, /RAW_TOOL_BODY|pwned|\\u001b/);
 });
 
-test("subagent status structured results preserve empty, filtered, and unknown snapshots", async () => {
+test("subagent status structured results preserve empty and filtered snapshots", async () => {
   const registry = createJobRegistry();
   const tool = createStatusTool({ registry });
   assert.ok(tool.outputSchema);
@@ -335,78 +222,103 @@ test("subagent status structured results preserve empty, filtered, and unknown s
     text: individual.details.text,
     jobId: runningId,
     jobs: [{ jobId: runningId, agent: "scout", status: "running", label: "Running title" }],
+    events: [],
+    nextCursor: 0,
   });
   assert.deepEqual(individual.content, [{ type: "text", text: individual.details.text }]);
   assert.match(individual.details.text, /Latest output:\n/);
   assert.ok(individual.details.text.includes(`${"x".repeat(4000)}\n…`));
   assert.ok(!individual.details.text.includes("x".repeat(4001)));
-  const unknown = await tool.execute("unknown", { jobId: 999 }, undefined, undefined, {} as never);
-  assert.ok(Check(tool.outputSchema, unknown.structuredContent));
-  assert.deepEqual(unknown.structuredContent, {
-    text: "subagent status #999: Unknown subagent job ID: 999",
-    jobId: 999,
-    jobs: [],
-    error: "subagent status #999: Unknown subagent job ID: 999",
-  });
-  assert.deepEqual(unknown.content, [{ type: "text", text: "subagent status #999: Unknown subagent job ID: 999" }]);
-  assert.equal(unknown.isError, undefined);
 });
 
-test("subagent peek renderer labels events and compacts structured results", () => {
-  const { renderResult } = createPeekTool({ registry: createJobRegistry() });
+test("subagent status renders job events after its details and tolerates partial details", async () => {
+  const registry = createJobRegistry();
+  const jobId = registry.add("scout", "render task");
+  const { renderResult } = createStatusTool({ registry });
   const theme = createTaggedTheme() as never;
   const rendered = renderText(
     renderResult!(
       {
-        content: [{ type: "text", text: "legacy peek text" }],
+        content: [{ type: "text", text: "status text" }],
         details: {
-          jobId: 1,
-          agent: "scout",
-          status: "running",
+          text: "status text",
+          jobId,
+          sections: [{ kind: "field", label: "State", value: "running" }],
+          droppedBefore: 4,
           events: [
             {
-              seq: 1,
+              seq: 5,
               timestamp: new Date(2026, 0, 2, 12, 34, 56).getTime(),
               durationMs: 3000,
               kind: "tool-end",
               summary: 'read success: {"content":[{"type":"text","text":"one\\ntwo"}]}',
             },
             {
-              seq: 2,
+              seq: 6,
               timestamp: Date.now(),
               kind: "assistant",
               summary: "\u001b]2;pwned\u0007Found \u001b[31mit\u001b[0m.",
             },
+            { kind: "assistant" },
+            { seq: 7, timestamp: Date.now(), kind: "assistant" },
           ],
-          nextCursor: 2,
+          nextCursor: 6,
         },
+      } as never,
+      {} as never,
+      theme,
+      { args: { jobId } } as never,
+    ),
+  );
+  assert.match(rendered, /State:.*running[\s\S]*Events:/);
+  assert.match(rendered, /\[warning\]history dropped before event 4/);
+  assert.match(rendered, /\[success\]result/);
+  assert.match(rendered, /12:34:56/);
+  assert.match(rendered, /read success: one · 2 lines · 3s/);
+  assert.match(rendered, /\[text\]assistant/);
+  assert.match(rendered, /Found it\./);
+  assert.doesNotMatch(rendered, /pwned|content|\u001b|undefined/);
+  assert.match(rendered, /\[dim\]cursor: 6/);
+
+  const noEvents = renderText(
+    renderResult!(
+      {
+        content: [{ type: "text", text: "status text" }],
+        details: { text: "status text", jobId, sections: [{ kind: "plain", text: "kept" }], events: [], nextCursor: 0 },
       } as never,
       {} as never,
       theme,
       {} as never,
     ),
   );
-  assert.match(rendered, /\[success\]result/);
-  assert.match(rendered, /12:34:56/);
-  assert.match(rendered, /read success: one · 2 lines · 3s/);
-  assert.match(rendered, /\[text\]assistant/);
-  assert.match(rendered, /Found it\./);
-  assert.doesNotMatch(rendered, /pwned|content|\u001b/);
-  assert.match(rendered, /\[dim\]cursor: 2/);
+  assert.match(noEvents, /kept[\s\S]*no new events[\s\S]*cursor: 0/);
+
+  const withoutCursor = renderText(
+    renderResult!(
+      {
+        content: [{ type: "text", text: "status text" }],
+        details: { text: "status text", jobId, sections: [{ kind: "plain", text: "kept" }], events: [] },
+      } as never,
+      {} as never,
+      theme,
+      {} as never,
+    ),
+  );
+  assert.match(withoutCursor, /kept/);
+  assert.doesNotMatch(withoutCursor, /Events:|cursor/);
 });
 
-test("subagent peek shows live linked-step elapsed time and freezes it when the step ends", async (t) => {
+test("subagent status events show live linked-step elapsed time and freeze it when the step ends", async (t) => {
   t.mock.timers.enable({ apis: ["Date"], now: new Date(2026, 0, 2, 12, 34, 56).getTime() });
   const registry = createJobRegistry();
   const jobId = registry.add("worker", "Read the module");
   registry.recordStep(jobId, { phase: "start", id: "read-1", kind: "tool", summary: "read src/auth.ts" });
   registry.appendEvent(jobId, { kind: "tool-start", stepId: "read-1", summary: "read src/auth.ts" });
-  const tool = createPeekTool({ registry });
+  const tool = createStatusTool({ registry });
   t.mock.timers.tick(3000);
-  const result = await tool.execute("peek", { jobId }, undefined, undefined, {} as never);
+  const result = await tool.execute("status", { jobId }, undefined, undefined, {} as never);
   assert.match((result.content[0] as { text: string }).text, /\[1\] 12:34:56 read src\/auth\.ts · 3s elapsed/);
-  assert.equal(result.details.events[0]?.summary, "read src/auth.ts");
-  assert.deepEqual(result.structuredContent, result.details);
+  assert.equal(result.details.events![0]?.summary, "read src/auth.ts");
   const rendered = tool.renderResult!(
     result,
     { expanded: false, isPartial: false },
@@ -416,17 +328,16 @@ test("subagent peek shows live linked-step elapsed time and freezes it when the 
   assert.match(renderText(rendered), /12:34:56 tool\s+read src\/auth\.ts · 3s elapsed/);
 
   t.mock.timers.tick(2000);
-  assert.match(renderText(rendered), /read src\/auth\.ts · 5s elapsed/);
+  assert.match(renderText(rendered), /12:34:56 tool\s+read src\/auth\.ts · 5s elapsed/);
   registry.recordStep(jobId, { phase: "end", id: "read-1" });
   t.mock.timers.tick(8000);
   const ended = await tool.execute("ended", { jobId }, undefined, undefined, {} as never);
-  assert.match((ended.content[0] as { text: string }).text, /read src\/auth\.ts · 5s\n/);
+  assert.match((ended.content[0] as { text: string }).text, /\[1\] 12:34:56 read src\/auth\.ts · 5s\n/);
   assert.equal(ended.details.nextCursor, result.details.nextCursor);
-  assert.match(renderText(rendered), /read src\/auth\.ts · 5s/);
-  assert.doesNotMatch(renderText(rendered), /elapsed/);
+  assert.match(renderText(rendered), /12:34:56 tool\s+read src\/auth\.ts · 5s\s*$/m);
 });
 
-test("subagent status supports individual and unknown job IDs", async (t) => {
+test("subagent status details one job by ID", async (t) => {
   t.mock.timers.enable({ apis: ["Date"], now: new Date(2026, 0, 2, 12, 34, 56).getTime() });
   const registry = createJobRegistry();
   const runningId = registry.add("scout", "actual running task", "Status title", { profile: "backup" });
@@ -502,9 +413,6 @@ test("subagent status supports individual and unknown job IDs", async (t) => {
   assert.match(finishedText, /Finished: 12:34:59/);
   assert.match(finishedText, /Tool calls \(1\):\n- 12:34:56 · 3s · \$ npm test/);
   assert.doesNotMatch(finishedText, /Active steps|elapsed ·/);
-
-  const unknown = await tool.execute("call3", { jobId: 999 }, undefined, undefined, {} as never);
-  assert.equal((unknown.content[0] as { text: string }).text, "subagent status #999: Unknown subagent job ID: 999");
 });
 
 test("subagent status tool previews use render width without enlarging model summaries", async () => {
@@ -688,14 +596,6 @@ test("status, cancel, and send tools render job-aware output", async () => {
   );
   assert.equal(renderTrimmed(legacySend), "subagent send #?\n  legacy send result");
 
-  const peekFallback = createPeekTool({ registry }).renderResult!(
-    { content: [{ type: "text", text: "peek failed" }], details: {} } as never,
-    { expanded: false, isPartial: false },
-    theme,
-    { args: { jobId }, isError: true } as never,
-  );
-  assert.equal(renderTrimmed(peekFallback), "peek failed");
-
   const cancelTool = createCancelTool({ registry });
   assert.equal(
     renderText(cancelTool.renderCall!({ jobId }, theme, {} as never)).trim(),
@@ -739,7 +639,7 @@ test("status, cancel, and send tools render job-aware output", async () => {
   assert.equal(renderTrimmed(legacyCancel), "subagent cancel all\n  legacy cancel result");
 });
 
-test("resolved status and peek results omit only duplicated identity", async () => {
+test("resolved status results omit only duplicated identity", async () => {
   const registry = createJobRegistry();
   const jobId = registry.add("scout", "actual task", "Displayed title");
   registry.updateLive(jobId, {
@@ -791,63 +691,6 @@ test("resolved status and peek results omit only duplicated identity", async () 
   assert.equal(combinedUntitled.match(/#2 builder · untitled task/g)?.length, 1);
   assert.doesNotMatch(untitledText, /Subagent #2|Agent: builder|Task: untitled task/);
   assert.match(untitledText, /State: running/);
-
-  const peekTool = createPeekTool({ registry });
-  const peekArgs = { jobId, since: 0 };
-  const peekCall = renderText(peekTool.renderCall!(peekArgs, fakeTheme() as never, {} as never));
-  const peekResult = {
-    content: [{ type: "text", text: "legacy peek" }],
-    details: {
-      jobId,
-      agent: "scout",
-      task: "actual task",
-      title: "Displayed title",
-      status: "running",
-      droppedBefore: 4,
-      events: [{ seq: 5, timestamp: 1, kind: "assistant", summary: "event body" }],
-      nextCursor: 5,
-    },
-  };
-  const peekText = renderText(
-    peekTool.renderResult!(
-      peekResult as never,
-      { expanded: false, isPartial: false },
-      fakeTheme() as never,
-      { args: peekArgs } as never,
-    ),
-  );
-  const combinedPeek = `${peekCall}\n${peekText}`;
-  assert.equal(combinedPeek.match(/#1 scout · Displayed title/g)?.length, 1);
-  assert.doesNotMatch(peekText, /subagent peek #1 scout|Title: Displayed title/);
-  assert.match(peekText, /Task: actual task/);
-  assert.match(peekText, /history dropped before event 4/);
-  assert.match(peekText, /event body/);
-  assert.match(peekText, /cursor: 5/);
-
-  const legacyPeek = renderText(
-    peekTool.renderResult!(
-      peekResult as never,
-      { expanded: false, isPartial: false },
-      fakeTheme() as never,
-      {} as never,
-    ),
-  );
-  assert.match(legacyPeek, /subagent peek #1 scout · Displayed title/);
-  assert.match(legacyPeek, /Task: actual task/);
-  assert.match(legacyPeek, /Title: Displayed title/);
-
-  registry.jobs.delete(jobId);
-  const archivedPeek = renderText(
-    peekTool.renderResult!(
-      peekResult as never,
-      { expanded: false, isPartial: false },
-      fakeTheme() as never,
-      { args: peekArgs } as never,
-    ),
-  );
-  assert.match(archivedPeek, /subagent peek #1 scout · Displayed title/);
-  assert.match(archivedPeek, /Task: actual task/);
-  assert.match(archivedPeek, /Title: Displayed title/);
 });
 
 test("subagent status preview drops only duplicated identity and question IDs", async (t) => {
@@ -905,7 +748,10 @@ test("subagent status preview drops only duplicated identity and question IDs", 
         args: { jobId: current.jobId },
       } as never),
     );
-    assert.deepEqual(preview, statusPreviewLines(text, identity, questionId));
+    assert.deepEqual(
+      preview.slice(0, preview.indexOf("Events:")),
+      statusPreviewLines(text.split("\nEvents:\n")[0]!, identity, questionId),
+    );
   }
 
   const cancelled = await tool.execute("cancelled", { jobId: cancelledId }, undefined, undefined, {} as never);
@@ -923,7 +769,7 @@ test("subagent status preview drops only duplicated identity and question IDs", 
 
 test("targeted tool calls show a placeholder while the job ID is still streaming", () => {
   const registry = createJobRegistry();
-  for (const tool of [createPeekTool({ registry }), createSendTool({ registry }), createReplyTool({ registry })]) {
+  for (const tool of [createSendTool({ registry }), createReplyTool({ registry })]) {
     const call = renderText(tool.renderCall!({} as never, fakeTheme() as never, {} as never));
     assert.match(call, /#…/);
     assert.doesNotMatch(call, /undefined/);
@@ -1115,36 +961,6 @@ test("cancel results keep all targets but compact a resolved single target", asy
   assert.match(allText, /#2 worker · Second title/);
   assert.match(allText, /#3 builder · Third title/);
   assert.doesNotMatch(allText, /#1 scout · First title/);
-});
-
-test("/subagent-status shares the status formatter", async () => {
-  const registry = createJobRegistry();
-  const id = registry.add("scout", "running task");
-  const notices: string[] = [];
-  const { commands, registerCommand } = captureCommands();
-  const pi = {
-    registerCommand,
-  } as unknown as ExtensionAPI;
-  registerStatusCommands(pi, { registry });
-  const command = commands.get("subagent-status");
-  assert.ok(command);
-  const ctx = {
-    hasUI: true,
-    ui: { notify: (text: string) => notices.push(text) },
-  } as unknown as ExtensionCommandContext;
-
-  await command.handler("", ctx);
-  assert.match(notices.at(-1) ?? "", new RegExp(`#${id} scout`));
-  registry.recordQuestion(id, {
-    id: "f7455070-1bdd-4bf8-9806-2647a04b1eba",
-    question: "Which API?",
-  });
-  await command.handler(String(id), ctx);
-  assert.match(notices.at(-1) ?? "", new RegExp(`Subagent #${id}`));
-  assert.match(notices.at(-1) ?? "", /- Which API\?/);
-  assert.doesNotMatch(notices.at(-1) ?? "", /f7455070/);
-  await command.handler("nope", ctx);
-  assert.match(notices.at(-1) ?? "", /Usage: \/subagent-status/);
 });
 
 test("/subagent-profile and its ctrl+shift+l shortcut preview, validate, and persist profiles", async () => {
@@ -1554,8 +1370,11 @@ test("/subagent-cancel validates and targets numeric job IDs", async () => {
   await command.handler("9007199254740993", ctx);
   assert.match(notices.at(-1) ?? "", /Usage: \/subagent-cancel/);
   assert.equal(cancelled, 0);
+  await command.handler("999", ctx);
+  assert.equal(notices.at(-1), "Unknown subagent job ID: 999");
+  assert.equal(cancelled, 0);
   await command.handler(String(id), ctx);
-  assert.match(notices.at(-1) ?? "", /Cancelling 1/);
+  assert.equal(notices.at(-1), "Cancelling 1 subagent: #1 scout · task.");
   assert.equal(cancelled, 1);
 });
 
@@ -1590,9 +1409,12 @@ test("/subagent-send parses steering and follow-up messages", async () => {
     { message: "Queue a second pass", deliverAs: "followUp" },
   ]);
   assert.deepEqual(notices, [
-    { text: "Sent steering message to subagent #1.", level: "info" },
-    { text: "Sent follow-up message to subagent #1.", level: "info" },
+    { text: "Sent steering message to subagent #1 scout · task.", level: "info" },
+    { text: "Sent follow-up message to subagent #1 scout · task.", level: "info" },
   ]);
+
+  await command.handler("999 steer message", ctx);
+  assert.deepEqual(notices.at(-1), { text: "Unknown subagent job ID: 999", level: "error" });
 
   await command.handler("bad steer message", ctx);
   assert.match(notices.at(-1)?.text ?? "", /Usage: \/subagent-send/);
@@ -1640,18 +1462,19 @@ test("slash commands guide no-ID selections without implicit cancellation", asyn
   };
   const ctx = { mode: "tui", hasUI: true, ui } as unknown as ExtensionCommandContext;
 
-  await commands.get("subagent-status")!.handler("", ctx);
   await commands.get("subagent-tail")!.handler("", ctx);
   await commands.get("subagent-send")!.handler("", ctx);
   await commands.get("subagent-cancel")!.handler("", ctx);
   assert.equal(registry.get(runningId)?.cancellationReason, "manual");
   assert.deepEqual(selections[0], ["#1 scout [running] · Running title", "#2 worker [completed] · Completed title"]);
-  assert.deepEqual(selections[1], selections[0]);
-  assert.deepEqual(selections[2], [selections[0]![0]]);
-  assert.deepEqual(selections[3], ["steering", "follow-up"]);
-  assert.deepEqual(selections[4], [selections[0]![0]]);
+  assert.deepEqual(selections[1], [selections[0]![0]]);
+  assert.deepEqual(selections[2], ["steering", "follow-up"]);
+  assert.deepEqual(selections[3], [selections[0]![0]]);
   assert.deepEqual(guidedSends, [{ jobId: runningId, message: "Narrow the scope", deliverAs: "steer" }]);
-  assert.match(notices[0]?.text ?? "", /Subagent #1/);
+  assert.deepEqual(notices, [
+    { text: "Sent steering message to subagent #1 scout · Running title.", level: "info" },
+    { text: "Cancelling 1 subagent: #1 scout · Running title.", level: "info" },
+  ]);
 
   const emptyRegistry = createJobRegistry();
   const emptyNotices: Array<{ text: string; level: string }> = [];
@@ -1669,12 +1492,10 @@ test("slash commands guide no-ID selections without implicit cancellation", asyn
       custom: async () => {},
     },
   } as unknown as ExtensionCommandContext;
-  await emptyCommands.get("subagent-status")!.handler("", emptyCtx);
   await emptyCommands.get("subagent-tail")!.handler("", emptyCtx);
   await emptyCommands.get("subagent-send")!.handler("", emptyCtx);
   await emptyCommands.get("subagent-cancel")!.handler("", emptyCtx);
   assert.deepEqual(emptyNotices, [
-    { text: "No subagents are available.", level: "info" },
     { text: "No subagents are available.", level: "info" },
     { text: "No running subagents are available.", level: "info" },
     { text: "No running subagents are available.", level: "info" },
@@ -1696,21 +1517,20 @@ test("slash picker rows fit the terminal and prefer titles over full tasks", asy
   } as unknown as ExtensionAPI;
   registerStatusCommands(pi, { registry });
   const selections: string[][] = [];
-  const notices: string[] = [];
   const ctx = {
     mode: "tui",
     hasUI: true,
     ui: {
       select: async (_prompt: string, options: string[]) => {
         selections.push(options);
-        return options[1];
+        return undefined;
       },
-      notify: (text: string) => notices.push(text),
+      notify: () => {},
     },
   } as unknown as ExtensionCommandContext;
   for (const width of [40, 180]) {
     Object.defineProperty(process.stdout, "columns", { configurable: true, value: width });
-    await commands.get("subagent-status")!.handler("", ctx);
+    await commands.get("subagent-tail")!.handler("", ctx);
     const options = selections.at(-1)!;
     assert.ok(options.every((option) => visibleWidth(option) <= width - 4));
     assert.ok(options.every((option) => !/[\r\n\t\u001b]/.test(option)));
@@ -1720,7 +1540,6 @@ test("slash picker rows fit the terminal and prefer titles over full tasks", asy
   }
   assert.doesNotMatch(selections[0]![0]!, /TITLE_END/);
   assert.match(selections[1]![0]!, /TITLE_END/);
-  assert.ok(notices.every((notice) => /Subagent #2/.test(notice)));
 });
 
 test("slash picker dismissal at job, mode, and input stages is a no-op", async () => {
@@ -1793,7 +1612,7 @@ test("/subagent-send reports rejected messages", async () => {
     hasUI: true,
     ui: { notify: (text: string, level: string) => notices.push({ text, level }) },
   } as unknown as ExtensionCommandContext);
-  assert.deepEqual(notices, [{ text: "subagent send #1 scout · task: RPC prompt rejected", level: "error" }]);
+  assert.deepEqual(notices, [{ text: "RPC prompt rejected", level: "error" }]);
 });
 
 test("a steering command is correlated and delivered to a running child", async (t) => {
@@ -1931,6 +1750,22 @@ test("subagent messaging tools reject queued, stale, and empty inputs", async ()
     replyTool.execute("call4", { jobId: id, questionId: "stale", answer: " " }, undefined, undefined, {} as never),
     /cannot be empty/,
   );
+
+  const cancelTool = createCancelTool({ registry });
+  await assert.rejects(
+    cancelTool.execute("call5", {}, undefined, undefined, {} as never),
+    /^Error: Pass jobId or all: true$/,
+  );
+  assert.equal(registry.get(id)?.cancellationReason, undefined);
+  for (const execute of [
+    () => createStatusTool({ registry }).execute("unknown", { jobId: 999 }, undefined, undefined, {} as never),
+    () => cancelTool.execute("unknown", { jobId: 999 }, undefined, undefined, {} as never),
+    () =>
+      sendTool.execute("unknown", { jobId: 999, message: "m", deliverAs: "steer" }, undefined, undefined, {} as never),
+    () => replyTool.execute("unknown", { jobId: 999, questionId: "q", answer: "a" }, undefined, undefined, {} as never),
+  ]) {
+    await assert.rejects(execute(), /^Error: Unknown subagent job ID: 999$/);
+  }
 });
 
 function statusPreviewLines(text: string, identity: string[], questionId: string): string[] {
@@ -1954,4 +1789,10 @@ function renderTrimmed(value: unknown): string {
     .map((line) => line.trimEnd())
     .join("\n")
     .trim();
+}
+
+function eventSection(result: { content: unknown[] }): string {
+  const text = (result.content[0] as { text: string }).text;
+  const index = text.indexOf("\nEvents:\n");
+  return index === -1 ? "" : text.slice(index + "\nEvents:\n".length);
 }

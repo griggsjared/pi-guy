@@ -4,6 +4,7 @@ export const ASK_PARENT_TITLE_PREFIX = "subagents:ask-parent:";
 export const ASK_PARENT_TOOL_NAME = "ask_parent";
 export const ENTRY_TYPE = "subagents";
 export const QUESTION_ENTRY_TYPE = "subagent-question";
+export const CHECK_IN_ENTRY_TYPE = "subagent-check-in";
 export const PROFILE_ENTRY_TYPE = "subagent-profile";
 export const DEFAULT_TERMINAL_COLUMNS = 80;
 // Cancelled jobs report the shell's SIGINT status (128 + 2), matching an interrupted run.

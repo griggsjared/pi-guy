@@ -108,8 +108,7 @@ test("subagent tool labels describe actions and keep text inline-safe", () => {
   );
   assert.equal(toolCallLabel("subagent_status", {}), "subagent status all");
   assert.equal(toolCallLabel("subagent_status", { jobId: 3 }), "subagent status #3");
-  assert.equal(toolCallLabel("subagent_peek", { jobId: 3 }), "subagent peek #3");
-  assert.equal(toolCallLabel("subagent_cancel", {}), "subagent cancel all");
+  assert.equal(toolCallLabel("subagent_cancel", {}), "subagent cancel …");
   assert.equal(toolCallLabel("subagent_cancel", { all: true }), "subagent cancel all");
   assert.equal(toolCallLabel("subagent_cancel", { jobId: 3 }), "subagent cancel #3");
   assert.equal(
@@ -174,7 +173,6 @@ test("subagent tool labels fit the requested width", () => {
     ["subagent", { agent: "scout", task: "A long task description" }],
     ["subagent", { tasks: [{ agent: "scout", task: "A long task description" }] }],
     ["subagent_status", { jobId: 3 }],
-    ["subagent_peek", { jobId: 3 }],
     ["subagent_cancel", { jobId: 3 }],
     ["subagent_send", { jobId: 3, message: "A long message" }],
     ["subagent_reply", { jobId: 3, answer: "A long answer" }],

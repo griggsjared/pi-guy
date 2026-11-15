@@ -8,6 +8,7 @@ import { OFF_PROFILE_NAME, resolveAgentSettings } from "./agents.ts";
 import type { AgentConfig, SubagentSettings } from "./agents.ts";
 import {
   CANCELLED_EXIT_CODE,
+  CHECK_IN_ENTRY_TYPE,
   DEFAULT_TERMINAL_COLUMNS,
   ENTRY_TYPE,
   MIN_DISPLAY_DURATION_MS,
@@ -231,7 +232,7 @@ function buildGuidelines(agents: AgentConfig[]): string[] {
       : "Use the subagent tool with an available agent discovered from the agents directory.";
   return [
     agentGuidance,
-    "Launch results include job IDs; use those IDs with subagent_peek, subagent_send, subagent_cancel, and subagent_reply instead of calling subagent_status just to discover them.",
+    "Launch results include job IDs; pass them to subagent_status, subagent_send, subagent_cancel, and subagent_reply.",
     "Use the reviewer agent only when the user explicitly asks for a code review, change review, audit, or independent verification. Never invoke it autonomously after implementation, before a commit, or based only on task size or perceived risk. Use test-runner for normal verification and scout for exploration.",
     "When the user explicitly requests a broad review, use parallel read-only reviewers with separate lenses (for example lifecycle/races, API/UX, and tests/regressions) only when the scope justifies it; otherwise use one reviewer and synthesize its findings.",
     "For tasks spanning multiple independent concerns or more than three files, split the work into parallel, non-overlapping subagent tasks; assign explicit file ownership and use an integration pass for shared APIs.",
@@ -243,8 +244,8 @@ function buildGuidelines(agents: AgentConfig[]): string[] {
     "The subagent tool returns immediately; do not block or poll for normal completion.",
     "After launching subagents, the parent does not need to keep working for the sake of working. It may end its turn and wait for their follow-up results; continue only when there is useful independent work, and never sleep or poll for results.",
     "When related subagents are still running, acknowledge each result in one line and wait; report all findings together once the last arrives. Act on a result early only if it changes the plan, unblocks other work, or the user asked for incremental updates.",
-    "Use subagent_status only when you need a snapshot of running or recent subagents; completion is automatic, so do not poll for it.",
-    "Use subagent_cancel with a jobId or all, or /subagent-cancel <id|all>, when running subagents are stalled or no longer needed; cancellation stops the selected jobs.",
+    "Use subagent_status without a jobId only when you need a snapshot of running or recent subagents; completion is automatic, so do not poll for it.",
+    "Use subagent_cancel with a jobId or all: true, or /subagent-cancel <id|all>, when running subagents are stalled or no longer needed; cancellation stops the selected jobs.",
     "When a subagent asks a question, answer it with subagent_reply. Call ask_user first when the decision belongs to the user, then relay that answer to the child.",
     "Use subagent_send to steer a running child or queue a follow-up. It cannot answer a pending ask_parent question; use subagent_reply for that.",
     "Messages work only while a child is running; completed subagents are not resumable.",
@@ -388,12 +389,12 @@ class Batch {
           `Active: ${formatStepTiming(step, notice.detectedAt)} · ${step.kind}: ${formatEventSummary({ kind: "state", summary: step.summary })}`,
       ),
       ...(latest ? [`Last event: ${formatEventSummary(latest)}`] : []),
-      "The child is still running; it has not been paused or cancelled and is not waiting for a parent reply. The main agent should inspect it with subagent_peek, then wait, steer with subagent_send, or cancel with subagent_cancel as appropriate.",
+      `The child is still running; it has not been paused or cancelled and is not waiting for a parent reply. The main agent should inspect it with subagent_status using jobId ${jobId}, then wait, steer with subagent_send, or cancel with subagent_cancel as appropriate.`,
     ];
     try {
       this.deps.pi.sendMessage(
         {
-          customType: "subagent-check-in",
+          customType: CHECK_IN_ENTRY_TYPE,
           content: lines.join("\n\n"),
           display: true,
           details: { jobId, agent: job.agent, ...notice },

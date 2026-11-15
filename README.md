@@ -24,7 +24,6 @@ Ask Pi: “Have a scout find the authentication code while you inspect the route
 
 ```text
 /subagent-profile                              Choose a model profile
-/subagent-status                               Show jobs
 /subagent-tail <id>                             Follow a job's events
 /subagent-cancel <id>                           Cancel a job
 /subagent-send <id> steer <message>             Redirect the current task

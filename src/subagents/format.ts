@@ -194,10 +194,8 @@ export function toolCallLabel(name: string, args: Record<string, unknown>, width
     }
     case "subagent_status":
       return fit(`subagent status ${args.jobId === undefined ? "all" : `#${full(args.jobId)}`}`);
-    case "subagent_peek":
-      return fit(`subagent peek ${args.jobId === undefined ? "…" : `#${full(args.jobId)}`}`);
     case "subagent_cancel":
-      return fit(`subagent cancel ${args.all || args.jobId === undefined ? "all" : `#${full(args.jobId)}`}`);
+      return fit(`subagent cancel ${args.all ? "all" : args.jobId === undefined ? "…" : `#${full(args.jobId)}`}`);
     case "subagent_send": {
       const mode = args.deliverAs === "followUp" ? "follow-up" : "steering";
       const message =

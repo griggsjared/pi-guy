@@ -11,7 +11,6 @@ import { refreshUi, registerRenderers, WIDGET_KEY } from "./render.ts";
 import type { UiContext } from "./render.ts";
 import {
   createCancelTool,
-  createPeekTool,
   createReplyTool,
   createSendTool,
   createStatusTool,
@@ -115,7 +114,6 @@ export default async function (pi: ExtensionAPI) {
     }),
   );
   pi.registerTool(createStatusTool({ registry }));
-  pi.registerTool(createPeekTool({ registry }));
   pi.registerTool(createCancelTool({ registry }));
   pi.registerTool(createSendTool({ registry }));
   pi.registerTool(createReplyTool({ registry }));

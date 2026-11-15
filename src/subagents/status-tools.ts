@@ -27,7 +27,22 @@ import {
 } from "./tail.ts";
 import type { JobEvent, ToolCallInfo } from "./types.ts";
 
-const StatusParams = Type.Object({ jobId: Type.Optional(Type.Integer({ minimum: 1 })) });
+const StatusParams = Type.Object({
+  jobId: Type.Optional(Type.Integer({ minimum: 1 })),
+  since: Type.Optional(
+    Type.Integer({ minimum: 0, description: "With jobId: return events after this cursor (a previous nextCursor)." }),
+  ),
+  limit: Type.Optional(
+    Type.Integer({ minimum: 1, maximum: 100, description: "With jobId: maximum events to return (default 20)." }),
+  ),
+  maxChars: Type.Optional(
+    Type.Integer({
+      minimum: 1,
+      maximum: 2000,
+      description: "With jobId: maximum event text characters (default 2000).",
+    }),
+  ),
+});
 const CancelParams = Type.Object({
   jobId: Type.Optional(Type.Integer({ minimum: 1 })),
   all: Type.Optional(Type.Boolean()),
@@ -41,12 +56,6 @@ const ReplyParams = Type.Object({
   jobId: Type.Integer({ minimum: 1 }),
   questionId: Type.String({ minLength: 1 }),
   answer: Type.String({ minLength: 1 }),
-});
-const PeekParams = Type.Object({
-  jobId: Type.Integer({ minimum: 1 }),
-  since: Type.Optional(Type.Integer({ minimum: 0 })),
-  limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
-  maxChars: Type.Optional(Type.Integer({ minimum: 1, maximum: 2000 })),
 });
 
 const JobStatus = Type.Union([
@@ -66,39 +75,33 @@ const StatusOutput = Type.Object({
       label: Type.String(),
     }),
   ),
-  error: Type.Optional(Type.String()),
-});
-const PeekOutput = Type.Object({
-  jobId: Type.Integer({ minimum: 1 }),
-  agent: Type.String(),
-  task: Type.Optional(Type.String()),
-  title: Type.Optional(Type.String()),
-  status: JobStatus,
-  events: Type.Array(
-    Type.Object({
-      seq: Type.Integer({ minimum: 1 }),
-      timestamp: Type.Number(),
-      stepId: Type.Optional(Type.String()),
-      startedAt: Type.Optional(Type.Number()),
-      durationMs: Type.Optional(Type.Number()),
-      kind: Type.Union([
-        Type.Literal("assistant"),
-        Type.Literal("tool-start"),
-        Type.Literal("tool-end"),
-        Type.Literal("question"),
-        Type.Literal("state"),
-      ]),
-      summary: Type.String(),
-    }),
-    { maxItems: 100 },
+  events: Type.Optional(
+    Type.Array(
+      Type.Object({
+        seq: Type.Integer({ minimum: 1 }),
+        timestamp: Type.Number(),
+        stepId: Type.Optional(Type.String()),
+        startedAt: Type.Optional(Type.Number()),
+        durationMs: Type.Optional(Type.Number()),
+        kind: Type.Union([
+          Type.Literal("assistant"),
+          Type.Literal("tool-start"),
+          Type.Literal("tool-end"),
+          Type.Literal("question"),
+          Type.Literal("state"),
+        ]),
+        summary: Type.String(),
+      }),
+      { maxItems: 100 },
+    ),
   ),
-  nextCursor: Type.Integer({ minimum: 0 }),
+  nextCursor: Type.Optional(Type.Integer({ minimum: 0 })),
   droppedBefore: Type.Optional(Type.Integer({ minimum: 1 })),
 });
 
 const MAX_STATUS_OUTPUT_CHARS = 4000;
-const DEFAULT_PEEK_LIMIT = 20;
-const DEFAULT_PEEK_CHARS = 2000;
+const DEFAULT_EVENT_LIMIT = 20;
+const DEFAULT_EVENT_CHARS = 2000;
 const MAX_STATUS_TOOL_CALLS = 8;
 const RECENT_JOB_LIMIT = 20;
 const RECENT_JOB_WINDOW_MS = 60_000;
@@ -121,11 +124,14 @@ type StatusLine =
   | { kind: "question"; id: string; text: string }
   | { kind: "step"; text: string }
   | { kind: "toolCall"; prefix: string; call: ToolCallInfo }
-  | { kind: "plain"; text: string; displayText?: string };
+  | { kind: "plain"; text: string };
 interface StatusToolDetails {
   text: string;
   jobId?: number;
   sections?: StatusLine[];
+  events?: JobEvent[];
+  nextCursor?: number;
+  droppedBefore?: number;
 }
 interface CancelTarget {
   jobId: number;
@@ -153,16 +159,6 @@ interface ReplyToolDetails {
   questionId: string;
   question: string;
   answer: string;
-}
-interface PeekToolDetails {
-  jobId: number;
-  agent: string;
-  task?: string;
-  title?: string;
-  status: Job["status"];
-  events: JobEvent[];
-  nextCursor: number;
-  droppedBefore?: number;
 }
 
 function jobLabel(job: Pick<Job, "title" | "task">, max = 80): string {
@@ -200,7 +196,7 @@ function isStatusLine(value: unknown): value is StatusLine {
   return line.kind !== "toolCall" || typeof (line.call as { name?: unknown } | undefined)?.name === "string";
 }
 
-function renderStatusLines(lines: StatusLine[], options: { includeQuestionIds?: boolean } = {}): string {
+function renderStatusLines(lines: StatusLine[]): string {
   return lines
     .map((line) => {
       switch (line.kind) {
@@ -213,7 +209,7 @@ function renderStatusLines(lines: StatusLine[], options: { includeQuestionIds?: 
         case "output":
           return line.text;
         case "question":
-          return options.includeQuestionIds === false ? questionDisplay(line) : `- ${line.id}: ${line.text}`;
+          return `- ${line.id}: ${line.text}`;
         case "step":
           return line.text;
         case "toolCall":
@@ -280,7 +276,7 @@ function renderStatusSections(lines: StatusLine[], theme: Theme): Component {
               ),
             );
           case "plain":
-            return line.text ? theme.fg("muted", line.displayText ?? line.text) : "";
+            return line.text ? theme.fg("muted", line.text) : "";
         }
       });
       return new Text(rendered.join("\n"), 0, 0).render(width);
@@ -375,22 +371,28 @@ function toolCallLines(job: Job, now: number): StatusLine[] {
       ];
 }
 
-function detailedLines(job: Job, now: number): StatusLine[] {
+// Incremental reads (brief) repeat only what can change between calls, so following a job stays cheap.
+function detailedLines(job: Job, now: number, brief = false): StatusLine[] {
   const duration = formatDuration(Math.max(MIN_DISPLAY_DURATION_MS, (job.endTime ?? now) - job.startTime));
   const metadata = formatUsageStats(job.usage, job.model, job.thinkingLevel);
   const title = normalizeTitle(job.title);
   const lines: StatusLine[] = [
     { kind: "heading", text: `Subagent #${job.id}` },
     { kind: "field", label: "State", value: job.status },
-    { kind: "field", label: "Agent", value: job.agent },
-    { kind: "field", label: "Task", value: normalizeTitle(job.task) ?? "..." },
   ];
-  if (title) lines.push({ kind: "field", label: "Title", value: title });
+  if (!brief) {
+    lines.push({ kind: "field", label: "Agent", value: job.agent });
+    lines.push({ kind: "field", label: "Task", value: normalizeTitle(job.task) ?? "..." });
+    if (title) lines.push({ kind: "field", label: "Title", value: title });
+  }
   lines.push({ kind: "field", label: "Elapsed", value: duration });
-  lines.push({ kind: "field", label: "Started", value: formatLocalTime(job.startTime) });
-  if (job.endTime !== undefined) lines.push({ kind: "field", label: "Finished", value: formatLocalTime(job.endTime) });
-  if (job.profile) lines.push({ kind: "field", label: "Profile", value: job.profile });
-  if (metadata) lines.push({ kind: "field", label: "Usage", value: metadata });
+  if (!brief) {
+    lines.push({ kind: "field", label: "Started", value: formatLocalTime(job.startTime) });
+    if (job.endTime !== undefined)
+      lines.push({ kind: "field", label: "Finished", value: formatLocalTime(job.endTime) });
+    if (job.profile) lines.push({ kind: "field", label: "Profile", value: job.profile });
+    if (metadata) lines.push({ kind: "field", label: "Usage", value: metadata });
+  }
   if (job.pendingQuestions.length > 0) {
     lines.push({ kind: "field", label: `Waiting for parent (${job.pendingQuestions.length})`, value: "" });
     for (const question of job.pendingQuestions)
@@ -398,6 +400,10 @@ function detailedLines(job: Job, now: number): StatusLine[] {
   } else if (job.progress && !job.steps.some((step) => step.endedAt === undefined))
     lines.push({ kind: "field", label: "Progress", value: job.progress });
   lines.push(...stepLines(job, now));
+  if (brief)
+    return job.cancellationReason
+      ? [...lines, { kind: "field", label: "Cancellation", value: job.cancellationReason }]
+      : lines;
   lines.push(...toolCallLines(job, now));
   if (job.text)
     lines.push({ kind: "field", label: "Latest output", value: "" }, ...outputLines(job.text, "toolOutput"));
@@ -406,19 +412,7 @@ function detailedLines(job: Job, now: number): StatusLine[] {
   return lines;
 }
 
-function statusLines(registry: JobRegistry, jobId?: number, now = Date.now()): StatusLine[] {
-  if (jobId !== undefined) {
-    const job = registry.get(jobId);
-    return job
-      ? detailedLines(job, now)
-      : [
-          {
-            kind: "plain",
-            text: `subagent status #${jobId}: Unknown subagent job ID: ${jobId}`,
-            displayText: `Unknown subagent job ID: ${jobId}`,
-          },
-        ];
-  }
+function statusLines(registry: JobRegistry, now: number): StatusLine[] {
   const running = registry.running();
   const recent = registry.recent(RECENT_JOB_LIMIT).filter((j) => j.endTime && now - j.endTime < RECENT_JOB_WINDOW_MS);
   const lines: StatusLine[] =
@@ -434,14 +428,6 @@ function statusLines(registry: JobRegistry, jobId?: number, now = Date.now()): S
   return lines;
 }
 
-function formatStatus(registry: JobRegistry): string {
-  return renderStatusLines(statusLines(registry));
-}
-
-function formatStatusForDisplay(registry: JobRegistry, jobId: number): string {
-  return renderStatusLines(statusLines(registry, jobId), { includeQuestionIds: false });
-}
-
 export function createStatusTool(deps: {
   registry: JobRegistry;
 }): ToolDefinition<typeof StatusParams, StatusToolDetails> {
@@ -449,43 +435,88 @@ export function createStatusTool(deps: {
     name: "subagent_status",
     label: "Subagent Status",
     description:
-      "Inspect running and recently completed subagents when needed. Async jobs deliver results automatically; do not poll for normal completion.",
+      "List running and recently finished subagents, or pass jobId to inspect one job: its details plus recent events.",
+    promptGuidelines: [
+      "Use subagent_status with a jobId to inspect a job. Pass nextCursor as since to get only new events and a short header (state, elapsed, questions, progress, active steps). Results arrive automatically; do not poll for normal completion.",
+    ],
     parameters: StatusParams,
     outputSchema: StatusOutput,
     async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
       const now = Date.now();
-      const sections = statusLines(deps.registry, params.jobId, now);
-      const text = renderStatusLines(sections);
-      const job = params.jobId === undefined ? undefined : deps.registry.get(params.jobId);
-      const jobs =
-        params.jobId !== undefined
-          ? job
-            ? [job]
-            : []
-          : [
-              ...deps.registry.running(),
-              ...deps.registry
-                .recent(RECENT_JOB_LIMIT)
-                .filter((item) => item.endTime && now - item.endTime < RECENT_JOB_WINDOW_MS),
-            ];
+      if (params.jobId === undefined) {
+        const sections = statusLines(deps.registry, now);
+        const text = renderStatusLines(sections);
+        const jobs = [
+          ...deps.registry.running(),
+          ...deps.registry
+            .recent(RECENT_JOB_LIMIT)
+            .filter((item) => item.endTime && now - item.endTime < RECENT_JOB_WINDOW_MS),
+        ];
+        return {
+          content: [{ type: "text", text }],
+          structuredContent: {
+            text,
+            jobs: jobs.map((item) => ({
+              jobId: item.id,
+              agent: item.agent,
+              status: item.status,
+              label: jobLabel(item, 80),
+            })),
+          },
+          details: { text, sections },
+        };
+      }
+      const job = deps.registry.get(params.jobId);
+      const read = job
+        ? deps.registry.readEvents(job.id, { since: params.since, limit: params.limit ?? DEFAULT_EVENT_LIMIT })
+        : undefined;
+      if (!job || !read) throw new Error(`Unknown subagent job ID: ${params.jobId}`);
+      const maxChars = params.maxChars ?? DEFAULT_EVENT_CHARS;
+      const events: JobEvent[] = [];
+      const structuredEvents: JobEvent[] = [];
+      const eventLines: string[] = [];
+      const droppedNotice =
+        read.droppedBefore === undefined ? undefined : `[history dropped before ${read.droppedBefore}]`;
+      if (droppedNotice && droppedNotice.length <= maxChars) eventLines.push(droppedNotice);
+      for (const event of read.events) {
+        const summary = formatEventSummary(event);
+        const timing = formatEventTiming(event, job, now);
+        const line = `[${event.seq}] ${timing.timestamp} ${summary}${timing.suffix}`;
+        const body = eventLines.length > 0 ? `${eventLines.join("\n")}\n${line}` : line;
+        if (body.length > maxChars) break;
+        events.push({ ...event });
+        structuredEvents.push({ ...event, summary });
+        eventLines.push(line);
+      }
+      const nextCursor = events.at(-1)?.seq ?? params.since ?? 0;
+      const cursor = `nextCursor: ${nextCursor}`;
+      const compactCursor = `cursor:${nextCursor}`;
+      const eventBody = eventLines.join("\n");
+      const eventText = !eventBody
+        ? cursor.length <= maxChars
+          ? cursor
+          : compactCursor.length <= maxChars
+            ? compactCursor
+            : ""
+        : eventBody.length + cursor.length + 1 <= maxChars
+          ? `${eventBody}\n${cursor}`
+          : eventBody.length + compactCursor.length + 1 <= maxChars
+            ? `${eventBody}\n${compactCursor}`
+            : eventBody;
+      const sections = detailedLines(job, now, params.since !== undefined);
+      const statusText = renderStatusLines(sections);
+      const text = eventText ? `${statusText}\nEvents:\n${eventText}` : statusText;
       return {
         content: [{ type: "text", text }],
         structuredContent: {
           text,
-          ...(params.jobId !== undefined ? { jobId: params.jobId } : {}),
-          jobs: jobs.map((item) => ({
-            jobId: item.id,
-            agent: item.agent,
-            status: item.status,
-            label: jobLabel(item, params.jobId !== undefined ? 160 : 80),
-          })),
-          ...(params.jobId !== undefined && !job ? { error: text } : {}),
+          jobId: job.id,
+          jobs: [{ jobId: job.id, agent: job.agent, status: job.status, label: jobLabel(job, 160) }],
+          events: structuredEvents.map((event) => ({ ...event })),
+          nextCursor,
+          ...(read.droppedBefore !== undefined ? { droppedBefore: read.droppedBefore } : {}),
         },
-        details: {
-          text,
-          jobId: params.jobId,
-          sections,
-        },
+        details: { text, jobId: job.id, sections, events, nextCursor, droppedBefore: read.droppedBefore },
       };
     },
     renderCall(args, theme, _context) {
@@ -514,147 +545,41 @@ export function createStatusTool(deps: {
       }
       const sections =
         context.args && job && details?.jobId === job.id ? saved.filter((line) => !isIdentityLine(line, job)) : saved;
-      return renderStatusSections(sections, theme);
-    },
-  };
-}
-
-export function createPeekTool(deps: { registry: JobRegistry }): ToolDefinition<typeof PeekParams, PeekToolDetails> {
-  return {
-    name: "subagent_peek",
-    label: "Subagent Peek",
-    description: "Inspect concise semantic events from a running or retained subagent job.",
-    promptGuidelines: [
-      "Use subagent_peek for an explicit bounded look at a job; pass nextCursor as since for incremental reads and do not poll for normal completion.",
-    ],
-    parameters: PeekParams,
-    outputSchema: PeekOutput,
-    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
-      const job = deps.registry.get(params.jobId);
-      if (!job) throw new Error(`Unknown subagent job ID: ${params.jobId}`);
-      const read = deps.registry.readEvents(params.jobId, {
-        since: params.since,
-        limit: params.limit ?? DEFAULT_PEEK_LIMIT,
-      });
-      if (!read) throw new Error(`Unknown subagent job ID: ${params.jobId}`);
-      const maxChars = params.maxChars ?? DEFAULT_PEEK_CHARS;
-      const now = Date.now();
-      const events: JobEvent[] = [];
-      const structuredEvents: JobEvent[] = [];
-      const eventLines: string[] = [];
-      const droppedNotice =
-        read.droppedBefore === undefined ? undefined : `[history dropped before ${read.droppedBefore}]`;
-      if (droppedNotice && droppedNotice.length <= maxChars) eventLines.push(droppedNotice);
-      for (const event of read.events) {
-        const summary = formatEventSummary(event);
-        const timing = formatEventTiming(event, job, now);
-        const line = `[${event.seq}] ${timing.timestamp} ${summary}${timing.suffix}`;
-        const body = eventLines.length > 0 ? `${eventLines.join("\n")}\n${line}` : line;
-        if (body.length > maxChars) break;
-        events.push({ ...event });
-        structuredEvents.push({ ...event, summary });
-        eventLines.push(line);
-      }
-      const nextCursor = events.at(-1)?.seq ?? params.since ?? 0;
-      const cursor = `nextCursor: ${nextCursor}`;
-      const compactCursor = `cursor:${nextCursor}`;
-      const eventBody = eventLines.join("\n");
-      const bodyWithCursor = (body: string): string =>
-        !body
-          ? cursor.length <= maxChars
-            ? cursor
-            : compactCursor.length <= maxChars
-              ? compactCursor
-              : ""
-          : body.length + cursor.length + 1 <= maxChars
-            ? `${body}\n${cursor}`
-            : body.length + compactCursor.length + 1 <= maxChars
-              ? `${body}\n${compactCursor}`
-              : body;
-      const conciseContext = `subagent peek #${job.id} ${job.agent} · ${jobLabel(job, 80)}`;
-      const eventText = bodyWithCursor(eventBody);
-      const withContext =
-        eventText && `${conciseContext}\n${eventText}`.length <= maxChars
-          ? `${conciseContext}\n${eventText}`
-          : conciseContext.length <= maxChars && !eventText
-            ? conciseContext
-            : eventText;
-      const text = withContext;
-      const details = {
-        jobId: job.id,
-        agent: job.agent,
-        task: job.task,
-        ...(job.title ? { title: job.title } : {}),
-        status: job.status,
-        events,
-        nextCursor,
-        ...(read.droppedBefore !== undefined ? { droppedBefore: read.droppedBefore } : {}),
-      };
-      return {
-        content: [{ type: "text", text }],
-        structuredContent: { ...details, events: structuredEvents.map((event) => ({ ...event })) },
-        details,
-      };
-    },
-    renderCall(args, theme, _context) {
-      const job = deps.registry.get(args.jobId);
-      const target = job ? jobTarget(job) : `#${args.jobId ?? "…"}`;
-      return new TruncatedText(theme.fg("toolTitle", theme.bold("subagent peek ")) + theme.fg("accent", target), 0, 0);
-    },
-    renderResult(result, _options, theme, context) {
-      const details = result.details;
-      const args = context.args ?? {};
-      const fallbackJob = args.jobId === undefined ? undefined : deps.registry.get(args.jobId);
-      const fallbackTarget = fallbackJob ? jobTarget(fallbackJob) : `#${args.jobId ?? "?"}`;
-      if (!context.isError && details && Array.isArray(details.events) && typeof details.nextCursor === "number") {
-        const target = jobTarget({
-          id: details.jobId,
-          agent: details.agent,
-          task: details.task ?? "...",
-          title: details.title,
-        });
-        const shownInCall = Boolean(context.args) && target === fallbackTarget;
-        const label = shortLabel(normalizeTitle(details.title), normalizeTitle(details.task), Infinity);
-        return {
-          render(width: number) {
-            const job = deps.registry.get(details.jobId);
-            const now = Date.now();
-            const lines: string[] = [];
-            if (!shownInCall) {
-              lines.push(theme.fg("toolTitle", theme.bold("subagent peek ")) + theme.fg("accent", target));
-            }
-            if (details.task && (!shownInCall || normalizeTitle(details.task) !== label))
-              lines.push(theme.fg("dim", `Task: ${details.task}`));
-            if (details.title && (!shownInCall || normalizeTitle(details.title) !== label))
-              lines.push(theme.fg("dim", `Title: ${details.title}`));
-            if (details.droppedBefore !== undefined) {
-              lines.push(theme.fg("warning", `history dropped before event ${details.droppedBefore}`));
-            }
-            if (details.events.length === 0) {
-              lines.push(theme.fg("dim", "no new events"));
-            } else {
-              for (const event of details.events) {
-                const label = eventKindLabel(event.kind).padEnd(EVENT_LABEL_WIDTH);
-                const timing = formatEventTiming(event, job, now);
-                lines.push(
-                  `${theme.fg("dim", `[${event.seq}] ${timing.timestamp}`)} ${theme.fg(eventColor(event.kind), label)} ${theme.fg("muted", (formatEventSummary(event) || "(empty)") + timing.suffix)}`,
-                );
-              }
-            }
-            lines.push(theme.fg("dim", `cursor: ${details.nextCursor}`));
-            return new Text(lines.join("\n"), 0, 0).render(width);
-          },
-          invalidate() {},
-        };
-      }
-      return renderFallbackResult(
-        "subagent peek",
-        fallbackTarget,
-        resultText(result),
-        "(no result)",
-        !context.args,
-        theme,
+      const status = renderStatusSections(sections, theme);
+      if (!Array.isArray(details?.events) || typeof details.nextCursor !== "number") return status;
+      const events = details.events.filter(
+        (event): event is JobEvent =>
+          typeof event?.seq === "number" &&
+          typeof event.timestamp === "number" &&
+          typeof event.kind === "string" &&
+          typeof event.summary === "string",
       );
+      const { droppedBefore, nextCursor } = details;
+      const jobId = details.jobId;
+      return {
+        render(width: number) {
+          const job = jobId === undefined ? undefined : deps.registry.get(jobId);
+          const now = Date.now();
+          const lines: string[] = [theme.fg("muted", "Events:")];
+          if (typeof droppedBefore === "number") {
+            lines.push(theme.fg("warning", `history dropped before event ${droppedBefore}`));
+          }
+          if (events.length === 0) {
+            lines.push(theme.fg("dim", "no new events"));
+          } else {
+            for (const event of events) {
+              const label = eventKindLabel(event.kind).padEnd(EVENT_LABEL_WIDTH);
+              const timing = formatEventTiming(event, job, now);
+              lines.push(
+                `${theme.fg("dim", `[${event.seq}] ${timing.timestamp}`)} ${theme.fg(eventColor(event.kind), label)} ${theme.fg("muted", (formatEventSummary(event) || "(empty)") + timing.suffix)}`,
+              );
+            }
+          }
+          lines.push(theme.fg("dim", `cursor: ${nextCursor}`));
+          return [...status.render(width), ...new Text(lines.join("\n"), 0, 0).render(width)];
+        },
+        invalidate() {},
+      };
     },
   };
 }
@@ -665,26 +590,20 @@ export function createCancelTool(deps: {
   return {
     name: "subagent_cancel",
     label: "Subagent Cancel",
-    description: "Cancel one subagent by jobId, or all running subagents.",
+    description: "Cancel one subagent by jobId, or all running subagents with all: true.",
     parameters: CancelParams,
     async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
       if (params.all && params.jobId !== undefined) throw new Error("Specify either jobId or all, not both.");
+      if (!params.all && params.jobId === undefined) throw new Error("Pass jobId or all: true");
       const requestedJob = params.jobId === undefined ? undefined : deps.registry.get(params.jobId);
-      const jobs =
-        params.all || params.jobId === undefined ? deps.registry.running() : requestedJob ? [requestedJob] : [];
+      if (params.jobId !== undefined && !requestedJob) throw new Error(`Unknown subagent job ID: ${params.jobId}`);
+      const jobs = requestedJob ? [requestedJob] : deps.registry.running();
       const targets = jobs.map((job) => ({ jobId: job.id, agent: job.agent, label: jobLabel(job, Infinity) }));
       const targetText =
         targets.length > 0
           ? targets.map((target) => `#${target.jobId} ${target.agent} · ${target.label}`).join(", ")
-          : params.all || params.jobId === undefined
-            ? "none"
-            : `#${params.jobId}`;
-      const count =
-        params.all || params.jobId === undefined
-          ? deps.registry.cancelAll()
-          : deps.registry.cancel(params.jobId)
-            ? 1
-            : 0;
+          : "none";
+      const count = requestedJob ? (deps.registry.cancel(requestedJob.id) ? 1 : 0) : deps.registry.cancelAll();
       if (count === 0) {
         return {
           content: [
@@ -787,17 +706,17 @@ export function createSendTool(deps: { registry: JobRegistry }): ToolDefinition<
     async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
       if (!params.message.trim()) throw new Error("Subagent message cannot be empty.");
       const job = deps.registry.get(params.jobId);
+      if (!job) throw new Error(`Unknown subagent job ID: ${params.jobId}`);
       await deps.registry.send(params.jobId, params.message, params.deliverAs);
       const mode = params.deliverAs === "followUp" ? "follow-up" : "steering";
-      const target = job ? jobTarget(job) : `#${params.jobId}`;
       return {
-        content: [{ type: "text", text: `Sent ${mode} message to subagent ${target}.` }],
+        content: [{ type: "text", text: `Sent ${mode} message to subagent ${jobTarget(job)}.` }],
         details: {
           jobId: params.jobId,
-          agent: job?.agent ?? "subagent",
-          task: job?.task,
-          title: job?.title,
-          label: job ? jobLabel(job, Infinity) : "(task unavailable)",
+          agent: job.agent,
+          task: job.task,
+          title: job.title,
+          label: jobLabel(job, Infinity),
           message: params.message,
           deliverAs: params.deliverAs,
         },
@@ -868,6 +787,7 @@ export function createReplyTool(deps: { registry: JobRegistry }): ToolDefinition
     parameters: ReplyParams,
     async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
       if (!params.answer.trim()) throw new Error("Subagent reply cannot be empty.");
+      if (!deps.registry.get(params.jobId)) throw new Error(`Unknown subagent job ID: ${params.jobId}`);
       const question = deps.registry.get(params.jobId)?.pendingQuestions.find((item) => item.id === params.questionId);
       await deps.registry.reply(params.jobId, params.questionId, params.answer);
       const targetJob = deps.registry.get(params.jobId);
@@ -1052,39 +972,6 @@ export function registerStatusCommands(
     },
   });
 
-  pi.registerCommand("subagent-status", {
-    description: "Show running and recent subagent status or inspect a job by ID",
-    handler: async (args, ctx) => {
-      if (!ctx.hasUI) return;
-      const trimmed = args.trim();
-      if (!trimmed) {
-        if (ctx.mode !== "tui") {
-          ctx.ui.notify(formatStatus(deps.registry), "info");
-          return;
-        }
-        const job = await pickJob(
-          ctx,
-          [...deps.registry.running(), ...deps.registry.recent(RECENT_JOB_LIMIT)],
-          "Inspect subagent status",
-          "No subagents are available.",
-        );
-        if (!job) return;
-        ctx.ui.notify(formatStatusForDisplay(deps.registry, job.id), "info");
-        return;
-      }
-      if (trimmed.toLowerCase() === "all") {
-        ctx.ui.notify(formatStatus(deps.registry), "info");
-        return;
-      }
-      const jobId = parseJobId(trimmed);
-      if (jobId === undefined) {
-        ctx.ui.notify("Usage: /subagent-status [numeric-job-id|all]", "error");
-        return;
-      }
-      ctx.ui.notify(formatStatusForDisplay(deps.registry, jobId), "info");
-    },
-  });
-
   pi.registerCommand("subagent-cancel", {
     description: "Cancel one subagent by ID, or all running subagents",
     handler: async (args, ctx) => {
@@ -1101,21 +988,27 @@ export function registerStatusCommands(
           "No running subagents are available.",
         );
         if (!job) return;
-        const count = deps.registry.cancel(job.id);
-        ctx.ui.notify(count ? `Cancelling subagent #${job.id} ${job.agent}.` : "No matching running subagent", "info");
+        const count = deps.registry.cancel(job.id) ? 1 : 0;
+        ctx.ui.notify(count ? `Cancelling 1 subagent: ${jobTarget(job)}.` : "No matching running subagent", "info");
         return;
       }
-      let jobId: number | undefined;
+      let job: Job | undefined;
       if (value !== "all") {
-        jobId = parseJobId(value);
+        const jobId = parseJobId(value);
         if (jobId === undefined) {
           ctx.ui.notify("Usage: /subagent-cancel <numeric-job-id|all>", "error");
           return;
         }
+        job = deps.registry.get(jobId);
+        if (!job) {
+          ctx.ui.notify(`Unknown subagent job ID: ${jobId}`, "error");
+          return;
+        }
       }
-      const count = jobId === undefined ? deps.registry.cancelAll() : deps.registry.cancel(jobId) ? 1 : 0;
+      const targets = (job ? [job] : deps.registry.running()).map(jobTarget).join(", ");
+      const count = job ? (deps.registry.cancel(job.id) ? 1 : 0) : deps.registry.cancelAll();
       ctx.ui.notify(
-        count ? `Cancelling ${count} subagent${count > 1 ? "s" : ""}` : "No matching running subagent",
+        count ? `Cancelling ${count} subagent${count > 1 ? "s" : ""}: ${targets}.` : "No matching running subagent",
         "info",
       );
     },
@@ -1163,15 +1056,20 @@ export function registerStatusCommands(
         ctx.ui.notify("Usage: /subagent-send <numeric-job-id> <steer|followup> <message>", "error");
         return;
       }
+      const job = deps.registry.get(jobId);
+      if (!job) {
+        ctx.ui.notify(`Unknown subagent job ID: ${jobId}`, "error");
+        return;
+      }
       const deliverAs = mode === "steer" ? "steer" : "followUp";
       try {
         await deps.registry.send(jobId, message, deliverAs);
-        ctx.ui.notify(`Sent ${mode === "steer" ? "steering" : "follow-up"} message to subagent #${jobId}.`, "info");
+        ctx.ui.notify(
+          `Sent ${deliverAs === "steer" ? "steering" : "follow-up"} message to subagent ${jobTarget(job)}.`,
+          "info",
+        );
       } catch (error) {
-        const job = deps.registry.get(jobId);
-        const target = job ? jobTarget(job) : `#${jobId}`;
-        const reason = error instanceof Error ? error.message : String(error);
-        ctx.ui.notify(`subagent send ${target}: ${reason}`, "error");
+        ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
       }
     },
   });
