@@ -13,6 +13,7 @@ import workingIndicator from "./working-indicator/index.ts";
 
 // Handlers for the same event run in this order.
 const factories: ExtensionFactory[] = [
+  statusline,
   agentsLocal,
   askUser,
   btw,
@@ -20,7 +21,6 @@ const factories: ExtensionFactory[] = [
   githubPr,
   header,
   webSearch,
-  statusline,
   providerUsage,
   subagents,
   workingIndicator,
