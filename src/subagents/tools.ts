@@ -1,4 +1,7 @@
 import type { spawn } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Container, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
@@ -35,6 +38,7 @@ const MAX_QUESTION_SUMMARY_CHARS = 500;
 const MAX_RESULT_OUTPUT_CHARS = 20_000;
 const MAX_CALL_PREVIEW_TASKS = 8;
 const BUSY_REFRESH_INTERVAL_MS = 1_000;
+const SESSION_DIR_PREFIX = "subagent-session-";
 
 function questionSummary(question: SubagentQuestion): string {
   const flattened = question.question.replace(/\s+/g, " ").trim();
@@ -232,7 +236,7 @@ function buildGuidelines(agents: AgentConfig[]): string[] {
       : "Use the subagent tool with an available agent discovered from the agents directory.";
   return [
     agentGuidance,
-    "Launch results include job IDs; pass them to subagent_status, subagent_send, subagent_cancel, and subagent_reply.",
+    "Launch results include job IDs; pass them to subagent_status, subagent_send, subagent_cancel, subagent_reply, and subagent_resume.",
     "Use the reviewer agent only when the user explicitly asks for a code review, change review, audit, or independent verification. Never invoke it autonomously after implementation, before a commit, or based only on task size or perceived risk. Use test-runner for normal verification and scout for exploration.",
     "When the user explicitly requests a broad review, use parallel read-only reviewers with separate lenses (for example lifecycle/races, API/UX, and tests/regressions) only when the scope justifies it; otherwise use one reviewer and synthesize its findings.",
     "For tasks spanning multiple independent concerns or more than three files, split the work into parallel, non-overlapping subagent tasks; assign explicit file ownership and use an integration pass for shared APIs.",
@@ -248,7 +252,7 @@ function buildGuidelines(agents: AgentConfig[]): string[] {
     "Use subagent_cancel with a jobId or all: true, or /subagent-cancel <id|all>, when running subagents are stalled or no longer needed; cancellation stops the selected jobs.",
     "When a subagent asks a question, answer it with subagent_reply. Call ask_user first when the decision belongs to the user, then relay that answer to the child.",
     "Use subagent_send to steer a running child or queue a follow-up. It cannot answer a pending ask_parent question; use subagent_reply for that.",
-    "Messages work only while a child is running; completed subagents are not resumable.",
+    "subagent_send works only while a child is running. When a finished child's result is incomplete or wrong, use subagent_resume to continue its conversation with added context instead of launching a new subagent.",
     "Give each subagent a clear, self-contained task. Keep tasks scoped so they finish quickly.",
     "Pass a short display title for each task; it is used in results, the widget, and history.",
     "For delegated research or exploration, act as the orchestrator: do not duplicate an async subagent's investigation. If you continue working while it runs, do only independent, non-overlapping work; otherwise end the turn and use its result when it arrives to decide the next step.",
@@ -551,12 +555,17 @@ export function createSubagentTool(deps: SubagentToolDeps): ToolDefinition<typeo
           /* session torn down mid-run */
         }
       };
-      const finishJob = (jobId: number, result: SubagentResult, notify = true): SubagentResult => {
+      const finishJob = (
+        jobId: number,
+        result: SubagentResult,
+        notify = true,
+        jobBatch: Batch = batch,
+      ): SubagentResult => {
         registry.complete(jobId, result);
         // Cancellation may race the child's final close/update. The registry
         // reason is authoritative for every downstream representation.
         const finished = normalizeCancellation(result, registry.get(jobId));
-        batch.recordCompletion(jobId);
+        jobBatch.recordCompletion(jobId);
         refresh();
         if (notify) notifyTerminal(jobId, finished.agent, finished.task, finished.title, finished);
         return finished;
@@ -565,24 +574,60 @@ export function createSubagentTool(deps: SubagentToolDeps): ToolDefinition<typeo
       // Launch one job: stream updates into the registry, then complete it.
       // Failures are returned as failed results, except spawn-level failures
       // which reject and are recorded here.
+      const resumeJob = (agent: ResolvedAgent, task: string, jobId: number, title: string | undefined, dir: string) => {
+        return (message: string): void => {
+          if (deps.getActiveProfile() === OFF_PROFILE_NAME) {
+            throw new Error("Resume blocked: the user turned subagents off. Do the work without subagents.");
+          }
+          registry.reopen(jobId);
+          registry.appendEvent(jobId, { kind: "state", summary: `resumed: ${message}` });
+          const resumeBatch = new Batch({ pi: deps.pi, registry, refresh, mailbox, isIdle: () => ctx.isIdle() });
+          resumeBatch.addJob(jobId);
+          refresh();
+          const stopTicker = startTicker(activeTickers, refresh);
+          launchOne(agent, task, jobId, title, resumeBatch, { dir, resumeMessage: message })
+            .then((r) => {
+              stopTicker();
+              resumeBatch.deliverResult(jobId, r);
+              resumeBatch.finishOne();
+            })
+            .catch((err) => {
+              stopTicker();
+              resumeBatch.sendError(agent.name, task, title, err, agent, jobId);
+              resumeBatch.finishOne();
+            });
+        };
+      };
+
       const launchOne = async (
         agent: ResolvedAgent,
         task: string,
         jobId: number,
         title?: string,
+        jobBatch: Batch = batch,
+        session?: { dir: string; resumeMessage: string },
       ): Promise<SubagentResult> => {
+        let createdDir: string | undefined;
         try {
           // A cancelled job may have been waiting for a concurrency slot. Do
           // not spawn it just to discover the cancellation after launch.
           const cancellationReason = registry.get(jobId)?.cancellationReason;
           if (cancellationReason) {
-            return finishJob(jobId, cancelledResult(agent.name, task, title, cancellationReason, agent));
+            return finishJob(
+              jobId,
+              cancelledResult(agent.name, task, title, cancellationReason, agent),
+              true,
+              jobBatch,
+            );
           }
+          if (!session) createdDir = await mkdtemp(join(tmpdir(), SESSION_DIR_PREFIX));
+          const sessionDir = session?.dir ?? createdDir!;
           const launched = await runSubagent(agent, task, ctx.cwd, defaultModel, {
             thinkingLevel: agent.thinkingLevel,
             title,
             bridgeExtensionPath: deps.bridgeExtensionPath,
             extensionPaths: deps.extensionPaths,
+            session: { dir: sessionDir, resumeMessage: session?.resumeMessage },
             spawnFn: deps.spawnFn,
             onEvent: (event) => {
               registry.appendEvent(jobId, event);
@@ -591,12 +636,12 @@ export function createSubagentTool(deps: SubagentToolDeps): ToolDefinition<typeo
               registry.recordStep(jobId, step);
             },
             onInactivity: (notice) => {
-              batch.deliverInactivity(jobId, notice);
+              jobBatch.deliverInactivity(jobId, notice);
             },
             onQuestion: (question) => {
               if (!registry.recordQuestion(jobId, question)) return;
               registry.appendEvent(jobId, { kind: "question", summary: `question: ${questionSummary(question)}` });
-              batch.deliverQuestion(jobId, question);
+              jobBatch.deliverQuestion(jobId, question);
               refresh();
             },
             onUpdate: (update) => {
@@ -612,15 +657,28 @@ export function createSubagentTool(deps: SubagentToolDeps): ToolDefinition<typeo
             },
           });
           registry.registerControl(jobId, launched);
-          return finishJob(jobId, { ...(await launched.result), profile: agent.profile });
+          if (createdDir) {
+            createdDir = undefined;
+            registry.registerResumer(jobId, {
+              resume: resumeJob(agent, task, jobId, title, sessionDir),
+              release: () => void rm(sessionDir, { recursive: true, force: true }).catch(() => {}),
+            });
+          }
+          return finishJob(jobId, { ...(await launched.result), profile: agent.profile }, true, jobBatch);
         } catch (err) {
           // Callers' catch handlers rely on this: finishJob completes the job synchronously, and
           // registry.cancel ignores finished jobs, so a rejection from here is never a cancellation.
+          if (createdDir) void rm(createdDir, { recursive: true, force: true }).catch(() => {});
           const cancellationReason = registry.get(jobId)?.cancellationReason;
           if (cancellationReason) {
-            return finishJob(jobId, cancelledResult(agent.name, task, title, cancellationReason, agent));
+            return finishJob(
+              jobId,
+              cancelledResult(agent.name, task, title, cancellationReason, agent),
+              true,
+              jobBatch,
+            );
           }
-          finishJob(jobId, failedResult(agent.name, task, title, err, agent));
+          finishJob(jobId, failedResult(agent.name, task, title, err, agent), true, jobBatch);
           throw err;
         }
       };

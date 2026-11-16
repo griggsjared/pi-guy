@@ -52,6 +52,10 @@ const SendParams = Type.Object({
   message: Type.String({ minLength: 1 }),
   deliverAs: Type.Union([Type.Literal("steer"), Type.Literal("followUp")]),
 });
+const ResumeParams = Type.Object({
+  jobId: Type.Integer({ minimum: 1 }),
+  message: Type.String({ minLength: 1, description: "What the child should do next, with any context it lacked" }),
+});
 const ReplyParams = Type.Object({
   jobId: Type.Integer({ minimum: 1 }),
   questionId: Type.String({ minLength: 1 }),
@@ -150,6 +154,12 @@ interface SendToolDetails {
   label: string;
   message: string;
   deliverAs: "steer" | "followUp";
+}
+interface ResumeToolDetails {
+  jobId: number;
+  agent: string;
+  label: string;
+  message: string;
 }
 interface ReplyToolDetails {
   jobId: number;
@@ -772,6 +782,59 @@ export function createSendTool(deps: { registry: JobRegistry }): ToolDefinition<
         0,
         0,
       );
+    },
+  };
+}
+
+export function createResumeTool(deps: {
+  registry: JobRegistry;
+}): ToolDefinition<typeof ResumeParams, ResumeToolDetails> {
+  return {
+    name: "subagent_resume",
+    label: "Subagent Resume",
+    description:
+      "Continue a finished, failed, or cancelled subagent's conversation with a new message. Returns immediately; the new result arrives later as a follow-up message.",
+    promptGuidelines: [
+      "Use subagent_resume when a finished subagent stopped short or got something wrong; it keeps the child's earlier context, so say only what is missing or wrong.",
+    ],
+    parameters: ResumeParams,
+    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+      if (!params.message.trim()) throw new Error("Subagent message cannot be empty.");
+      const job = deps.registry.get(params.jobId);
+      if (!job) throw new Error(`Unknown subagent job ID: ${params.jobId}`);
+      deps.registry.resume(params.jobId, params.message);
+      return {
+        content: [{ type: "text", text: `Resumed subagent ${jobTarget(job)}.` }],
+        details: { jobId: params.jobId, agent: job.agent, label: jobLabel(job, Infinity), message: params.message },
+      };
+    },
+    renderCall(args, theme, _context) {
+      const job = deps.registry.get(args.jobId);
+      const box = new Container();
+      box.addChild(
+        new TruncatedText(
+          theme.fg("toolTitle", theme.bold("subagent resume ")) +
+            theme.fg("accent", job ? jobTarget(job) : `#${args.jobId ?? "…"}`),
+          0,
+          0,
+        ),
+      );
+      box.addChild(new TruncatedText(theme.fg("dim", normalizeTitle(args.message) ?? ""), 2, 0));
+      return box;
+    },
+    renderResult(result, _options, theme, context) {
+      const details = result.details;
+      if (context.isError || !details || typeof details.jobId !== "number") {
+        return renderFallbackResult(
+          "subagent resume",
+          `#${context.args?.jobId ?? "?"}`,
+          resultText(result),
+          "(no result)",
+          !context.args,
+          theme,
+        );
+      }
+      return new TruncatedText(theme.fg("success", "✓ ") + theme.fg("muted", "resumed"), 0, 0);
     },
   };
 }

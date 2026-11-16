@@ -243,7 +243,7 @@ test("completed job events remain readable until the job is pruned", () => {
   assert.equal(registry.readEvents(id)?.events[0]?.summary, "done");
   registry.markCleared([id]);
   const next = registry.add("worker", "next");
-  time = 300_001;
+  time = 30 * 60 * 1000 + 1;
   registry.complete(next, result());
   assert.equal(registry.readEvents(id), undefined);
 });
@@ -260,10 +260,72 @@ test("failed jobs retain errors and are pruned after the cutoff once cleared", (
 
   // A later completion triggers the prune pass; `a` is cleared and past cutoff.
   const b = registry.add("worker", "task2");
-  time = 10 + 300_000 + 1;
+  time = 10 + 30 * 60 * 1000 + 1;
   registry.complete(b, result());
   assert.ok(!registry.jobs.has(a), "cleared and past cutoff, must be pruned");
   assert.ok(registry.jobs.has(b), "fresh completion must survive");
+});
+
+test("a resumed job reports usage and tool calls summed across its runs", () => {
+  const registry = createJobRegistry();
+  const id = registry.add("worker", "task");
+  const first = { ...EMPTY_USAGE, turns: 2, input: 10, cost: 0.5, contextTokens: 100 };
+  registry.complete(id, result({ usage: first, toolCalls: [{ name: "read", args: {} }] }));
+  registry.reopen(id);
+  const job = registry.jobs.get(id)!;
+  assert.equal(job.status, "running");
+  assert.equal(job.text, undefined);
+
+  const second = { ...EMPTY_USAGE, turns: 1, input: 5, cost: 0.25, contextTokens: 150 };
+  registry.updateLive(id, { usage: second, toolCalls: [{ name: "bash", args: {} }] });
+  assert.deepEqual(job.usage, { ...EMPTY_USAGE, turns: 3, input: 15, cost: 0.75, contextTokens: 150 });
+  registry.complete(id, result({ usage: second, toolCalls: [{ name: "bash", args: {} }] }));
+  assert.equal(job.status, "completed");
+  assert.equal(job.usage.turns, 3);
+  assert.deepEqual(
+    job.toolCalls.map((call) => call.name),
+    ["read", "bash"],
+  );
+});
+
+test("only finished jobs with a saved conversation can resume", () => {
+  const registry = createJobRegistry();
+  const messages: string[] = [];
+  const id = registry.add("worker", "task");
+  registry.registerResumer(id, { resume: (message) => messages.push(message), release: () => {} });
+  assert.throws(() => registry.resume(id, "more"), /still running; use subagent_send/);
+  registry.complete(id, result({ cancelled: true, cancellationReason: "manual" }));
+  registry.resume(id, "more");
+  assert.deepEqual(messages, ["more"]);
+
+  const unsaved = registry.add("worker", "task");
+  registry.complete(unsaved, result());
+  assert.throws(() => registry.resume(unsaved, "more"), /no saved conversation/);
+  assert.throws(() => registry.resume(999, "more"), /Unknown subagent job ID: 999/);
+});
+
+test("saved conversations are released when the job is pruned or the session ends", () => {
+  let time = 0;
+  const registry = createJobRegistry({ now: () => time });
+  const released: number[] = [];
+  const a = registry.add("worker", "a");
+  const b = registry.add("worker", "b");
+  registry.registerResumer(a, { resume: () => {}, release: () => released.push(a) });
+  registry.registerResumer(b, { resume: () => {}, release: () => released.push(b) });
+  registry.complete(a, result());
+  registry.markCleared([a]);
+  time = 30 * 60 * 1000 + 1;
+  registry.complete(b, result());
+  assert.deepEqual(released, [a]);
+  assert.throws(() => registry.resume(a, "more"), /Unknown subagent job ID/);
+
+  registry.releaseResumers();
+  assert.deepEqual(released, [a, b]);
+  assert.throws(() => registry.resume(b, "more"), /no saved conversation/);
+
+  const late = registry.add("worker", "late");
+  registry.registerResumer(late, { resume: () => {}, release: () => released.push(late) });
+  assert.deepEqual(released, [a, b, late]);
 });
 
 test("live updates ignore unknown jobs and skip undefined fields", () => {

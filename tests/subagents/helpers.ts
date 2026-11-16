@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import type { spawn } from "node:child_process";
+import { after } from "node:test";
 import type { TestContext } from "node:test";
 import type { ExtensionAPI, ExtensionContext, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import type { Component } from "@earendil-works/pi-tui";
@@ -49,7 +50,10 @@ export function makeTool({
   activeProfile,
   confirmProfile = async () => true,
 }: MakeToolOptions = {}) {
+  let profile = activeProfile;
   const registry = createJobRegistry();
+  // Every launch saves its conversation in a temp folder; remove them once the file's tests finish.
+  after(() => registry.releaseResumers());
   const sendMessage = spy();
   const sendUserMessage = spy();
   const appendEntry = spy();
@@ -66,7 +70,7 @@ export function makeTool({
     pi,
     agents: [AGENT],
     settings,
-    getActiveProfile: () => activeProfile,
+    getActiveProfile: () => profile,
     confirmProfile,
     discover: async () => [AGENT],
     registry,
@@ -97,6 +101,9 @@ export function makeTool({
     activeTickers,
     child,
     ctx,
+    setActiveProfile: (name: string | undefined) => {
+      profile = name;
+    },
   };
 }
 

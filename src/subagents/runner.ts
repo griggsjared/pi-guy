@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
-import { mkdtemp, rm, rmdir, unlink, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, rm, rmdir, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
@@ -88,6 +88,11 @@ export interface RunSubagentOptions {
   title?: string;
   bridgeExtensionPath?: string;
   extensionPaths?: readonly string[];
+  /**
+   * Saves the conversation in `dir`. With `resumeMessage`, continues the saved conversation with it instead of the
+   * task; if nothing was saved, sends the task followed by `resumeMessage`.
+   */
+  session?: { dir: string; resumeMessage?: string };
   spawnFn?: typeof spawn;
   killDelayMs?: number;
   shutdownGraceMs?: number;
@@ -131,11 +136,21 @@ export async function runSubagent(
     ...new Set([...(agent.tools ?? DEFAULT_TOOLS), ...(hasBridgeExtension ? [ASK_PARENT_TOOL_NAME] : [])]),
   ].join(",");
   const extraExtensions = (options.extensionPaths ?? []).filter(isAbsolute);
+  const taskPrompt = `${title ? `Title: ${title}\n` : ""}Task: ${task}`;
+  let initialPrompt = taskPrompt;
+  const resumeMessage = options.session?.resumeMessage;
+  if (resumeMessage !== undefined) {
+    // Pi writes the session file only once a message exists, so a child that stopped first left nothing to continue.
+    const saved = await readdir(options.session!.dir).catch(() => []);
+    initialPrompt = saved.some((name) => name.endsWith(".jsonl")) ? resumeMessage : `${taskPrompt}\n\n${resumeMessage}`;
+  }
   const args = [
     ...base.args,
     "--mode",
     "rpc",
-    "--no-session",
+    ...(options.session
+      ? ["--session-dir", options.session.dir, ...(options.session.resumeMessage === undefined ? [] : ["--continue"])]
+      : ["--no-session"]),
     "--no-extensions",
     ...(hasBridgeExtension ? ["--extension", bridgeExtension] : []),
     ...extraExtensions.flatMap((path) => ["--extension", path]),
@@ -592,7 +607,6 @@ export async function runSubagent(
     proc.on("close", (code, signal) => finalize(code, signal));
     proc.on("error", () => finalize(null, null, true));
 
-    const initialPrompt = `${title ? `Title: ${title}\n` : ""}Task: ${task}`;
     void sendCommand(initialPrompt, false).catch((err) => {
       if (cancelled || settled) return;
       transportError = `Initial RPC prompt failed: ${String(err)}`;

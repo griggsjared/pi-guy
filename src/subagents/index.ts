@@ -13,6 +13,7 @@ import type { UiContext } from "./render.ts";
 import {
   createCancelTool,
   createReplyTool,
+  createResumeTool,
   createSendTool,
   createStatusTool,
   registerStatusCommands,
@@ -122,6 +123,7 @@ export default async function (pi: ExtensionAPI) {
   pi.registerTool(createCancelTool({ registry }));
   pi.registerTool(createSendTool({ registry }));
   pi.registerTool(createReplyTool({ registry }));
+  pi.registerTool(createResumeTool({ registry }));
   registerStatusCommands(pi, {
     registry,
     profiles: profileDeps,
@@ -161,6 +163,7 @@ export default async function (pi: ExtensionAPI) {
     for (const id of activeTickers) clearInterval(id);
     activeTickers.clear();
     registry.cancelAll("session-shutdown");
+    registry.releaseResumers();
     if (lastUiContext?.hasUI) {
       lastUiContext.ui.setWidget(WIDGET_KEY, []);
       lastUiContext.ui.setStatus(PROFILE_ENTRY_TYPE, undefined);

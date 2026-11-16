@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import type { AgentConfig } from "../../src/subagents/agents.ts";
 import { runSubagent, runWithConcurrencyLimit } from "../../src/subagents/runner.ts";
@@ -571,6 +574,7 @@ test("the child receives the pi CLI, working directory, and environment contract
     thinkingLevel: "low",
     title: "my title",
     bridgeExtensionPath: BRIDGE_EXTENSION,
+    session: { dir: "/tmp/session" },
   });
   child.finish(0);
   await result;
@@ -578,7 +582,8 @@ test("the child receives the pi CLI, working directory, and environment contract
   assert.equal(calls.length, 1);
   const { args, options } = calls[0]!;
   const flags = args.slice(1); // args[0] is the pi entry script from getPiCommand
-  assert.deepEqual(flags.slice(0, 4), ["--mode", "rpc", "--no-session", "--no-extensions"]);
+  assert.deepEqual(flags.slice(0, 5), ["--mode", "rpc", "--session-dir", "/tmp/session", "--no-extensions"]);
+  assert.equal(flags.includes("--continue"), false);
   assert.equal(flags.includes("-p"), false);
   assert.ok(flags.includes("--no-extensions"), "no recursive subagent spawns");
   const extensionIdx = flags.indexOf("--extension");
@@ -607,6 +612,30 @@ test("the child receives the pi CLI, working directory, and environment contract
     ...process.env,
     NODE_OPTIONS: [process.env.NODE_OPTIONS, "--max-old-space-size=8192"].filter(Boolean).join(" "),
   });
+});
+
+test("a resume continues the saved conversation, or restates the task when nothing was saved", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "subagent-runner-test-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const resumeWith = async () => {
+    const child = new FakeChild();
+    const { spawnFn, calls } = fakeSpawnChildren([child]);
+    const { result } = await runSubagent(agent, "do it", "/tmp", "m", {
+      spawnFn,
+      title: "my title",
+      session: { dir, resumeMessage: "Finish it." },
+    });
+    child.finish(0);
+    await result;
+    const flags = calls[0]!.args;
+    assert.equal(flags[flags.indexOf("--session-dir") + 1], dir);
+    assert.ok(flags.includes("--continue"));
+    return child.stdin.commands()[0]?.message;
+  };
+
+  assert.equal(await resumeWith(), "Title: my title\nTask: do it\n\nFinish it.");
+  await writeFile(join(dir, "session.jsonl"), "{}\n");
+  assert.equal(await resumeWith(), "Finish it.");
 });
 
 test("allowlisted package extensions are forwarded and relative paths ignored", async () => {

@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import type { spawn } from "node:child_process";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { test } from "node:test";
 import { discoverAgents } from "../../src/subagents/agents.ts";
 import { QUESTION_ENTRY_TYPE } from "../../src/subagents/constants.ts";
 import type { createJobRegistry } from "../../src/subagents/registry.ts";
-import { createReplyTool, createStatusTool } from "../../src/subagents/status-tools.ts";
+import { createReplyTool, createResumeTool, createStatusTool } from "../../src/subagents/status-tools.ts";
 import { createSubagentTool, resolveMode } from "../../src/subagents/tools.ts";
 import { fakeTheme } from "../helpers/theme.ts";
 import { flush, waitFor } from "../helpers/wait.ts";
@@ -604,6 +606,62 @@ test("child questions trigger a parent turn and subagent_reply resolves them", a
   child.finish(0);
   await waitFor(() => sendMessage.calls.length === 2);
   assert.equal(sendMessage.calls.length, 2, "question and result sent once each");
+});
+
+test("a finished job resumes its saved conversation and delivers a new result", async (t) => {
+  const first = new FakeChild();
+  const second = new FakeChild();
+  const { spawnFn, calls } = fakeSpawnChildren([first, second]);
+  const { tool, registry, sendMessage, activeTickers, ctx } = makeTool({ spawnFn });
+  cleanupChildren(t, [first, second], activeTickers);
+  await tool.execute("call1", { agent: "scout", task: "t" }, undefined, undefined, ctx);
+  await waitFor(() => first.stdin.writes.length > 0);
+  first.stdout.emit("data", Buffer.from(endEvent("half done")));
+  first.finish(0);
+  await waitFor(() => sendMessage.calls.length === 1);
+
+  const sessionDir = (args: string[]) => args[args.indexOf("--session-dir") + 1]!;
+  const firstArgs = calls[0]!.args;
+  assert.equal(firstArgs.includes("--continue"), false);
+  await writeFile(join(sessionDir(firstArgs), "session.jsonl"), "{}\n");
+
+  const resumeTool = createResumeTool({ registry });
+  const resumed = await resumeTool.execute("call2", { jobId: 1, message: "Finish it." }, undefined, undefined, ctx);
+  assert.equal((resumed.content[0] as { text: string }).text, "Resumed subagent #1 scout · t.");
+  assert.equal(registry.get(1)?.status, "running");
+  await waitFor(() => second.stdin.writes.length > 0);
+  const secondArgs = calls[1]!.args;
+  assert.equal(sessionDir(secondArgs), sessionDir(firstArgs));
+  assert.ok(secondArgs.includes("--continue"));
+  assert.equal(second.stdin.commands()[0]?.message, "Finish it.");
+  assert.equal(registry.readEvents(1)?.events.at(-1)?.summary, "resumed: Finish it.");
+
+  second.stdout.emit("data", Buffer.from(endEvent("all done")));
+  second.finish(0);
+  await waitFor(() => sendMessage.calls.length === 2);
+  const [message] = sendMessage.calls[1] as [{ content: string; details: { jobId: number; status: string } }];
+  assert.equal(message.content, "all done");
+  assert.deepEqual([message.details.jobId, message.details.status], [1, "completed"]);
+  assert.equal(registry.get(1)?.usage.turns, 2);
+});
+
+test("resume is blocked after the user turns subagents off", async (t) => {
+  const children = [new FakeChild(), new FakeChild()];
+  const { spawnFn, calls } = fakeSpawnChildren(children);
+  const { tool, registry, sendMessage, activeTickers, ctx, setActiveProfile } = makeTool({ spawnFn });
+  cleanupChildren(t, children, activeTickers);
+  await tool.execute("call1", { agent: "scout", task: "t" }, undefined, undefined, ctx);
+  await waitFor(() => children[0]!.stdin.writes.length > 0);
+  children[0]!.finish(0);
+  await waitFor(() => sendMessage.calls.length === 1);
+
+  setActiveProfile("off");
+  await assert.rejects(
+    createResumeTool({ registry }).execute("call2", { jobId: 1, message: "more" }, undefined, undefined, ctx),
+    /turned subagents off/,
+  );
+  assert.equal(registry.get(1)?.status, "completed");
+  assert.equal(calls.length, 1);
 });
 
 test("stale UI context does not duplicate cancellation completion", async (t) => {

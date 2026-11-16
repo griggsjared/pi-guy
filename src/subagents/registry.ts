@@ -19,6 +19,11 @@ export interface SubagentControl {
   send(message: string, deliverAs: SubagentDelivery): Promise<void>;
   reply(questionId: string, answer: string): Promise<void>;
 }
+/** Restarts a finished job from its saved conversation, and deletes that conversation once the job is gone. */
+export interface SubagentResumer {
+  resume(message: string): void;
+  release(): void;
+}
 export interface PendingQuestion extends SubagentQuestion {
   askedAt: number;
 }
@@ -42,7 +47,7 @@ export interface Job {
   pendingQuestions: PendingQuestion[];
   steps: JobStep[];
 }
-const PRUNE_AFTER_MS = 300_000;
+const PRUNE_AFTER_MS = 30 * 60 * 1000;
 const JOB_EVENT_CAPACITY = 100;
 const FINISHED_STEP_CAPACITY = 20;
 interface JobEventRing {
@@ -76,6 +81,10 @@ export interface JobRegistry {
     },
   ): void;
   complete(id: number, result: SubagentResult): void;
+  registerResumer(id: number, resumer: SubagentResumer): void;
+  resume(id: number, message: string): void;
+  reopen(id: number): void;
+  releaseResumers(): void;
   registerControl(id: number, handle: SubagentControl): void;
   recordQuestion(id: number, question: SubagentQuestion): boolean;
   send(id: number, message: string, deliverAs: SubagentDelivery): Promise<void>;
@@ -97,6 +106,27 @@ export function createJobRegistry(options: { now?: () => number } = {}) {
   const clearedIds = new Set<number>();
   const handles = new Map<number, SubagentControl>();
   const replying = new Set<string>();
+  const resumers = new Map<number, SubagentResumer>();
+  let resumersReleased = false;
+  // A resumed child reports totals for its own run only; earlier runs are added back here.
+  const earlierRuns = new Map<number, { usage: SubagentUsage; toolCalls: ToolCallInfo[] }>();
+  const withEarlierUsage = (id: number, usage: SubagentUsage): SubagentUsage => {
+    const earlier = earlierRuns.get(id)?.usage;
+    if (!earlier) return usage;
+    return {
+      turns: earlier.turns + usage.turns,
+      input: earlier.input + usage.input,
+      output: earlier.output + usage.output,
+      cacheRead: earlier.cacheRead + usage.cacheRead,
+      cacheWrite: earlier.cacheWrite + usage.cacheWrite,
+      cost: earlier.cost + usage.cost,
+      contextTokens: usage.contextTokens,
+    };
+  };
+  const withEarlierToolCalls = (id: number, toolCalls: ToolCallInfo[]): ToolCallInfo[] => {
+    const earlier = earlierRuns.get(id)?.toolCalls;
+    return earlier ? [...earlier, ...toolCalls] : toolCalls;
+  };
   const add = (
     agent: string,
     task: string,
@@ -204,8 +234,8 @@ export function createJobRegistry(options: { now?: () => number } = {}) {
     if (!job) return;
     if (live.text !== undefined) job.text = live.text;
     if (live.progress !== undefined) job.progress = live.progress;
-    if (live.usage) job.usage = live.usage;
-    if (live.toolCalls) job.toolCalls = live.toolCalls;
+    if (live.usage) job.usage = withEarlierUsage(id, live.usage);
+    if (live.toolCalls) job.toolCalls = withEarlierToolCalls(id, live.toolCalls);
     if (live.model !== undefined) job.model = live.model;
     if (live.thinkingLevel !== undefined) job.thinkingLevel = live.thinkingLevel;
   };
@@ -287,8 +317,8 @@ export function createJobRegistry(options: { now?: () => number } = {}) {
     job.text = result.text;
     job.error = result.error;
     job.progress = undefined;
-    job.usage = result.usage ?? job.usage;
-    job.toolCalls = result.toolCalls ?? job.toolCalls;
+    job.usage = result.usage ? withEarlierUsage(id, result.usage) : job.usage;
+    job.toolCalls = result.toolCalls ? withEarlierToolCalls(id, result.toolCalls) : job.toolCalls;
     job.model = result.model ?? job.model;
     job.thinkingLevel = result.thinkingLevel ?? job.thinkingLevel;
     // A cancellation requested through the registry wins any later child
@@ -299,7 +329,44 @@ export function createJobRegistry(options: { now?: () => number } = {}) {
       if (j.status !== "running" && clearedIds.has(jid) && (j.endTime ?? 0) < cutoff) {
         jobs.delete(jid);
         eventRings.delete(jid);
+        earlierRuns.delete(jid);
+        resumers.get(jid)?.release();
+        resumers.delete(jid);
       }
+  };
+  const registerResumer = (id: number, resumer: SubagentResumer): void => {
+    // A launch still starting at shutdown registers late; release its conversation right away.
+    if (!jobs.has(id) || resumersReleased) {
+      resumer.release();
+      return;
+    }
+    resumers.set(id, resumer);
+  };
+  const resume = (id: number, message: string): void => {
+    const job = jobs.get(id);
+    if (!job) throw new Error(`Unknown subagent job ID: ${id}`);
+    if (job.status === "running") throw new Error(`Subagent #${id} is still running; use subagent_send instead.`);
+    const resumer = resumers.get(id);
+    if (!resumer) throw new Error(`Subagent #${id} has no saved conversation to resume.`);
+    resumer.resume(message);
+  };
+  const reopen = (id: number): void => {
+    const job = jobs.get(id);
+    if (!job || job.status === "running") return;
+    earlierRuns.set(id, { usage: job.usage, toolCalls: job.toolCalls });
+    clearedIds.delete(id);
+    job.status = "running";
+    job.startTime = now();
+    job.endTime = undefined;
+    job.text = undefined;
+    job.error = undefined;
+    job.progress = undefined;
+    job.cancellationReason = undefined;
+  };
+  const releaseResumers = (): void => {
+    resumersReleased = true;
+    for (const resumer of resumers.values()) resumer.release();
+    resumers.clear();
   };
   const markCleared = (ids: Iterable<number>) => {
     for (const id of ids) clearedIds.add(id);
@@ -324,6 +391,10 @@ export function createJobRegistry(options: { now?: () => number } = {}) {
     readEvents,
     updateLive,
     complete,
+    registerResumer,
+    resume,
+    reopen,
+    releaseResumers,
     registerControl,
     recordQuestion,
     send,
