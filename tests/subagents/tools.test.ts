@@ -231,6 +231,7 @@ test("profile confirmation surfaces a paused progress update", async (t) => {
   });
   cleanupChildren(t, [child], activeTickers);
   await tool.execute("call1", { agent: "scout", task: "t" }, undefined, (partial) => updates.push(partial), ctx);
+  await waitFor(() => child.stdin.writes.length > 0);
   assert.deepEqual(updates, [
     {
       content: [{ type: "text", text: "subagent launch scout · t: Paused: waiting for subagent profile selection" }],

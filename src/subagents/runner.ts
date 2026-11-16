@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
-import { mkdtemp, rmdir, unlink, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, rmdir, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
@@ -272,8 +272,7 @@ export async function runSubagent(
       monitorInactivity();
     };
     const cleanup = () => {
-      unlink(promptFile).catch(() => {});
-      rmdir(tmpDir).catch(() => {});
+      rm(tmpDir, { recursive: true, force: true }).catch(() => {});
     };
     const startShutdownWatchdog = () => {
       if (shutdownTimer || settled) return;
