@@ -296,7 +296,6 @@ export class SubagentTail implements Component {
         : this.theme.fg("error", "Job is no longer available."),
     ];
     if (job?.title) lines.push(this.theme.fg("dim", `Title: ${normalizeLine(job.title)}`));
-    if (job?.profile) lines.push(this.theme.fg("dim", `Profile: ${job.profile}`));
     const usage = job ? formatUsageStats(job.usage, job.model, job.thinkingLevel) : "";
     if (usage) lines.push(this.theme.fg("dim", `Usage: ${usage}`));
 

@@ -100,7 +100,6 @@ test("/subagent-tail opens a live overlay and follows new events", async (t) => 
   const id = registry.add("scout", "running task", "Tail title", {
     model: "opencode-go/x",
     thinkingLevel: "high",
-    profile: "fast",
   });
   registry.recordStep(id, { phase: "start", id: "read-1", kind: "tool", summary: "read" });
   t.mock.timers.tick(3000);
@@ -175,7 +174,6 @@ test("/subagent-tail opens a live overlay and follows new events", async (t) => 
   assert.match(renderText(component), /Subagent #1 scout/);
   assert.match(renderText(component), /Task: running task/);
   assert.match(renderText(component), /Title: Tail title/);
-  assert.match(renderText(component), /Profile: fast/);
   assert.match(renderText(component), /Usage: opencode-go\/x:high/);
   registry.updateLive(id, { usage: { ...EMPTY_USAGE, turns: 2, input: 1500 } });
   t.mock.timers.tick(250);
@@ -205,11 +203,11 @@ test("/subagent-tail opens a live overlay and follows new events", async (t) => 
   t.mock.timers.tick(250);
   let lines = component.render(100);
   assert.equal(lines.length, 30, "the drawer leaves a quarter of a 40-row terminal free");
-  assert.equal(lines.filter((line) => /\[\d+\] \d\d:\d\d:\d\d/.test(line)).length, 18);
+  assert.equal(lines.filter((line) => /\[\d+\] \d\d:\d\d:\d\d/.test(line)).length, 19);
   assert.match(lines.join("\n"), /event 19/);
   assert.match(lines[0]!, /Subagent #1 scout · running/);
   assert.match(lines.join("\n"), /Active steps \(3\)/);
-  assert.match(lines.join("\n"), /Events 6-23\/23 · cursor 23 · following/);
+  assert.match(lines.join("\n"), /Events 5-23\/23 · cursor 23 · following/);
 
   terminal.rows = 8;
   lines = component.render(100);

@@ -240,7 +240,7 @@ function fieldValueColor(label: string, value: string): ThemeColor {
         : value.includes("failed")
           ? "error"
           : "accent";
-  if (label === "Agent" || label === "Profile") return "accent";
+  if (label === "Agent") return "accent";
   if (label === "Cancellation") return "warning";
   if (label === "Error") return "error";
   if (label === "Usage" || label === "Elapsed" || label === "Task" || label === "Progress") return "dim";
@@ -400,7 +400,6 @@ function detailedLines(job: Job, now: number, brief = false): StatusLine[] {
     lines.push({ kind: "field", label: "Started", value: formatLocalTime(job.startTime) });
     if (job.endTime !== undefined)
       lines.push({ kind: "field", label: "Finished", value: formatLocalTime(job.endTime) });
-    if (job.profile) lines.push({ kind: "field", label: "Profile", value: job.profile });
     if (metadata) lines.push({ kind: "field", label: "Usage", value: metadata });
   }
   if (job.pendingQuestions.length > 0) {

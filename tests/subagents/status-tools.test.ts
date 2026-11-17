@@ -340,7 +340,7 @@ test("subagent status events show live linked-step elapsed time and freeze it wh
 test("subagent status details one job by ID", async (t) => {
   t.mock.timers.enable({ apis: ["Date"], now: new Date(2026, 0, 2, 12, 34, 56).getTime() });
   const registry = createJobRegistry();
-  const runningId = registry.add("scout", "actual running task", "Status title", { profile: "backup" });
+  const runningId = registry.add("scout", "actual running task", "Status title");
   registry.updateLive(runningId, {
     text: "latest output",
     progress: "reading files",
@@ -380,7 +380,6 @@ test("subagent status details one job by ID", async (t) => {
   assert.match(individualText, /State: running/);
   assert.match(individualText, /Task: actual running task/);
   assert.match(individualText, /Title: Status title/);
-  assert.match(individualText, /Profile: backup/);
   assert.match(individualText, /Usage: 1 turn p\/m:minimal/);
   assert.match(individualText, /Started: 12:34:56/);
   assert.match(individualText, /Active steps \(3\):/);
